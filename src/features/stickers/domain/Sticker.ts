@@ -101,6 +101,7 @@ export interface StickerAnnotationMetadata {
 
 /** AI worker claim 的持久化租约身份；完成/失败必须携带同一个 claimId。 */
 export interface StickerAnnotationClaim {
+  manual: boolean;
   sticker: Sticker;
   claimId: string;
   claimedAt: string;

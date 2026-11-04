@@ -51,6 +51,25 @@ export function createGroupSegmentedReplyPersistence(params: {
     persistAssistantPrelude: rejectLegacyProjection,
     // 共用 Agent timeline 消费语音／贴纸 intent；仍由群逐泡事务裁决提交资格。
     persistsIntermediates: false,
+    async commitAgentOutput(commitParams) {
+      assertChatReplyNotAborted(commitParams.runtimeContext ?? {});
+      const fenced = withCommitFence(commitParams.repository, params.task, null, commitParams.item.materializeInTransaction);
+      const message = await fenced.commitMessage({
+        message: { ...commitParams.item.message, turnRunId: params.task.id, turnItemIndex: null },
+        previewText: buildSessionPreviewTextFromMessage(commitParams.item.message),
+      });
+      output.visibleReplyCommitted = true;
+      // 消息已经是事实，观察者失败不能让调用方误报未发送或在末尾重复发送。
+      try { commitParams.callbacks?.notifyUI?.(message.sessionId); }
+      catch (error) { console.warn('[GroupAssistantTurnCommit] 已提交媒体的界面通知失败', { messageId: message.id, error }); }
+      try {
+        await deliverCommittedAssistantSegment({ sessionId: message.sessionId, text: message.text, metadataJson: message.metadataJson,
+          messageId: message.id, clientMessageId: message.clientMessageId!, logicalMessageId: message.logicalMessageId ?? null,
+          segmentIndex: 0, segmentTotal: 1, aiConfig: commitParams.aiConfig,
+          runtimeContext: commitParams.runtimeContext ?? {}, callbacks: commitParams.callbacks ?? {} });
+      } catch (error) { console.warn('[GroupAssistantTurnCommit] 已提交媒体的交付观察失败', { messageId: message.id, error }); }
+      return { outcome: 'committed', messages: [message] };
+    },
     async commitAgentTimeline(commitParams) {
       const items = commitParams.items;
       if (items.length === 0) return { outcome: 'empty_items', messages: [] };
@@ -61,13 +80,30 @@ export function createGroupSegmentedReplyPersistence(params: {
       const messages: ChatMessage[] = [];
       const total = items.filter((item) => item.message.senderType === 'assistant').length;
       let delivered = 0;
+      let committedItemCount = 0;
       try {
         for (const [index, item] of items.entries()) {
           assertChatReplyNotAborted(commitParams.runtimeContext ?? {});
+          if (item.committedMessageId !== undefined) {
+            const bound = await databaseCoordinator.transaction({ name: 'chat.bind-group-output', feature: 'chat', priority: 'interactive' }, async transaction => {
+              if (!await getChatGroupRuntimeDependencies().groups.isSpeechTaskCommitEligibleInTransaction(transaction, params.task.planId, params.task.id)) {
+                throw new ChatReplyRunCancelledError('superseded');
+              }
+              const message = await getChatMessageRuntimeDependencies().messages.bindTurnMessageInTransaction(transaction, item.committedMessageId!, index + 1);
+              if (message) await getChatGroupRuntimeDependencies().groups.updatePreviewInTransaction(
+                transaction, message.sessionId, message.id, buildSessionPreviewTextFromMessage(message), message.createdAt,
+              );
+              return message;
+            });
+            if (bound) { messages.push(bound); delivered++; }
+            committedItemCount = index + 1;
+            continue;
+          }
           const fenced = withCommitFence(commitParams.repository, params.task, mentionTasks, item.materializeInTransaction);
           const message = await fenced.commitMessage({ message: { ...item.message, turnRunId: params.task.id, turnItemIndex: index + 1 },
             previewText: item.message.senderType === 'assistant' ? buildSessionPreviewTextFromMessage(item.message) : null });
           messages.push(message);
+          committedItemCount = index + 1;
           if (message.senderType === 'assistant') output.visibleReplyCommitted = true;
           if (message.senderType === 'reasoning') output.reasoningCommitted = true;
           try { await item.finalizeAfterCommit?.(); }
@@ -80,7 +116,7 @@ export function createGroupSegmentedReplyPersistence(params: {
           }
         }
       } catch (error) {
-        await Promise.all(items.slice(messages.length).map((item) => item.discardAfterRollback?.()));
+        await Promise.all(items.slice(committedItemCount).map((item) => item.discardAfterRollback?.()));
         throw error;
       }
       const visible = messages.filter((message) => message.senderType === 'assistant');

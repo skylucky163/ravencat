@@ -82,7 +82,7 @@ export default function WebSearchSettingsScreen({ onBack, refreshRevision = 0 }:
     ] }} />
     <KeyboardAvoidingContainer style={styles.screen}>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-        <ConfiguredModelPicker key={refreshRevision} title="搜索来源" description="" unconfiguredLabel="未选择搜索来源"
+        <ConfiguredModelPicker key={refreshRevision} title="搜索来源" unconfiguredLabel="未选择搜索来源"
           getSettings={readSearchSelection} onSelect={selectSearchSource} subscribeChanged={subscribeSearchConfigurationChanged} disabled={busy} />
         {configuration && <>
           <ThemedSurface variant="card" style={styles.card}>

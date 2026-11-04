@@ -1,12 +1,8 @@
 /** 正文与派生任务在同一事务标记，所有运行时访问经单写者协调器。 */
 import { CoordinatedDatabaseError, databaseCoordinator, type DatabaseReadExecutor, type DatabaseTransactionExecutor } from '@platform/persistence';
-import { MemoryNotFoundError, MemoryTriggerNotFoundError, MemoryVectorDimensionError, normalizeMemoryText, type MemoryEntry, type MemoryRecallSettings, type MemoryTriggerKeyword, type PassiveTriggerGroup } from '../domain/Memory';
-import type { CreateMemoryRecord, MemoryEmbeddingClaim, MemoryEmbeddingModel, MemoryRepository } from '../domain/MemoryRepository';
-
-/** 只提交首次选择；向量 revision 与 claim 的同步仍由 commit 后的原有队列负责。 */
-export async function initializeMemoryEmbeddingModelInTransaction(transaction: DatabaseTransactionExecutor, modelConfigId: string): Promise<void> {
-  await transaction.runAsync('UPDATE memory_model_settings SET embedding_model_config_id = ? WHERE id = 1 AND embedding_model_config_id IS NULL', [modelConfigId]);
-}
+import { MEMORY_EMBEDDING_MAX_ATTEMPTS, MemoryInputError, MemoryNotFoundError, MemoryTriggerNotFoundError, MemoryVectorDimensionError, normalizeMemoryText, type MemoryEntry, type MemoryRecallSettings, type MemoryTriggerKeyword, type PassiveTriggerGroup } from '../domain/Memory';
+import type { CreateMemoryRecord, MemoryEmbeddingClaim, MemoryEmbeddingModel, MemoryEmbeddingRebuild, MemoryRepository } from '../domain/MemoryRepository';
+import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 
 interface EntryRow {
   id: string; pool_id: string; content: string; summary: string | null; content_revision: number;
@@ -44,7 +40,7 @@ async function memoryTransaction<T>(name: string, operation: (tx: DatabaseTransa
   } catch (error) {
     // 只恢复 Memory 自己的业务拒绝，SQL 故障继续携带协调器诊断。
     if (error instanceof CoordinatedDatabaseError
-      && (error.cause instanceof MemoryNotFoundError || error.cause instanceof MemoryTriggerNotFoundError)) throw error.cause;
+      && (error.cause instanceof MemoryInputError || error.cause instanceof MemoryNotFoundError || error.cause instanceof MemoryTriggerNotFoundError)) throw error.cause;
     throw error;
   }
 }
@@ -84,8 +80,8 @@ async function readValidVectors(db: DatabaseReadExecutor, poolId: string, finger
     if (state?.dimension !== null && state?.dimension !== undefined && state.dimension !== dimension) throw new MemoryVectorDimensionError();
     const rows = await db.getAllAsync<{ memory_id: string; vector_json: string }>(
       `SELECT e.memory_id, e.vector_json FROM memory_item_embeddings e JOIN memory_items m ON m.id = e.memory_id
-       WHERE m.pool_id = ? AND e.status = 'ready' AND e.model_fingerprint = ?
-       AND e.content_revision = m.content_revision AND e.dimension = ?
+       WHERE m.pool_id = ? AND e.vector_model_fingerprint = ?
+       AND e.vector_content_revision = m.content_revision AND e.dimension = ?
        AND EXISTS (SELECT 1 FROM memory_v3_state WHERE id = 1 AND model_fingerprint = ?)`,
     [poolId, fingerprint, dimension, fingerprint]);
     return rows.map((row) => {
@@ -98,14 +94,42 @@ async function readValidVectors(db: DatabaseReadExecutor, poolId: string, finger
 }
 
 export class SQLiteMemoryEntryRepository implements MemoryRepository {
-  async getEmbeddingModelId(): Promise<string | null> {
-    const row = await executor('model-settings.read').getFirstAsync<{ embedding_model_config_id: string | null }>(
-      'SELECT embedding_model_config_id FROM memory_model_settings WHERE id = 1');
-    return row!.embedding_model_config_id;
+  async getEmbeddingSettings() {
+    const row = await executor('model-settings.read').getFirstAsync<{ embedding_model_config_id: string | null; embedding_enabled: number }>(
+      'SELECT embedding_model_config_id, embedding_enabled FROM memory_model_settings WHERE id = 1');
+    return { enabled: row!.embedding_enabled === 1, modelConfigId: row!.embedding_model_config_id };
   }
   async setEmbeddingModelId(modelConfigId: string | null): Promise<void> {
-    await executor('model-settings.write').runAsync(
-      'UPDATE memory_model_settings SET embedding_model_config_id = ? WHERE id = 1', [modelConfigId]);
+    await memoryTransaction('model-settings.write', async tx => {
+      const changed = await tx.runAsync('UPDATE memory_model_settings SET embedding_model_config_id = ? WHERE id = 1 AND embedding_model_config_id IS NOT ?', [modelConfigId, modelConfigId]);
+      if (changed.changes) await tx.runAsync('UPDATE memory_embedding_index_control SET revision = revision + 1, build_id = NULL WHERE id = 1');
+    });
+  }
+
+  async setEmbeddingEnabled(enabled: boolean): Promise<void> {
+    await memoryTransaction('model-settings.enabled', async tx => {
+      const value = enabled ? 1 : 0;
+      const changed = await tx.runAsync('UPDATE memory_model_settings SET embedding_enabled = ? WHERE id = 1 AND embedding_enabled <> ?', [value, value]);
+      if (changed.changes) await tx.runAsync('UPDATE memory_embedding_index_control SET revision = revision + 1, build_id = NULL WHERE id = 1');
+    });
+  }
+
+  /** 模型资产提交时就撤销旧发布资格，不依赖某个 JS runtime 收到变更通知。 */
+  async invalidateEmbeddingModelInTransaction(tx: DatabaseTransactionExecutor, modelConfigId: string): Promise<void> {
+    await tx.runAsync(`UPDATE memory_embedding_index_control SET revision = revision + 1, build_id = NULL
+      WHERE id = 1 AND EXISTS (SELECT 1 FROM memory_model_settings WHERE id = 1 AND embedding_model_config_id = ?)`, [modelConfigId]);
+  }
+
+  /** 清除只删除派生数据并撤销 claim，不改变开关、模型选择、正文和触发关系。 */
+  async clearEmbeddings(model: MemoryEmbeddingModel | null): Promise<void> {
+    await memoryTransaction('clearEmbeddings', async (tx) => {
+      await tx.runAsync('UPDATE memory_embedding_index_control SET revision = revision + 1, build_id = NULL WHERE id = 1');
+      await tx.runAsync(`UPDATE memory_item_embeddings SET vector_json = NULL, dimension = NULL,
+        vector_model_fingerprint = NULL, vector_content_revision = NULL,
+        model_fingerprint = ?, model_name = ?, status = 'not_requested', attempts = 0,
+        retry_at = NULL, claim_id = NULL, claim_expires_at = NULL, last_error = NULL, failed_at = NULL`, [model?.fingerprint ?? null, model?.name ?? null]);
+      await tx.runAsync('UPDATE memory_v3_state SET model_fingerprint = ?, model_name = ?, dimension = NULL WHERE id = 1', [model?.fingerprint ?? null, model?.name ?? null]);
+    });
   }
 
   async listEntries(poolId: string) {
@@ -286,16 +310,83 @@ export class SQLiteMemoryEntryRepository implements MemoryRepository {
     return rows.map(mapEntry);
   }
 
-  async syncEmbeddingModel(model: MemoryEmbeddingModel | null) {
-    await memoryTransaction('syncEmbeddingModel', async (tx) => {
+  async getEmbeddingIndexRevision(): Promise<number> {
+    const row = await executor('index-revision').getFirstAsync<{ revision: number }>('SELECT revision FROM memory_embedding_index_control WHERE id = 1');
+    return row!.revision;
+  }
+
+  async syncEmbeddingModel(model: MemoryEmbeddingModel | null, expectedRevision: number) {
+    return memoryTransaction('syncEmbeddingModel', async (tx) => {
+      const control = await tx.getFirstAsync<{ revision: number }>('SELECT revision FROM memory_embedding_index_control WHERE id = 1');
+      if (control!.revision !== expectedRevision) return null;
       const fingerprint = model?.fingerprint ?? null;
+      const state = await tx.getFirstAsync<{ model_fingerprint: string | null }>('SELECT model_fingerprint FROM memory_v3_state WHERE id = 1');
+      // 新建与编辑始终使用当前全局指纹，无变化时不为每条空闲任务重复扫描全部记忆。
+      if (state!.model_fingerprint === fingerprint) return expectedRevision;
+      // 取消的是任务；保存向量的来源版本独立保留，切回匹配模型即可直接接管。
       await tx.runAsync(`UPDATE memory_item_embeddings SET model_fingerprint = ?, model_name = ?,
-        status = CASE WHEN ? IS NULL THEN 'not_requested' WHEN vector_json IS NULL THEN 'pending' ELSE 'stale' END,
+        content_revision = (SELECT content_revision FROM memory_items WHERE id = memory_id),
+        status = CASE WHEN vector_json IS NOT NULL AND vector_model_fingerprint = ?
+          AND vector_content_revision = (SELECT content_revision FROM memory_items WHERE id = memory_id)
+          THEN 'ready' ELSE 'not_requested' END,
         attempts = 0, retry_at = NULL, claim_id = NULL, claim_expires_at = NULL, last_error = NULL, failed_at = NULL
-        WHERE model_fingerprint IS NOT ?`, [fingerprint, model?.name ?? null, fingerprint, fingerprint]);
-      await tx.runAsync('UPDATE memory_v3_state SET dimension = CASE WHEN model_fingerprint IS ? THEN dimension ELSE NULL END, model_fingerprint = ?, model_name = ? WHERE id = 1',
-        [fingerprint, fingerprint, model?.name ?? null]);
+        `, [fingerprint, model?.name ?? null, fingerprint]);
+      await tx.runAsync('UPDATE memory_embedding_index_control SET revision = revision + 1, build_id = NULL WHERE id = 1');
+      await tx.runAsync(`UPDATE memory_v3_state SET dimension = (SELECT e.dimension FROM memory_item_embeddings e
+        JOIN memory_items m ON m.id = e.memory_id WHERE e.vector_model_fingerprint = ?
+        AND e.vector_content_revision = m.content_revision AND e.vector_json IS NOT NULL LIMIT 1),
+        model_fingerprint = ?, model_name = ? WHERE id = 1`, [fingerprint, fingerprint, model?.name ?? null]);
+      return expectedRevision + 1;
     });
+  }
+
+  async countEmbeddingIndex(fingerprint: string | null) {
+    const row = await executor('index-status').getFirstAsync<{ total: number; valid: number }>(`SELECT COUNT(*) AS total,
+      COALESCE(SUM(CASE WHEN e.vector_json IS NOT NULL AND e.vector_model_fingerprint = ?
+        AND e.vector_content_revision = m.content_revision THEN 1 ELSE 0 END), 0) AS valid
+      FROM memory_items m JOIN memory_item_embeddings e ON e.memory_id = m.id`, [fingerprint]);
+    return row!;
+  }
+
+  async beginEmbeddingRebuild(id: string, model: MemoryEmbeddingModel, expectedRevision: number): Promise<MemoryEmbeddingRebuild> {
+    return memoryTransaction('beginEmbeddingRebuild', async tx => {
+      const before = await tx.getFirstAsync<{ revision: number }>('SELECT revision FROM memory_embedding_index_control WHERE id = 1');
+      if (before!.revision !== expectedRevision) throw new Error('模型配置已变化，请重新发起重建');
+      const state = await tx.getFirstAsync<{ model_fingerprint: string | null }>('SELECT model_fingerprint FROM memory_v3_state WHERE id = 1');
+      if (state!.model_fingerprint !== model.fingerprint) throw new Error('向量模型已变化，请重新发起重建');
+      await tx.runAsync('UPDATE memory_embedding_index_control SET revision = revision + 1, build_id = ? WHERE id = 1', [id]);
+      await tx.runAsync('UPDATE memory_item_embeddings SET claim_id = NULL, claim_expires_at = NULL');
+      const control = await tx.getFirstAsync<{ revision: number }>('SELECT revision FROM memory_embedding_index_control WHERE id = 1');
+      const rows = await tx.getAllAsync<{ id: string; content: string; summary: string | null; content_revision: number }>('SELECT id, content, summary, content_revision FROM memory_items ORDER BY id');
+      return { id, revision: control!.revision, model, entries: rows.map(row => ({ id: row.id, content: row.content, summary: row.summary, contentRevision: row.content_revision })) };
+    });
+  }
+
+  async publishEmbeddingRebuild(build: MemoryEmbeddingRebuild, vectors: number[][], signal: AbortSignal): Promise<void> {
+    await memoryTransaction('publishEmbeddingRebuild', async tx => {
+      throwIfAbortSignalAborted(signal);
+      const control = await tx.getFirstAsync<{ revision: number; build_id: string | null }>('SELECT revision, build_id FROM memory_embedding_index_control WHERE id = 1');
+      const state = await tx.getFirstAsync<{ model_fingerprint: string | null }>('SELECT model_fingerprint FROM memory_v3_state WHERE id = 1');
+      if (control!.build_id !== build.id || control!.revision !== build.revision || state!.model_fingerprint !== build.model.fingerprint) throw new Error('向量模型或重建任务已变化，本次结果未覆盖旧索引');
+      const rows = await tx.getAllAsync<{ id: string; content_revision: number }>('SELECT id, content_revision FROM memory_items ORDER BY id');
+      if (rows.length !== build.entries.length || rows.some((row, index) => row.id !== build.entries[index].id || row.content_revision !== build.entries[index].contentRevision)) throw new Error('重建期间记忆发生变化，本次结果未覆盖旧索引，请重新重建');
+      for (let index = 0; index < build.entries.length; index++) {
+        const vector = vectors[index];
+        await tx.runAsync(`UPDATE memory_item_embeddings SET vector_json = ?, dimension = ?, model_fingerprint = ?, model_name = ?,
+          vector_model_fingerprint = ?, vector_content_revision = ?,
+          content_revision = ?, status = 'ready', attempts = 1, retry_at = NULL, claim_id = NULL,
+          claim_expires_at = NULL, last_error = NULL, failed_at = NULL WHERE memory_id = ?`,
+        [JSON.stringify(vector), vector.length, build.model.fingerprint, build.model.name, build.model.fingerprint,
+          build.entries[index].contentRevision, build.entries[index].contentRevision, build.entries[index].id]);
+      }
+      await tx.runAsync('UPDATE memory_v3_state SET dimension = ? WHERE id = 1', [vectors.length ? vectors[0].length : null]);
+      await tx.runAsync('UPDATE memory_embedding_index_control SET build_id = NULL WHERE id = 1');
+      throwIfAbortSignalAborted(signal);
+    });
+  }
+
+  async finishEmbeddingRebuild(id: string): Promise<void> {
+    await executor('finishEmbeddingRebuild').runAsync('UPDATE memory_embedding_index_control SET build_id = NULL WHERE id = 1 AND build_id = ?', [id]);
   }
 
   async readRecallCandidates(poolId: string, fingerprint: string | null, dimension: number | null) {
@@ -306,30 +397,34 @@ export class SQLiteMemoryEntryRepository implements MemoryRepository {
     });
   }
 
-  async claimEmbedding(fingerprint: string, claimId: string, now: string, expiresAt: string) {
+  async claimEmbedding(fingerprint: string, claimId: string, now: string, expiresAt: string, expectedRevision: number) {
     return memoryTransaction('claimEmbedding', async (tx) => {
+      const control = await tx.getFirstAsync<{ revision: number; build_id: string | null }>('SELECT revision, build_id FROM memory_embedding_index_control WHERE id = 1');
+      if (control!.build_id !== null || control!.revision !== expectedRevision) return null;
       const row = await tx.getFirstAsync<{ memory_id: string; content: string; summary: string | null; content_revision: number; attempts: number }>(
         `SELECT e.memory_id, m.content, m.summary, m.content_revision, e.attempts FROM memory_item_embeddings e
          JOIN memory_items m ON m.id = e.memory_id WHERE e.model_fingerprint = ?
-         AND e.status IN ('pending', 'stale', 'retry_wait') AND e.attempts < 3
+         AND e.status IN ('pending', 'stale', 'retry_wait') AND e.attempts < ?
          AND (e.retry_at IS NULL OR e.retry_at <= ?) AND (e.claim_id IS NULL OR e.claim_expires_at <= ?)
          AND EXISTS (SELECT 1 FROM memory_v3_state WHERE id = 1 AND model_fingerprint = ?)
-         ORDER BY m.created_at, m.id LIMIT 1`, [fingerprint, now, now, fingerprint]);
+         ORDER BY m.created_at, m.id LIMIT 1`, [fingerprint, MEMORY_EMBEDDING_MAX_ATTEMPTS, now, now, fingerprint]);
       if (!row) return null;
       await tx.runAsync('UPDATE memory_item_embeddings SET claim_id = ?, claim_expires_at = ? WHERE memory_id = ?',
         [claimId, expiresAt, row.memory_id]);
       return { memoryId: row.memory_id, content: row.content, summary: row.summary, contentRevision: row.content_revision,
-        modelFingerprint: fingerprint, claimId, attempts: row.attempts };
+        modelFingerprint: fingerprint, claimId, attempts: row.attempts, indexRevision: control!.revision };
     });
   }
 
   async completeEmbedding(claim: MemoryEmbeddingClaim, vector: number[]) {
     return memoryTransaction('completeEmbedding', async (tx) => {
     const state = await tx.getFirstAsync<{ dimension: number | null }>(
-      'SELECT dimension FROM memory_v3_state WHERE id = 1 AND model_fingerprint = ?', [claim.modelFingerprint]);
+      `SELECT s.dimension FROM memory_v3_state s JOIN memory_embedding_index_control c ON c.id = s.id
+       WHERE s.id = 1 AND s.model_fingerprint = ? AND c.revision = ? AND c.build_id IS NULL`, [claim.modelFingerprint, claim.indexRevision]);
     if (!state) return 'discarded';
     if (state.dimension !== null && state.dimension !== vector.length) return 'dimension_mismatch';
     const result = await tx.runAsync(`UPDATE memory_item_embeddings SET vector_json = ?,
+      vector_model_fingerprint = model_fingerprint, vector_content_revision = content_revision,
       dimension = ?, status = 'ready', attempts = attempts + 1, claim_id = NULL, claim_expires_at = NULL,
       retry_at = NULL, last_error = NULL, failed_at = NULL WHERE memory_id = ? AND claim_id = ?
       AND content_revision = ? AND model_fingerprint = ?
@@ -344,7 +439,7 @@ export class SQLiteMemoryEntryRepository implements MemoryRepository {
   }
 
   async failEmbedding(claim: MemoryEmbeddingClaim, error: string, terminal: boolean, now: string, retryAt: string) {
-    const failed = terminal || claim.attempts + 1 >= 3;
+    const failed = terminal || claim.attempts + 1 >= MEMORY_EMBEDDING_MAX_ATTEMPTS;
     const result = await executor('failEmbedding').runAsync(`UPDATE memory_item_embeddings SET status = ?, attempts = attempts + 1,
       retry_at = ?, last_error = ?, failed_at = ?, claim_id = NULL, claim_expires_at = NULL
       WHERE memory_id = ? AND claim_id = ? AND content_revision = ? AND model_fingerprint = ?
@@ -359,9 +454,13 @@ export class SQLiteMemoryEntryRepository implements MemoryRepository {
       [claim.memoryId, claim.claimId]);
   }
 
-  async retryEmbedding(poolId: string, memoryId: string) {
+  async retryEmbedding(poolId: string, memoryId: string, expectedRevision: number) {
     await memoryTransaction('retryEmbedding', async (tx) => {
       await readEntry(tx, poolId, memoryId);
+      const control = await tx.getFirstAsync<{ revision: number; build_id: string | null }>('SELECT revision, build_id FROM memory_embedding_index_control WHERE id = 1');
+      if (control!.revision !== expectedRevision) throw new MemoryInputError('向量模型已变化，请重新请求这条记忆的向量化');
+      // Host 已取消并等待活动重建；这里同时撤销进程中断遗留的整批发布资格。
+      if (control!.build_id !== null) await tx.runAsync('UPDATE memory_embedding_index_control SET revision = revision + 1, build_id = NULL WHERE id = 1');
       await markContentPending(tx, memoryId);
     });
   }
@@ -369,7 +468,8 @@ export class SQLiteMemoryEntryRepository implements MemoryRepository {
   async getNextEmbeddingWakeAt(fingerprint: string) {
     const row = await executor('nextWake').getFirstAsync<{ wake_at: string | null }>(`SELECT MIN(
       CASE WHEN claim_id IS NOT NULL THEN claim_expires_at ELSE retry_at END) AS wake_at
-      FROM memory_item_embeddings WHERE model_fingerprint = ? AND status IN ('pending','stale','retry_wait') AND attempts < 3`, [fingerprint]);
+      FROM memory_item_embeddings WHERE model_fingerprint = ? AND status IN ('pending','stale','retry_wait') AND attempts < ?
+      AND EXISTS (SELECT 1 FROM memory_embedding_index_control WHERE id = 1 AND build_id IS NULL)`, [fingerprint, MEMORY_EMBEDDING_MAX_ATTEMPTS]);
     return row!.wake_at;
   }
 }

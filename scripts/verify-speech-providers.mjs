@@ -317,7 +317,7 @@ try {
   assert.equal((await assets.resolveAuxiliaryModel({ modelConfigId: 'fish', capabilityKind: 'tts' })).modelConfigId, 'fish');
   assert.equal(await assets.resolveAuxiliaryModel({ modelConfigId: 'fish', capabilityKind: 'stt' }), null);
   assert.equal(await assets.resolveAuxiliaryModel({ modelConfigId: 'invalid', capabilityKind: 'stt' }), null);
-  modelsById.get('eleven').enabled = false;
+  modelsById.get('eleven').apiKey = null;
   assert.equal((await assets.getAuxiliaryModelSelection({ modelConfigId: 'eleven', capabilityKind: 'tts' })).status, 'unavailable');
 
   // 官方目录使用各自的鉴权及分页，不把实时 STT 指向文件转写接口。
@@ -590,7 +590,10 @@ try {
   const tencent = load(`${speechRoot}infrastructure/TencentRealtimeASRClient.ts`);
   const signer = load(`${speechRoot}infrastructure/tencentRealtimeASRSignature.ts`);
   const resolver = load(`${speechRoot}application/ResolveSpeechModel.ts`);
-  const realtime = load(`${speechRoot}StartRealtimeSpeechToText.ts`, { '@platform/ai': ai, '@platform/device': device, './application/SpeechRecognitionErrors': recognitionErrors, './application/SpeechProviderCatalog': catalog, './application/ResolveSpeechModel': resolver, './infrastructure/DashScopeRealtimeASRClient': dashscope, './infrastructure/TencentRealtimeASRClient': tencent, './infrastructure/tencentRealtimeASRSignature': signer });
+  const recognitionSocket = load(`${speechRoot}infrastructure/RealtimeRecognitionSocket.ts`);
+  const volcengine = load(`${speechRoot}infrastructure/VolcengineRealtimeASRClient.ts`, { '@platform/device': device, './RealtimeRecognitionSocket': recognitionSocket });
+  const stepfun = load(`${speechRoot}infrastructure/StepfunRealtimeASRClient.ts`, { '@platform/device': device, './RealtimeRecognitionSocket': recognitionSocket, './speechAudioEncoding': encoding });
+  const realtime = load(`${speechRoot}StartRealtimeSpeechToText.ts`, { '@platform/ai': ai, '@platform/device': device, './application/SpeechRecognitionErrors': recognitionErrors, './application/SpeechProviderCatalog': catalog, './application/ResolveSpeechModel': resolver, './infrastructure/DashScopeRealtimeASRClient': dashscope, './infrastructure/TencentRealtimeASRClient': tencent, './infrastructure/tencentRealtimeASRSignature': signer, './infrastructure/VolcengineRealtimeASRClient': volcengine, './infrastructure/StepfunRealtimeASRClient': stepfun });
   const configuration = { baseURL: 'wss://workspace.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference', apiKey: 'key', model: 'paraformer-realtime-v2', metadataJson: JSON.stringify({ provider: 'dashscopeRealtimeAsr', workspaceId: 'workspace', region: 'beijing' }) };
   let resolutionCount = 0;
   resolver.configureSpeechModelResolver(async () => { resolutionCount++; return { ...configuration, modelConfigId: 'selected', modelConfigName: '阿里' }; });
@@ -665,7 +668,7 @@ try {
   const failedVoiceSocket = sockets.at(-1);
   failedVoiceSocket.onopen(); failedVoiceSocket.message('task-started');
   const failedVoice = await openingFailedVoice;
-  const finishingFailedVoice = failedVoice.finish({ uri: 'unused', mimeType: 'unused' });
+  const finishingFailedVoice = failedVoice.finish();
   failedVoiceSocket.onerror({ message: 'HTTP 429: STT concurrent limit' });
   assert.equal((await finishingFailedVoice).errorInfo.message, networkReason, '结束录音后的失败结果仍保留具体原因');
 
@@ -674,7 +677,7 @@ try {
   const voiceSocket = sockets.at(-1); voiceSocket.onopen(); voiceSocket.message('task-started');
   const voiceSession = await openingVoice;
   voiceSocket.message('result-generated', { begin_time: 300, end_time: 400, text: '世界', sentence_end: true });
-  const ending = voiceSession.finish({ uri: 'unused', mimeType: 'unused' });
+  const ending = voiceSession.finish();
   voiceSocket.message('result-generated', { begin_time: 100, end_time: 200, text: '你好', sentence_end: true });
   voiceSocket.message('task-finished'); assert.deepEqual(await ending, { success: true, text: '你好世界' });
   const interrupted = dashscope.connectDashScopeRealtimeASR(configuration, { provider: 'dashscopeRealtimeAsr' }, {});
@@ -687,6 +690,196 @@ try {
   const tencentRefused = new tencent.TencentRealtimeASRClient({ signedUrl: 'wss://test' }).connect();
   sockets.at(-1).onmessage({ data: JSON.stringify({ code: 4001, message: '账户服务额度不足' }) });
   await assert.rejects(tencentRefused, /code=4001.*账户服务额度不足/);
+
+  // 新提供方仍由同一配置草稿校验、保存与解析，官方地址无需用户输入。
+  const newConfigurations = new Map();
+  for (const provider of ['volcengineRealtimeAsr', 'stepfunRealtimeAsr']) {
+    const draft = { ...draftModule.getSpeechModelDraft('stt', null), ...draftModule.switchSpeechProvider(provider), apiKey: 'speech-key' };
+    const snapshot = draftModule.buildSpeechDraftConfiguration(draft);
+    assert.deepEqual(catalog.validateSpeechConfiguration('stt', snapshot), {});
+    assert.equal(snapshot.baseURL, catalog.getSpeechProvider(provider).baseURL);
+    assert.equal(draftModule.getSpeechModelDraft('stt', { ...draft, baseUrl: snapshot.baseURL, metadataJson: snapshot.metadataJson }).preserveEndpoint, false);
+    assert.equal(catalog.validateSpeechConfiguration('tts', snapshot).provider, '语音提供方不支持此能力');
+    newConfigurations.set(provider, snapshot);
+  }
+  const stepConfig = newConfigurations.get('stepfunRealtimeAsr');
+  const volcConfig = newConfigurations.get('volcengineRealtimeAsr');
+  const stepEvent = (socket, type, fields = {}) => socket.onmessage({ data: JSON.stringify({ type, ...fields }) });
+  const volcResponse = (socket, payload, { last = false, errorCode } = {}) => {
+    const body = new TextEncoder().encode(typeof payload === 'string' ? payload : JSON.stringify(payload));
+    const frame = new Uint8Array(12 + body.byteLength);
+    frame.set([0x11, errorCode ? 0xf0 : last ? 0x93 : 0x91, 0x10, 0]);
+    const view = new DataView(frame.buffer);
+    view.setInt32(4, errorCode ?? (last ? -3 : 1));
+    view.setUint32(8, body.byteLength);
+    frame.set(body, 12);
+    socket.onmessage({ data: frame.buffer });
+  };
+  const volcFinals = []; const volcInterims = []; const volcStarts = []; let volcFinished = false;
+  let volcReady = false;
+  const openingVolc = realtime.startRealtimeSpeechToText({ configuration: volcConfig,
+    onSpeechStart: result => volcStarts.push(result), onInterimTranscript: result => volcInterims.push(result),
+    onFinalTranscript: result => volcFinals.push(result), onFinished: () => { volcFinished = true; } });
+  void openingVolc.then(() => { volcReady = true; });
+  const volcSocket = sockets.at(-1);
+  volcSocket.onopen();
+  await Promise.resolve();
+  assert.equal(volcReady, false, 'WebSocket open 不等于服务端初始化成功');
+  assert.deepEqual(volcSocket.options.headers, { 'X-Api-Key': 'speech-key', 'X-Api-Resource-Id': 'volc.seedasr.sauc.duration', 'X-Api-Request-Id': 'task-id' });
+  const initialVolcFrame = new DataView(volcSocket.sent[0]);
+  const initialVolcRequest = JSON.parse(new TextDecoder().decode(new Uint8Array(volcSocket.sent[0], 12)));
+  assert.equal(initialVolcFrame.getUint8(0), 0x11);
+  assert.equal(initialVolcFrame.getUint8(1), 0x11);
+  assert.equal(initialVolcFrame.getUint8(2), 0x10, '协商无压缩 JSON');
+  assert.equal(initialVolcFrame.getInt32(4), 1);
+  assert.equal(initialVolcFrame.getUint32(8), volcSocket.sent[0].byteLength - 12);
+  assert.deepEqual(initialVolcRequest.audio, { format: 'pcm', codec: 'raw', rate: 16000, bits: 16, channel: 1 });
+  assert.equal(initialVolcRequest.request.result_type, 'single');
+  assert.equal(initialVolcRequest.request.show_utterances, true);
+  volcResponse(volcSocket, {});
+  const volcSession = (await openingVolc).session;
+  const pcm = new Uint8Array([1, 2, 3, 4]);
+  volcSession.sendAudioChunk(pcm.buffer);
+  assert.equal(new DataView(volcSocket.sent.at(-1)).getInt32(4), 2);
+  assert.deepEqual(new Uint8Array(volcSocket.sent.at(-1), 12), pcm);
+  const utterance = (text, start_time, end_time, definite) => ({ text, start_time, end_time, definite });
+  const firstVolcFinal = utterance('你好', 100, 400, true);
+  volcResponse(volcSocket, { result: { utterances: [utterance('你', 100, 200, false)] } });
+  volcResponse(volcSocket, { result: { utterances: [firstVolcFinal] } });
+  volcResponse(volcSocket, { result: { utterances: [firstVolcFinal, utterance('世', 500, 600, false)] } });
+  assert.equal(volcFinals.length, 1, '累计响应不重复提交已定稿语音');
+  assert.equal(volcInterims.length, 2);
+  assert.equal(volcStarts.length, 2);
+  volcSession.finish(); volcSession.finish();
+  assert.equal(new DataView(volcSocket.sent.at(-1)).getInt32(4), -3);
+  assert.equal(new DataView(volcSocket.sent.at(-1)).getUint8(1), 0x23);
+  assert.equal(volcFinished, false, '发出结束负包仍需等待尾部结果');
+  volcResponse(volcSocket, { result: { utterances: [firstVolcFinal, utterance('世界', 500, 800, true)] } }, { last: true });
+  assert.deepEqual(volcFinals.map(result => result.text), ['你好', '世界']);
+  assert.equal(volcFinals[1].startTime, 500);
+  assert.equal(volcFinals[1].endTime, 800);
+  assert.equal(volcFinished, true);
+  volcResponse(volcSocket, { result: { utterances: [utterance('迟到', 900, 1000, true)] } });
+  assert.equal(volcFinals.length, 2, '结束后不再交付迟到结果');
+  const invalidVolcStart = realtime.startRealtimeSpeechToText({ configuration: volcConfig });
+  const invalidVolcSocket = sockets.at(-1); invalidVolcSocket.onopen();
+  volcResponse(invalidVolcSocket, { result: { utterances: [utterance('无效', 200, 100, true)] } });
+  assert.equal((await invalidVolcStart).success, false, '首包业务格式错误应作为启动失败返回');
+
+  const stepInterims = []; const stepFinals = []; let stepFinished = false; let stepReady = false;
+  const openingStep = realtime.startRealtimeSpeechToText({ configuration: stepConfig,
+    onInterimTranscript: result => stepInterims.push(result), onFinalTranscript: result => stepFinals.push(result),
+    onFinished: () => { stepFinished = true; } });
+  void openingStep.then(() => { stepReady = true; });
+  const stepSocket = sockets.at(-1);
+  stepSocket.onopen();
+  const stepInput = JSON.parse(stepSocket.sent[0]).session.audio.input;
+  assert.equal(stepInput.transcription.model, 'stepaudio-2.5-asr-stream');
+  assert.equal(stepInput.transcription.enable_timestamp_align, true);
+  assert.equal(stepInput.turn_detection, undefined, '单段录音由结束操作提交完整音频');
+  assert.equal(stepSocket.options.headers.Authorization, 'Bearer speech-key');
+  stepEvent(stepSocket, 'session.created');
+  await Promise.resolve(); assert.equal(stepReady, false);
+  stepEvent(stepSocket, 'session.updated');
+  const stepSession = (await openingStep).session;
+  stepSession.sendAudioChunk(pcm.buffer);
+  assert.deepEqual(JSON.parse(stepSocket.sent.at(-1)).audio, 'AQIDBA==');
+  stepSession.finish(); stepSession.finish();
+  assert.equal(stepSocket.sent.filter(value => JSON.parse(value).type === 'input_audio_buffer.commit').length, 1);
+  assert.equal(stepFinished, false);
+  stepEvent(stepSocket, 'conversation.item.created', { item: { id: 'input-item' } });
+  stepEvent(stepSocket, 'input_audio_buffer.committed', { item_id: 'input-item' });
+  stepEvent(stepSocket, 'conversation.item.created', { item: { id: 'step-item' } });
+  stepEvent(stepSocket, 'conversation.item.input_audio_transcription.delta', { item_id: 'step-item', text: '你', stash: '号' });
+  stepEvent(stepSocket, 'conversation.item.input_audio_transcription.delta', { item_id: 'step-item', text: '你好', stash: '' });
+  assert.deepEqual(stepInterims.map(result => result.text), ['你号', '你好'], '实时全文替换，修订尾部不重复拼接');
+  stepEvent(stepSocket, 'conversation.item.input_audio_transcription.completed', {
+    item_id: 'step-item', transcript: '你好。', words: [{ word: '你好', start: 0.12, end: 0.82 }],
+  });
+  assert.deepEqual(stepFinals, [{ index: 0, text: '你好。', startTime: 120, endTime: 820 }]);
+  assert.equal(stepFinished, true, '提交项与转写项 ID 不同，仍以实际转写完成结束录音');
+
+  const continuousFinals = [];
+  const openingCallStep = realtime.startRealtimeSpeechToText({ configuration: stepConfig, consumer: 'call', onFinalTranscript: result => continuousFinals.push(result) });
+  const callStepSocket = sockets.at(-1); callStepSocket.onopen();
+  assert.equal(JSON.parse(callStepSocket.sent[0]).session.audio.input.turn_detection.type, 'server_vad');
+  stepEvent(callStepSocket, 'session.updated');
+  const callStepSession = (await openingCallStep).session;
+  for (const [id, start, end] of [['one', 1.2, 2], ['two', 3.4, 4.1]]) {
+    stepEvent(callStepSocket, 'input_audio_buffer.speech_started', { item_id: id, audio_start_ms: start * 1000 });
+    stepEvent(callStepSocket, 'input_audio_buffer.committed', { item_id: id });
+    stepEvent(callStepSocket, 'conversation.item.input_audio_transcription.completed', { item_id: id, transcript: id, words: [{ start, end }] });
+  }
+  assert.deepEqual(continuousFinals.map(result => [result.index, result.startTime, result.endTime]), [[0, 1200, 2000], [1, 3400, 4100]]);
+  callStepSession.close();
+
+  // 外部鉴权、协议与连接错误保留原因；取消和主动关闭均不冒充服务端失败。
+  for (const configuration of [volcConfig, stepConfig]) {
+    const refused = realtime.startRealtimeSpeechToText({ configuration });
+    const socket = sockets.at(-1); socket.onopen();
+    if (configuration === volcConfig) volcResponse(socket, `无权限 speech-key`, { errorCode: 45000001 });
+    else stepEvent(socket, 'error', { error: { code: 'invalid_api_key', message: '无权限 speech-key' } });
+    const refusal = await refused;
+    assert.equal(refusal.success, false);
+    assert.match(refusal.rawError, /无权限 \[REDACTED\]/);
+    assert.ok(!refusal.rawError.includes('speech-key'));
+    const nativeRefused = realtime.startRealtimeSpeechToText({ configuration });
+    const nativeRefusedSocket = sockets.at(-1);
+    let refusedEarly = false;
+    void nativeRefused.then(() => { refusedEarly = true; });
+    nativeRefusedSocket.onerror({ type: 'error' });
+    await Promise.resolve();
+    assert.equal(refusedEarly, false, 'React Native 的无详情 error 不能提前吞掉握手失败原因');
+    nativeRefusedSocket.onclose({ code: 1006, reason: "Expected HTTP 101 response but was '401 Unauthorized' speech-key" });
+    const nativeRefusal = await nativeRefused;
+    assert.equal(nativeRefusal.success, false);
+    assert.match(nativeRefusal.rawError, /WebSocket 网络失败.*1006.*401 Unauthorized.*\[REDACTED\]/);
+    const malformed = realtime.startRealtimeSpeechToText({ configuration });
+    const malformedSocket = sockets.at(-1); malformedSocket.onopen();
+    malformedSocket.onmessage({ data: configuration === volcConfig ? new ArrayBuffer(2) : 'not-json' });
+    assert.equal((await malformed).success, false);
+    const endedEarly = realtime.startRealtimeSpeechToText({ configuration });
+    sockets.at(-1).onclose({ code: 1006, reason: 'upstream unavailable' });
+    assert.match((await endedEarly).rawError, /1006.*upstream unavailable/);
+    const abort = new AbortController();
+    const cancelled = realtime.startRealtimeSpeechToText({ configuration, signal: abort.signal });
+    abort.abort();
+    assert.match((await cancelled).rawError, /已取消/);
+  }
+
+  for (const configuration of [volcConfig, stepConfig]) {
+    resolver.configureSpeechModelResolver(async () => ({ ...configuration, modelConfigId: 'new-stt', modelConfigName: '新实时识别' }));
+    const opening = voice.startVoiceMessageTranscription({});
+    await new Promise(setImmediate);
+    const socket = sockets.at(-1); socket.onopen();
+    if (configuration === volcConfig) volcResponse(socket, {});
+    else stepEvent(socket, 'session.updated');
+    const session = await opening;
+    session.acceptAudioChunk(pcm.buffer);
+    const ending = session.finish();
+    if (configuration === volcConfig) {
+      volcResponse(socket, { result: { utterances: [utterance('录音识别成功', 0, 100, true)] } }, { last: true });
+    } else {
+      stepEvent(socket, 'conversation.item.created', { item: { id: 'input-recording' } });
+      stepEvent(socket, 'input_audio_buffer.committed', { item_id: 'input-recording' });
+      stepEvent(socket, 'conversation.item.input_audio_transcription.completed', { item_id: 'recording', transcript: '录音识别成功', words: [{ start: 0, end: 0.1 }] });
+    }
+    assert.deepEqual(await ending, { success: true, text: '录音识别成功' }, '新提供方通过正式选择和聊天录音会话交付文本，无文件转写路径');
+
+    const errors = [];
+    const openingFailed = realtime.startRealtimeSpeechToText({ configuration, onError: error => errors.push(error.message) });
+    const failedSocket = sockets.at(-1); failedSocket.onopen();
+    if (configuration === volcConfig) volcResponse(failedSocket, {});
+    else stepEvent(failedSocket, 'session.updated');
+    const failed = await openingFailed;
+    failedSocket.onerror({ type: 'error' });
+    assert.deepEqual(errors, [], 'React Native 的 error 不含原因，需消费紧接着的 close');
+    failedSocket.onclose({ code: 1006, reason: 'Expected HTTP 101 response but was 429: rate limit' });
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /1006.*HTTP 101.*429: rate limit/);
+    failed.session.close();
+    assert.equal(errors.length, 1, '连接错误与随后 close 不能重复报告同一失败');
+  }
 
   // 临时音频的取消结果由生成方清理，不交给已离开的页面。
   const deleted = [];
@@ -741,10 +934,10 @@ try {
   const formPage = load('src/features/assistants/presentation/auxiliaryModels/SpeechModelEditScreen.tsx', {
     react: React, 'react-native': nativeForm, 'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
     '@features/speech': { ...catalog, SpeechConfigurationTest: 'SpeechTest' },
-    '@shared/ui': { KeyboardAvoidingContainer: 'KeyboardContainer', Button: 'Button', DropdownField: 'DropdownField', InputField: 'InputField', ToggleField: 'ToggleField', showAppDialog: assert.fail },
+    '@shared/ui': { KeyboardAvoidingContainer: 'KeyboardContainer', Button: 'Button', DropdownField: 'DropdownField', InputField: 'InputField', ToggleField: 'ToggleField', ModelPickerModal: 'ModelPickerModal', ListItem: 'ListItem', showAppDialog: assert.fail },
     '@shared/ui/NavigationHeader': 'Header', '@shared/theme': { useTheme: () => formTheme },
     '@shared/ui/useAutoSaveDraft': formHooks, '@shared/ui/useAutoSaveFeedback': formFeedback,
-    '@shared/ui/AutoSaveErrors': { AutoSaveErrors: 'AutoSaveErrors' }, './speechModelDraft': draftModule,
+    '@shared/ui/AutoSaveErrors': { AutoSaveErrors: 'AutoSaveErrors' }, './speechModelDraft': draftModule, './ServiceConnectionPicker': 'ServicePicker',
   });
   const createdFish = []; const fishWrites = [];
   const formProps = { kind: 'tts', initialData: null, saving: false, onBack() {},
@@ -755,9 +948,18 @@ try {
   assert.ok(formField('DropdownField', '提供方').props.options.some((option) => option.value === 'fishAudio'));
   assert.equal(formField('DropdownField', '提供方').props.disabled, false, '新建配置允许选择提供方');
   assert.equal(formField('InputField', '配置名称').props.value, 'MiniMax');
+  assert.equal(fishForm.root.findAllByType('ServicePicker').length, 0, '官方 TTS 不提供通用服务选择');
   for (const option of formField('DropdownField', '提供方').props.options) {
     await act(async () => { formField('DropdownField', '提供方').props.onChange(option.value); });
     assert.equal(formField('InputField', '配置名称').props.value, option.label, '默认名称应跟随提供方切换');
+    assert.equal(fishForm.root.findAllByType('ServicePicker').length, option.value === 'openaiCompatible' ? 1 : 0, '只有自定义兼容 TTS 显示服务选择');
+    if (option.value === 'openaiCompatible') {
+      const items = fishForm.root.findAll(node => ['InputField', 'ServicePicker'].includes(node.type));
+      const address = items.findIndex(node => node.type === 'InputField' && node.props.label === 'API 地址');
+      const key = items.findIndex(node => node.type === 'InputField' && node.props.label === 'API Key');
+      const service = items.findIndex(node => node.type === 'ServicePicker');
+      assert.equal(key, address + 1); assert.equal(service, key + 1, '服务入口紧接地址和 Key');
+    }
   }
   await act(async () => { formField('InputField', '配置名称').props.onChangeText('我的语音'); });
   await act(async () => { formField('DropdownField', '提供方').props.onChange('openai'); });
@@ -771,7 +973,7 @@ try {
     formField('InputField', '音色 ID').props.onChangeText('my-fish-voice');
     formField('InputField', 'API Key').props.onChangeText('my-fish-key');
     formField('InputField', '语速').props.onChangeText('1.1');
-    formField('DropdownField', '模型').props.onChange('s2.1-pro-free');
+    fishForm.root.findByType('ModelPickerModal').props.onSelect('s2.1-pro-free');
   });
   let fishTestConfiguration;
   await act(async () => { fishTestConfiguration = fishForm.root.findByType('SpeechTest').props.getConfiguration(); });
@@ -826,6 +1028,31 @@ try {
   assert.equal(formField('InputField', 'API Key').props.value, 'my-fish-key');
   assert.equal(formField('DropdownField', '提供方').props.disabled, true);
   await act(async () => { fishForm.unmount(); });
+
+  for (const providerId of ['volcengineRealtimeAsr', 'stepfunRealtimeAsr']) {
+    const created = [];
+    let form;
+    await act(async () => { form = TestRenderer.create(React.createElement(formPage.default, {
+      ...formProps, kind: 'stt', onCreate: async input => { created.push(input); },
+    }), { createNodeMock: () => ({ scrollTo() {} }) }); });
+    const field = (type, label) => form.root.findAllByType(type).find(node => node.props.label === label);
+    await act(async () => { field('DropdownField', '提供方').props.onChange(providerId); });
+    const provider = catalog.getSpeechProvider(providerId);
+    assert.equal(form.root.findAllByType('ServicePicker').length, 0, '实时 STT 不参与通用服务配置');
+    assert.equal(field('InputField', 'API 地址'), undefined, '官方实时识别无需填写 Endpoint 或 API 地址');
+    assert.equal(form.root.findByType('ModelPickerModal').props.models[0].name, provider.modelLabels[provider.defaultModel]);
+    await act(async () => { field('InputField', provider.credentialLabel).props.onChangeText('new-service-key'); });
+    let testSnapshot;
+    await act(async () => { testSnapshot = form.root.findByType('SpeechTest').props.getConfiguration(); });
+    assert.equal(testSnapshot.baseURL, provider.baseURL);
+    assert.equal(testSnapshot.apiKey, 'new-service-key');
+    assert.deepEqual(created, [], '测试配置快照不创建正式资产');
+    await act(async () => { form.root.findByType('Header').props.rightButton.props.onPress(); });
+    assert.equal(created.length, 1);
+    assert.equal(created[0].baseUrl, provider.baseURL);
+    assert.equal(created[0].metadataJson, testSnapshot.metadataJson);
+    await act(async () => { form.unmount(); });
+  }
 
   // UI 测试通过真实 React 生命周期验证播放清理与迟到响应，不使用源码断言。
   const pending = deferred(); let stops = 0;

@@ -5,7 +5,7 @@ import Svg, { Path } from 'react-native-svg';
 import Animated, { useAnimatedProps, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@shared/theme';
-import { buildScoopedBarPath } from './tabBarPaths';
+import { buildScoopedBarPath, SCOOPED_BAR_TOP } from './tabBarPaths';
 import { ActiveTabGlyph, TabBarItems, TABS, useTabMotion, type BottomTabBarVariantProps } from './tabBarShared';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
@@ -35,7 +35,7 @@ export default function FloatingBallTabBar(props: BottomTabBarVariantProps) {
     // 悬浮图标直接浮在页面内容前；四个 Tab 场景已用 useFloatingTabBarScrollPadding 预留底部空间。
     <View pointerEvents="box-none"
       style={[styles.dock, { height, paddingLeft: insets.left, paddingRight: insets.right }]}>
-      <View style={styles.container}
+      <View pointerEvents="box-none" style={styles.container}
         onLayout={event => setWidth(event.nativeEvent.layout.width)}>
         {width > 0 && (
           <>
@@ -52,7 +52,7 @@ export default function FloatingBallTabBar(props: BottomTabBarVariantProps) {
             </Animated.View>
           </>
         )}
-        <TabBarItems {...props} height={HEIGHT} iconOffset={10} />
+        <TabBarItems {...props} height={HEIGHT} headroom={SCOOPED_BAR_TOP} />
       </View>
     </View>
   );

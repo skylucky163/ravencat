@@ -186,4 +186,69 @@ assert.deepEqual(
   ['always'],
   'tools_enabled=false 时不得兜底匹配，遗留 condition 同样不匹配',
 );
+// 视觉识别正文与两级摘要共用同一优先级：AI 覆盖 → 全局默认 → 内置正文。
+let visionOverrides = [];
+let visionDefaults = {};
+const { resolveVisionOCRPrompt } = loadTypeScriptModule(
+  'src/features/prompting/application/ManageAssistantPrompts.ts',
+  {
+    './PromptingRuntimeDependencies': {
+      getPromptingRuntimeDependencies: () => ({
+        catalog: { getById: (id) => (id === 'internal.vision_ocr' ? { id, defaultContent: '内置图片识别正文' } : null) },
+        defaults: {
+          read: async () => ({
+            overrides: visionDefaults, userPrompts: [], toolPermissions: {},
+            appToolPackages: {}, agentRegistryExcludedAssistantIds: [],
+          }),
+        },
+        assistantPrompts: {
+          listDefinitionStates: async () => [],
+          listDefinitionOverrides: async () => visionOverrides,
+          listAssistantUserPrompts: async () => [],
+        },
+      }),
+    },
+  },
+);
+assert.equal(await resolveVisionOCRPrompt('ai-1'), '内置图片识别正文', '没有覆盖时必须回落到内置正文');
+visionDefaults = { 'internal.vision_ocr': '全局图片识别正文' };
+assert.equal(await resolveVisionOCRPrompt('ai-1'), '全局图片识别正文', '全局默认正文优先于内置正文');
+visionOverrides = [{ assistantId: 'ai-1', definitionId: 'internal.vision_ocr', locale: 'zh-CN', content: '这位 AI 的图片识别正文' }];
+assert.equal(await resolveVisionOCRPrompt('ai-1'), '这位 AI 的图片识别正文', 'AI 覆盖优先于全局默认');
+visionOverrides = [{ assistantId: 'ai-1', definitionId: 'internal.vision_ocr', locale: 'en-US', content: 'legacy english' }];
+assert.equal(await resolveVisionOCRPrompt('ai-1'), '全局图片识别正文', '历史英文覆盖不参与注入');
+
+// 默认页与 AI 详情复用同一份 defaults；未传快照的独立调用仍自行读取。
+let defaultsReads = 0;
+const sharedDefaults = {
+  overrides: {}, userPrompts: [], toolPermissions: { search_protocols: true },
+  appToolPackages: {}, agentRegistryExcludedAssistantIds: [],
+};
+const snapshotRuntime = {
+  defaults: { read: async () => { defaultsReads += 1; return sharedDefaults; } },
+  tools: {
+    list: async () => [{ name: 'search_protocols', description: '读取协议', defaultEnabled: false, mutating: false, callOnly: false }],
+    listOverrides: async () => [{ toolName: 'search_protocols', enabled: false }],
+  },
+  assistantPrompts: {
+    getAssistantSettings: async () => null,
+    listDefinitionStates: async () => [],
+    listDefinitionOverrides: async () => [],
+    listAssistantUserPrompts: async () => [],
+    listDirectToolNames: async () => [],
+  },
+};
+const snapshotMocks = { './PromptingRuntimeDependencies': { getPromptingRuntimeDependencies: () => snapshotRuntime } };
+const { getDefaultPromptEditor } = loadTypeScriptModule('src/features/prompting/application/ManagePromptDefaults.ts', snapshotMocks);
+const { getAssistantPromptEditorDetails, getAssistantToolPermissions } = loadTypeScriptModule(
+  'src/features/prompting/application/ManageAssistantPrompts.ts', snapshotMocks,
+);
+const next = await getDefaultPromptEditor();
+const details = await getAssistantPromptEditorDetails('assistant-1', next);
+assert.equal(defaultsReads, 1, '默认页与 AI 详情必须复用同一份 defaults 快照');
+assert.equal(next.tools[0].enabled, true, '全局默认权限保持不变');
+assert.equal(details.tools[0].enabled, false, 'AI 覆盖仍优先于全局默认');
+await getAssistantToolPermissions('assistant-2');
+assert.equal(defaultsReads, 2, '未传快照的独立调用仍按原契约读取配置');
+
 console.log('提示词中心 MCP 服务端口、工具权限、条件匹配与受保护定义检查通过。');

@@ -30,5 +30,6 @@ export default function useModelSettings({ aiAssistant, onUpdated, onShowAlert }
     // 先校验本地输入；连接测试不替代持久化，也不使用最后一次合法数字掩盖无效草稿。
     if (validateAll()) await testConnection();
   }, [validateAll, testConnection]);
-  return { ...form, ...host, ...selection, ...test, handleTestConnection };
+  return { ...form, ...host, ...selection, ...test, handleTestConnection,
+    fillServiceConnection: (service: { id: string; baseUrl: string; apiKey: string }) => { form.fillServiceConnection(service); selection.resetModelSelection(); resetTestState(); } };
 }

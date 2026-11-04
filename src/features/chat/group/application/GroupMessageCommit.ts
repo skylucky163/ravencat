@@ -91,6 +91,7 @@ export async function commitGroupUserMessage(params: {
   text: string;
   attachments?: ChatAttachment[];
   sharedRecord?: SharedChatRecord;
+  sharedMoment?: import('../../messages/domain/SharedMoment').SharedMoment;
   /** 独立 Sticker 消息语义；不能与普通附件同时出现。 */
   sticker?: StickerMessageSnapshot | null;
   mentions?: Extract<GroupMessageMention, { actorType: 'user' }>[];
@@ -103,16 +104,16 @@ export async function commitGroupUserMessage(params: {
   const attachments = params.attachments || [];
   const sticker = params.sticker || null;
   const mentions = params.mentions || [];
-  if ((!text && attachments.length === 0 && !sticker && !params.sharedRecord) || (sticker && attachments.length > 0)) {
+  if ((!text && attachments.length === 0 && !sticker && !params.sharedRecord && !params.sharedMoment) || (sticker && attachments.length > 0)) {
     throw new Error('消息不能为空');
   }
 
   const currentUser = await getChatGroupRuntimeDependencies().currentUserDirectory.getCurrent();
   const now = new Date().toISOString();
-  const parts = splitUserMessageSubmission({ text, attachments, clientMessageId: params.clientMessageId, sharedRecord: params.sharedRecord });
+  const parts = splitUserMessageSubmission({ text, attachments, clientMessageId: params.clientMessageId, sharedRecord: params.sharedRecord, sharedMoment: params.sharedMoment });
   const inputs: CommitMessageInput[] = parts.map((part, index) => {
     const isLast = index === parts.length - 1;
-    const messageMetadata = part.sharedRecord ? { kind: 'shared_record', sharedRecord: part.sharedRecord } : sticker
+    const messageMetadata = part.sharedRecord ? { kind: 'shared_record', sharedRecord: part.sharedRecord } : part.sharedMoment ? { kind: 'shared_moment', sharedMoment: part.sharedMoment } : sticker
       ? buildStickerMessageMetadata(sticker)
       : buildAttachmentMessageMetadata(part);
     return {

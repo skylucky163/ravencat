@@ -127,10 +127,10 @@ assert.equal(await repository.releaseAppointmentCooldown('b'), false, '自然到
 await repository.setHostAI('a');
 
 const requests = [];
+const execution = { requestId: 'host-relationship', signal: new AbortController().signal, executionDeadlineAt: performance.now() + 60_000 };
 let databaseReady = false;
 let currentAssistant = { id: 'a', agentId: 'agent-a', enableTools: false, isHostAI: false, model: 'test' };
-const { runHostRelationshipReplyHeadlessTask } = load('src/host/runtime/HostRelationshipReplyHeadlessTask.ts', {
-  './ConversationExecutionLifetime': { withConversationExecutionLifetime: (_data, work) => work({ signal: new AbortController().signal, executionDeadlineAt: Date.now() + 60_000 }) },
+const { executeHostRelationshipReply } = load('src/host/runtime/ExecuteHostRelationshipReply.ts', {
   '@features/assistants': { getAIAssistantById: async () => {
     assert.equal(databaseReady, true, '读取身份前必须经过启动门');
     return currentAssistant;
@@ -142,7 +142,7 @@ const { runHostRelationshipReplyHeadlessTask } = load('src/host/runtime/HostRela
   '../composition/ensureHostDatabaseReady': { ensureHostDatabaseReady: async () => { databaseReady = true; } },
 });
 for (const change of ['appointed', 'revoked']) {
-  await runHostRelationshipReplyHeadlessTask({ aiId: 'a', change, occurredAt: new Date().toISOString() });
+  await executeHostRelationshipReply({ aiId: 'a', change, occurredAt: new Date().toISOString() }, execution);
   const request = requests.at(-1);
   assert.equal(request.triggerReason, `host_ai_${change}`);
   assert.equal(request.sessionId, 'session-a');
@@ -151,8 +151,8 @@ for (const change of ['appointed', 'revoked']) {
   assert.equal(request.aiConfig.isHostAI, false, '执行读取当前身份，不从任命事件恢复旧权限');
 }
 currentAssistant = null;
-await runHostRelationshipReplyHeadlessTask({ aiId: 'a', change: 'revoked', occurredAt: new Date().toISOString() });
+await executeHostRelationshipReply({ aiId: 'a', change: 'revoked', occurredAt: new Date().toISOString() }, execution);
 assert.equal(requests.length, 2, '已经删除的 AI 不再发言');
-await assert.rejects(runHostRelationshipReplyHeadlessTask({ aiId: 'a', change: 'unknown', occurredAt: 'invalid' }), /参数非法/);
+await assert.rejects(executeHostRelationshipReply({ aiId: 'a', change: 'unknown', occurredAt: 'invalid' }, execution), /参数非法/);
 db.close();
 console.log('主理 AI 冷静期验证通过：身份隔离、事务回滚、动态暴露、自主解除、自然到期与操作唤醒。');

@@ -9,8 +9,8 @@ import {
 export const REPLY_TASK_PROMPT_DEFINITIONS = [
   {
     id: 'internal.vision_ocr',
-    version: 2,
-    name: '图片 OCR 与视觉转述',
+    version: 3,
+    name: '图片识别提示词',
     description: '读取本轮图片可见文字，并只补充可靠的必要画面线索。',
     owner: 'chat',
     category: 'internal',
@@ -18,9 +18,10 @@ export const REPLY_TASK_PROMPT_DEFINITIONS = [
     defaultSlot: 'foundation',
     placement: 'system',
     protection: 'overridable',
-    protectionReason: '只允许在 OCR 辅助模型配置中覆盖任务正文；输出契约仍锁定。',
+    protectionReason: '正文由提示词中心管理；输出契约仍锁定，不随正文覆盖改变。',
     contentKind: 'static',
     content: VISION_OCR_SYSTEM_PROMPT,
+    defaultContent: VISION_OCR_SYSTEM_PROMPT,
     sourcePath: 'src/features/chat/reply/application/ReplyTaskPromptBlocks.ts',
   },
   {

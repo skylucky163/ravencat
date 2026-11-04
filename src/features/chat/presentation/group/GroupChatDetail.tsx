@@ -9,8 +9,9 @@ import ChatHeader from '../messages/components/ChatHeader';
 import { useChatMessageSelection } from '../messages/components/useChatMessageSelection';
 import { useChatMessageShare } from '../messages/components/useChatMessageShare';
 import { useChatFavoriteAction } from '../messages/components/useChatFavoriteAction';
+import { useChatStickerAction } from '../messages/components/useChatStickerAction';
 import { getChatMessageActions } from '../../messages/domain/ChatMessageActions';
-import ChatShareSheet from '../messages/components/ChatShareSheet';
+import ChatContentShareSheet from '../messages/components/ChatContentShareSheet';
 import { ChatSelectionHeader, ChatSelectionFooter } from '../messages/components/ChatSelectionBars';
 import ChatMessageList from '../messages/components/ChatMessageList';
 import ChatInputArea from '../messages/components/ChatInputArea';
@@ -41,11 +42,12 @@ import type {
 } from '../../group/domain/GroupParticipantDirectory';
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
 import type { StickerMessageSnapshot } from '../../messages/domain/ChatSticker';
-import { createChatReplyTarget, type ChatReplyTarget } from '../../messages/domain/chatMessageMetadata';
-import type { ChatDetailAIAssistantLike } from '../messages/components/chatTypes';
+import type { ChatReplyTarget } from '../../messages/domain/chatMessageMetadata';
+import { createChatReplyTarget, type ChatDetailAIAssistantLike } from '../messages/components/chatTypes';
 import type { UserProfile } from '@features/profile';
 import ChatMessageActionMenu from '../messages/components/ChatMessageActionMenu';
 import ChatMessageEditor from '../messages/components/ChatMessageEditor';
+import ChatMessageTextSelectionSheet from '../messages/components/ChatMessageTextSelectionSheet';
 import { getChatSelectionKey } from '../../messages/domain/ChatMessageSelection';
 import { canEditChatMessage } from '../../messages/domain/ChatMessageEditing';
 import { copyTextToClipboard } from '@platform/device';
@@ -68,6 +70,7 @@ interface GroupChatDetailProps {
   aiAssistants: ChatDetailAIAssistantLike[];
   onOpenFilePreview: (params: { fileUri: string; fileName: string; mimeType?: string | null }) => void;
   onOpenMenu: () => void;
+  onOpenAssistantProfile: (aiId: string) => void;
   onGoBack?: () => void;
 }
 
@@ -131,6 +134,7 @@ export default function GroupChatDetail({
   aiAssistants,
   onOpenFilePreview,
   onOpenMenu,
+  onOpenAssistantProfile,
   onGoBack,
 }: GroupChatDetailProps) {
   const theme = useTheme();
@@ -231,6 +235,8 @@ export default function GroupChatDetail({
   } = useChatComposerSurface();
   const [actionMenuVisible, setActionMenuVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
+  const [textSelectionText, setTextSelectionText] = useState<string | null>(null);
+  useEffect(() => { setTextSelectionText(null); }, [sessionId, isActive]);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [isTranslatingMessage, setIsTranslatingMessage] = useState(false);
@@ -279,6 +285,7 @@ export default function GroupChatDetail({
   });
   const share = useChatMessageShare({ sessionId, sourceName: group.name, isActive, onShared: selection.exit });
   const favoriteMessage = useChatFavoriteAction(selectedMessage, group.name);
+  const stickerAction = useChatStickerAction(selectedMessage);
   const messageActions = selectedMessage ? getChatMessageActions(selectedMessage) : null;
   const handleShareMessage = useCallback(() => {
     dismissInputSurface();
@@ -381,9 +388,6 @@ export default function GroupChatDetail({
       aiAssistants.map((assistant) => [assistant.id, assistant])
     );
   }, [aiAssistants]);
-  const publicMentionMembers = useMemo(() => aiAssistants.map((assistant) => ({
-    aiAssistantId: assistant.id, name: assistant.name,
-  })), [aiAssistants]);
 
   const memberAssistants = useMemo<ChatDetailAIAssistantLike[]>(() => {
     const members = groupDetails?.members || [];
@@ -465,22 +469,25 @@ export default function GroupChatDetail({
     const committedMentions = resolveSelectedMentions(text, selectedMentions);
     setReplyTo(null);
     try {
-      await withAttachmentSubmission((attachments) => sendGroupUserMessage({
-        groupId: sessionId,
-        text,
-        attachments,
-        mentions: committedMentions.map((mention) => ({
-          actorType: 'user' as const,
-          target: {
-            targetType: 'assistant' as const,
-            assistantId: mention.assistantId,
-            displayNameAtSend: mention.displayName,
-          },
-        })),
-        replyToId: currentReplyTo?.id || null,
-        replyToText: currentReplyTo?.text || null,
-        replyQuote: currentReplyTo?.quote,
-      }), () => true);
+      await withAttachmentSubmission(async (attachments, consumeDraft) => {
+        await sendGroupUserMessage({
+          groupId: sessionId,
+          text,
+          attachments,
+          mentions: committedMentions.map((mention) => ({
+            actorType: 'user' as const,
+            target: {
+              targetType: 'assistant' as const,
+              assistantId: mention.assistantId,
+              displayNameAtSend: mention.displayName,
+            },
+          })),
+          replyToId: currentReplyTo?.id || null,
+          replyToText: currentReplyTo?.text || null,
+          replyQuote: currentReplyTo?.quote,
+        });
+        consumeDraft();
+      });
       setSelectedMentions([]);
     } catch (error) {
       showAppDialog({ title: '发送失败', message: error instanceof Error ? error.message : '发送失败', tone: 'error' });
@@ -573,6 +580,11 @@ export default function GroupChatDetail({
     }
   }, [selectedMessage]);
 
+  const handleSelectMessageText = useCallback(() => {
+    dismissInputSurface();
+    setTextSelectionText(selectedMessage!.text);
+  }, [dismissInputSurface, selectedMessage]);
+
   const handleRewriteMessage = useCallback(() => {
     dismissInputSurface();
     setEditingMessage(selectedMessage);
@@ -585,8 +597,8 @@ export default function GroupChatDetail({
       delete next[edited.id];
       return next;
     });
-    setReplyTo((previous) => previous?.id === edited.id ? createChatReplyTarget(edited, publicMentionMembers) : previous);
-  }, [publicMentionMembers, setMessages]);
+    setReplyTo((previous) => previous?.id === edited.id ? createChatReplyTarget(edited, aiAssistants, currentUser.name) : previous);
+  }, [aiAssistants, currentUser.name, setMessages]);
 
   const handleDeleteMessage = useCallback(() => {
     if (!selectedMessage) return;
@@ -614,8 +626,8 @@ export default function GroupChatDetail({
 
   const handleQuoteMessage = useCallback(() => {
     if (!selectedMessage) return;
-    setReplyTo(createChatReplyTarget(selectedMessage, publicMentionMembers));
-  }, [publicMentionMembers, selectedMessage]);
+    setReplyTo(createChatReplyTarget(selectedMessage, aiAssistants, currentUser.name));
+  }, [aiAssistants, currentUser.name, selectedMessage]);
 
   const handleTranslateMessage = useCallback(async () => {
     if (!selectedMessage || isTranslatingMessage) return;
@@ -806,12 +818,13 @@ export default function GroupChatDetail({
             messages={messages}
             aiAssistant={aiAssistantLike}
             aiAssistants={memberAssistants}
+            onOpenAssistantProfile={onOpenAssistantProfile}
             hasMore={hasMore}
             isLoadingMore={isLoadingMore}
             onLoadMore={loadMore}
             userAvatar={currentUser.avatar}
             userName={currentUser.name}
-            pauseAutoScroll={share.visible}
+            pauseAutoScroll={share.visible || textSelectionText !== null}
             showAssistantName
             onTogetherListeningAccept={(id) => listeningAction(acceptChatTogetherListeningInvitation, id)}
             onTogetherListeningDecline={(id) => listeningAction(declineChatTogetherListeningInvitation, id)}
@@ -847,11 +860,16 @@ export default function GroupChatDetail({
         />
       )}
 
+      {textSelectionText !== null && isActive && (
+        <ChatMessageTextSelectionSheet text={textSelectionText} onClose={() => setTextSelectionText(null)} />
+      )}
+
       <ChatMessageActionMenu
         visible={actionMenuVisible}
         onClose={handleCloseActionMenu}
         position={menuPosition}
         onCopy={selectedMessage?.text.trim() ? handleCopyMessage : undefined}
+        onSelectText={selectedMessage?.text.trim() ? handleSelectMessageText : undefined}
         onRewrite={selectedMessage && canEditChatMessage(selectedMessage) ? handleRewriteMessage : undefined}
         onDelete={handleDeleteMessage}
         onMultiSelect={selectedMessage && selection.availableKeys.has(getChatSelectionKey(selectedMessage)) ? handleEnterSelection : undefined}
@@ -860,8 +878,9 @@ export default function GroupChatDetail({
         onTranslate={messageActions?.translate ? handleTranslateMessage : undefined}
         onFavorite={messageActions?.favorite ? favoriteMessage.toggle : undefined}
         isFavorited={favoriteMessage.isFavorited}
+        stickerAction={stickerAction}
       />
-      <ChatShareSheet share={share} onPreviewFile={(params) => { share.close(); onOpenFilePreview(params); }} />
+      <ChatContentShareSheet share={share} onPreviewFile={(params) => { share.close(); onOpenFilePreview(params); }} />
 
       <GroupSpeechQueueOverlay
         visible={queueOverlayVisible}

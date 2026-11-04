@@ -6,9 +6,6 @@ export type ChatSubScreen =
   | 'search'
   | 'menu'
   | 'protocol'
-  | 'modelSettings'
-  | 'chatSettings'
-  | 'summary'
   | 'callHistory'
   | 'statistics'
   | 'filePreview';

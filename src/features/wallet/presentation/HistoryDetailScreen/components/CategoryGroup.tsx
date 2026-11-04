@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { useStyles } from '../styles';
+import { formatMonthDay } from '../../utils/timeUtils';
 import type { WalletRecord } from '../../../domain/WalletRecord';
 
 interface CategoryGroupProps {
@@ -17,11 +18,6 @@ interface CategoryGroupProps {
   records: WalletRecord[];
   onRecordLongPress: (record: WalletRecord) => void;
   mutatingRecordId: string | null;
-}
-
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 export function CategoryGroup({
@@ -65,7 +61,7 @@ export function CategoryGroup({
           disabled={mutatingRecordId !== null}
         >
           <View style={styles.recordLeft}>
-            <Text style={styles.recordDate}>{formatDate(record.recordDate)}</Text>
+            <Text style={styles.recordDate}>{formatMonthDay(record.recordDate)}</Text>
             <Text style={styles.recordDetail}>
               {record.detail || record.category}
             </Text>

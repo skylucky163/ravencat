@@ -28,6 +28,7 @@ import { formatMessageTime } from '@shared/utils/timeFormat';
 import type { ChatDetailAIAssistantLike } from './chatTypes';
 import { MessageListItem } from './ChatMessageListParts';
 import { ReasoningExpansionContext } from './reasoningExpansionState';
+import { ChatMediaResolutionCacheContext, createChatMediaResolutionCache } from './chatMediaResolutionCache';
 import { getChatSelectionKey } from '../../../messages/domain/ChatMessageSelection';
 import {
   buildMessageBubbleRenderState,
@@ -80,7 +81,6 @@ import {
   type HistoryPaginationGate,
 } from './chatHistoryPagination';
 import { reloadTurnDisplayHistory, retainTurnDisplayHistory } from '../../../reply/application/ChatTurnPresentationRuntime';
-import { setChatEventBus } from '../../../messages/events/ChatEvents';
 
 const EMPTY_ATTACHMENTS: ChatAttachment[] = [];
 interface PaperNoteFooterItem {
@@ -141,6 +141,9 @@ interface ChatMessageListProps {
    * 群聊场景：在 AI 气泡上方显示发送者名，用于区分多个 AI
    */
   showAssistantName?: boolean;
+
+  /** 打开消息实际所属 AI 的个人主页，由 App 执行导航。 */
+  onOpenAssistantProfile?: (aiId: string) => void;
 
   /**
    * 长按某条消息时的回调函数
@@ -289,6 +292,7 @@ function ChatMessageList({
   userName,
   showAssistantName = false,
   onMessageLongPress,
+  onOpenAssistantProfile,
   onLoadMore,
   hasMore,
   isLoadingMore,
@@ -312,11 +316,8 @@ function ChatMessageList({
   useEffect(() => sessionId ? retainTurnDisplayHistory(sessionId) : undefined, [sessionId]);
   useEffect(() => {
     if (!sessionId) return;
-    const reload = () => { void reloadTurnDisplayHistory(sessionId, messages).catch(error => console.error('[ChatMessageList] 展示历史读取失败', error)); };
-    reload();
-    return setChatEventBus({ emit: (name, payload) => {
-      if (payload.sessionId === sessionId && name !== 'typingStatusChanged' && name !== 'turnExecutionChanged') reload();
-    } });
+    // 消息事实由时间线订阅更新；这里只跟随窗口，运行终态由展示 owner 主动重读。
+    void reloadTurnDisplayHistory(sessionId, messages).catch(error => console.error('[ChatMessageList] 展示历史读取失败', error));
   }, [sessionId, messages]);
   const { messages: completeTimelineMessages } = useAgentTransientTimeline(
     sessionId,
@@ -326,6 +327,10 @@ function ChatMessageList({
     !hiddenRunId || message.turnRunId !== hiddenRunId || message.turnItemIndex == null
   ), [completeTimelineMessages, hiddenRunId]);
   const listRef = useRef<FlashListRef<ChatListItem> | null>(null);
+  const mediaResolutionCache = useMemo(() => {
+    void sessionId;
+    return createChatMediaResolutionCache();
+  }, [sessionId]);
   const expandedReasoningKeys = useMemo(() => {
     // 切换会话就释放旧意图，不让可复用列表把状态带进另一会话。
     void sessionId;
@@ -514,7 +519,7 @@ function ChatMessageList({
         sticker,
         voice,
         isToolStatusMessage: isToolStatusMessageMetadata(metadata),
-        isSharedRecord: metadata?.kind === 'shared_record',
+        isSharedRecord: metadata?.kind === 'shared_record' || metadata?.kind === 'shared_moment',
       });
       const tailFlags = actionGroup
         ? runTailFlags.get(actionGroup.children[actionGroup.children.length - 1])
@@ -695,6 +700,7 @@ function ChatMessageList({
           selectionDisabled={selection?.disabled}
           onToggleSelection={selection?.onToggle}
           isVoiceTranscriptExpanded={expandedVoiceTranscriptIds.has(item.msg.id)}
+          onOpenAssistantProfile={onOpenAssistantProfile}
           onMessageLongPress={onMessageLongPress}
           onRetryMessage={onRetryMessage}
           onHideTranslation={onHideTranslation}
@@ -716,6 +722,7 @@ function ChatMessageList({
       selectionKeyForItem,
       expandedVoiceTranscriptIds,
       onMessageLongPress,
+      onOpenAssistantProfile,
       onRetryMessage,
       onHideTranslation,
       onPreviewFile,
@@ -844,35 +851,37 @@ function ChatMessageList({
     >
       {/* FlashList 按组件类型缓存动画包装；内联函数会在页面更新时重建整张列表。 */}
       <ReasoningExpansionContext.Provider value={expandedReasoningKeys}>
-        <FlashList
-          key={sessionId || 'message_list'}
-          ref={listRef}
-          data={listData}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          getItemType={getChatListItemType}
-          CellRendererComponent={probeCellRenderer}
-          renderScrollComponent={TextSelectionScrollView}
-          nestedScrollEnabled
-          scrollEnabled={isListScrollEnabled}
-          contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator
-          keyboardDismissMode="none"
-          keyboardShouldPersistTaps="handled"
-          scrollEventThrottle={32}
-          maintainVisibleContentPosition={{
-            // 原生维护阅读锚点和初始底部排布；持续贴底由 useChatBottomFollow 拥有。
-            startRenderingFromBottom: true,
-          }}
-          onScroll={handleScroll}
-          onScrollBeginDrag={handleHistoryScrollBeginDrag}
-          onScrollEndDrag={handleHistoryUserScrollEnd}
-          onMomentumScrollBegin={handleMomentumScrollBegin}
-          onMomentumScrollEnd={handleHistoryUserScrollEnd}
-          onLayout={handleListLayout}
-          onCommitLayoutEffect={handleListLayoutCommit}
-          onContentSizeChange={handleContentSizeChange}
-        />
+        <ChatMediaResolutionCacheContext.Provider value={mediaResolutionCache}>
+          <FlashList
+            key={sessionId || 'message_list'}
+            ref={listRef}
+            data={listData}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            getItemType={getChatListItemType}
+            CellRendererComponent={probeCellRenderer}
+            renderScrollComponent={TextSelectionScrollView}
+            nestedScrollEnabled
+            scrollEnabled={isListScrollEnabled}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator
+            keyboardDismissMode="none"
+            keyboardShouldPersistTaps="handled"
+            scrollEventThrottle={32}
+            maintainVisibleContentPosition={{
+              // 原生维护阅读锚点和初始底部排布；持续贴底由 useChatBottomFollow 拥有。
+              startRenderingFromBottom: true,
+            }}
+            onScroll={handleScroll}
+            onScrollBeginDrag={handleHistoryScrollBeginDrag}
+            onScrollEndDrag={handleHistoryUserScrollEnd}
+            onMomentumScrollBegin={handleMomentumScrollBegin}
+            onMomentumScrollEnd={handleHistoryUserScrollEnd}
+            onLayout={handleListLayout}
+            onCommitLayoutEffect={handleListLayoutCommit}
+            onContentSizeChange={handleContentSizeChange}
+          />
+        </ChatMediaResolutionCacheContext.Provider>
       </ReasoningExpansionContext.Provider>
       {showNewMessagePrompt ? (
         <Pressable

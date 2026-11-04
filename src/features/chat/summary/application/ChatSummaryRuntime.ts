@@ -3,11 +3,11 @@ import { createRuntimeSlot } from '@shared/runtime/RuntimeSlot';
 import type { ChatSummaryModelInput, ChatSummaryRepository, SecondaryChatSummaryClaim, ChatSummaryCallDiagnostics, ChatSummaryRequestSettings, ChatSummaryFailure } from '../domain/ChatSummaryRepository';
 export interface ChatSummaryRuntime {
   repository: ChatSummaryRepository;
-  getBatchSize(conversationId: string): Promise<number | null>;
-  /** 模型边界只返回已去除首尾空白的非空、未截断正文；Chat 直接提交，不再解析输出结构。 */
-  generateAddition(input: ChatSummaryModelInput, signal: AbortSignal, report: (diagnostics: ChatSummaryCallDiagnostics) => Promise<void>, settings: ChatSummaryRequestSettings): Promise<string>;
+  getBatchSettings(conversationId: string): Promise<{ batchSize: number; recentWindowLimit: number } | null>;
+  /** 模型边界返回已去除首尾空白的非空、未截断正文；null 表示成功但无新增记忆，不保存正文。 */
+  generateAddition(input: ChatSummaryModelInput, signal: AbortSignal, report: (diagnostics: ChatSummaryCallDiagnostics) => Promise<void>, settings: ChatSummaryRequestSettings): Promise<string | null>;
   /** 与一级相同的纯正文契约。 */
-  generateSecondary(input: SecondaryChatSummaryClaim, signal: AbortSignal, report: (diagnostics: ChatSummaryCallDiagnostics) => Promise<void>, settings: ChatSummaryRequestSettings): Promise<string>;
+  generateSecondary(input: SecondaryChatSummaryClaim, signal: AbortSignal, report: (diagnostics: ChatSummaryCallDiagnostics) => Promise<void>, settings: ChatSummaryRequestSettings): Promise<string | null>;
 }
 const slot = createRuntimeSlot<ChatSummaryRuntime>('ChatSummary');
 export function configureChatSummaryRuntime(runtime: ChatSummaryRuntime): void { slot.configure(runtime); }

@@ -31,7 +31,7 @@ const { SQLiteLedgerRepository } = load('src/features/wallet/infrastructure/SQLi
 const repository = new SQLiteLedgerRepository();
 const record = await repository.insertRecord({ id: 'one', type: 'expense', category: '餐饮', amount: 10 });
 const deleted = await repository.insertRecord({ id: 'two', type: 'expense', category: '交通', amount: 20 });
-await repository.insertRecord({ id: 'unrelated', amount: 30 });
+await repository.insertRecord({ id: 'unrelated', category: '历史餐饮', detail: '历史午餐', amount: 30 });
 const timers = new Map();
 let sequence = 0;
 const queue = load('src/features/wallet/application/QueueLedgerAIReply.ts', {}, {
@@ -43,7 +43,7 @@ let ai = { id: 'ai', apiKey: 'test-key', model: 'old' };
 const calls = [];
 const deps = { getLedgerAI: async () => ai,
   getRecords: ids => repository.getRecords({ ids, limit: ids.length }),
-  triggerReply: async params => { calls.push(params); return { success: true, payload: { message: 'ok' }, error: null }; } };
+  triggerReply: async params => { calls.push(params); return { success: true, error: null }; } };
 const enqueue = (value = record, callbacks = {}, dependencies = deps) => queue.queueLedgerAIReply({ record: value }, callbacks, dependencies);
 
 await enqueue(); await enqueue(deleted); await enqueue();
@@ -54,6 +54,25 @@ fire(); await setImmediate();
 assert.equal(calls.length, 1);
 assert.equal(calls[0].aiProfile.model, 'new');
 assert.deepEqual(calls[0].newRecords.map(item => [item.id, item.amount]), [['one', 42]]);
+
+const { triggerLedgerAIReply } = load('src/features/wallet/application/TriggerLedgerAIReply.ts', {
+  '../domain/WalletRecord': load('src/features/wallet/domain/WalletRecord.ts'),
+});
+const currentRecord = (await repository.getRecords({ ids: [record.id], limit: 1 }))[0];
+let triggerRequest;
+const triggered = await triggerLedgerAIReply({ aiProfile: ai, newRecords: [currentRecord] }, {
+  hostRepository: { cleanupExpiredBlocks: async () => {}, isAIBlocked: async () => ({ isBlocked: false }) },
+  ledgerRepository: repository,
+  chatReplyGateway: { generateReply: async request => {
+    triggerRequest = request;
+    return { sessionId: 'session', text: '已收到账目', error: null };
+  } },
+});
+assert.equal(triggered.success, true);
+assert.equal((triggerRequest.triggerData.match(/历史餐饮[(（]历史午餐[)）]/g) ?? []).length, 1,
+  '同一笔历史账目在回复资料中只能出现一次');
+assert.ok(triggerRequest.triggerData.includes('1. 支出 餐饮 ¥42.00'), '本批次账目保持原有详细投影');
+
 await enqueue(deleted);
 fire(); await setImmediate(); assert.equal(calls.length, 1, '全部账目已删除时不启动回复');
 
@@ -83,15 +102,15 @@ await setImmediate(); assert.equal(drained, false);
 recordsGate.resolve([record]); await preparationStop; assert.equal(calls.length, 1);
 queue.resumeLedgerAIReplyQueueAfterReset();
 
-// Host 同时取消 Agent；队列等待其终态，且不通知旧页面。
-const replyGate = deferred(); let notifications = 0;
-await enqueue(record, { onLedgerAIReply: () => { notifications++; } }, { ...deps, triggerReply: () => replyGate.promise });
+// Host 同时取消 Agent；队列等待其终态，关闭后不回传迟到的失败。
+const replyGate = deferred(); const lateErrors = [];
+await enqueue(record, { onError: error => lateErrors.push(error.message) }, { ...deps, triggerReply: () => replyGate.promise });
 fire(); await setImmediate();
 drained = false;
 const runningStop = queue.stopLedgerAIReplyQueueForReset().then(() => { drained = true; });
 await setImmediate(); assert.equal(drained, false);
-replyGate.resolve({ success: true, payload: { message: 'late' }, error: null });
-await runningStop; assert.equal(notifications, 0);
+replyGate.resolve({ success: false, error: '迟到失败' });
+await runningStop; assert.deepEqual(lateErrors, []);
 queue.resumeLedgerAIReplyQueueAfterReset();
 
 const errors = [];
@@ -99,6 +118,10 @@ await enqueue(record, { onError: error => errors.push(error.message) }, {
   ...deps, triggerReply: async () => { throw new Error('预备查询失败'); },
 });
 fire(); await setImmediate(); assert.deepEqual(errors, ['预备查询失败']);
+await enqueue(record, { onError: error => errors.push(error.message) }, {
+  ...deps, triggerReply: async () => ({ success: false, error: '回复失败' }),
+});
+fire(); await setImmediate(); assert.deepEqual(errors, ['预备查询失败', '回复失败']);
 await queue.stopLedgerAIReplyQueueForReset();
 db.close();
 console.log('记账批次：当前配置/账目、角色撤销、准备与执行关闭、迟到入队和失败反馈通过。');

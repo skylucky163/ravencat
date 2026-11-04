@@ -8,28 +8,13 @@ import java.util.concurrent.atomic.AtomicInteger
 
 internal class TestCompanionExecutionPort : RavenCatCompanionExecutionPort {
   var headlessStartAccepted = true
-  val foregroundStarts = AtomicInteger(0)
-  val foregroundStops = AtomicInteger(0)
   val headlessStarts = AtomicInteger(0)
   val cancelRequests = AtomicInteger(0)
   val headlessDeliveryEventIds = mutableListOf<String>()
 
-  override fun requestExecutionForeground(
-    context: Context,
-    deliveryEventId: String,
-    executionContext: String,
-  ): Boolean {
-    foregroundStarts.incrementAndGet()
-    return true
-  }
+  override fun isApplicationBackgroundRunning(context: Context): Boolean = false
 
-  override fun stopExecutionForeground(context: Context, deliveryEventId: String) {
-    foregroundStops.incrementAndGet()
-  }
-
-  override fun isExecutionForegroundRunning(context: Context): Boolean = false
-
-  override fun startHeadless(context: Context, event: RavenCatCompanionWakeEvent): Boolean {
+  override fun dispatchExecution(context: Context, event: RavenCatCompanionWakeEvent): Boolean {
     headlessStarts.incrementAndGet()
     val deliveryEventId = event.deliveryEventId ?: event.eventId
     headlessDeliveryEventIds += deliveryEventId
@@ -38,14 +23,12 @@ internal class TestCompanionExecutionPort : RavenCatCompanionExecutionPort {
     return headlessStartAccepted
   }
 
-  override fun cancelHeadlessExecution(context: Context, deliveryEventId: String) {
+  override fun cancelExecution(context: Context, deliveryEventId: String) {
     cancelRequests.incrementAndGet()
   }
 
   fun reset() {
     headlessStartAccepted = true
-    foregroundStarts.set(0)
-    foregroundStops.set(0)
     headlessStarts.set(0)
     cancelRequests.set(0)
     headlessDeliveryEventIds.clear()

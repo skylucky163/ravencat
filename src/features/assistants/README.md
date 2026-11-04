@@ -1,13 +1,20 @@
 # Assistants 与辅助模型资产
 
+AI 个人空间封面由 Assistants 持有，个人主页与该 AI 的朋友圈顶部共用同一份图片，默认使用 `assets/stars.jpg`，用户朋友圈封面独立。`set_own_space_cover` 属于应用设置工具包，只接收 `media_asset_id`，始终以可信执行上下文中的 AI 为目标；包括主理在内的任何 AI 都不能通过此工具修改别人。封面在事务外居中裁剪为 2:1，引用保存于 `assistant_profile_covers`，与媒体资产同事务提交，沿用回合资格检查和 CAS。提交后发布既有助手资料事实，两处页面复用 `AssistantSpaceCover` 展示；媒体引用纳入备份、共享保护及角色删除回收。
+
 应用设置工具通过 Assistants 修改公开名称和头像引用：各 AI 管理自己，当前主理 AI 可管理其他 AI。头像自动裁剪后按原引用 CAS 提交，名称按旧名称 CAS 提交；权限与回合资格在同一事务内裁决。公开名称不修改用户私有昵称或历史消息，提交后发布既有资料更新事实。完整工具契约见[应用设置工具](../../../docs/application-settings-tools.md)。
 
-总结模型使用通用资产的持续引用，与角色／群管理员创建时的独立副本不同。资产调用参数、启停或删除与 Chat 引用任务资格撤销共享事务；保留引用、摘要正文和进度，不自动切换。一次性应用上下文设置通过 `applyAssistantContextLimits` 只复制四项数值，之后各角色独立修改，不增加继承关系。
+`get_own_space_cover` 无参数读取自己的个人空间封面，复用 Media 的视觉链路返回图片和真实媒体 ID；默认星空图与两处页面共用同一资源且没有媒体 ID。查询只读取封面引用，不加载模型连接或密钥，已选图片读取失败直接报告，不用默认图掩盖。
 
-辅助模型中心创建、编辑、启停、删除和测试模型配置。每种能力首个配置可用后，Host 在同一事务中组合各 owner 的初始选择；后续新增不覆盖。AI 翻译与腾讯云的连接配置由 Assistants 作为资产管理，翻译参数契约、业务选择和调用归 Integrations。
-配置列表路由为 `/auxiliary-models/capabilities/[kind]`，包含 general、embedding、OCR、STT、TTS、translation 六类资产；历史退休的 translate 占位类型不进入列表。能力池页的用途与选择规则收在标题后的问号气泡，正文只有当前选择控件和配置列表；内联选择器与列表卡片使用同一表面样式，原有说明文字改在选择弹层顶部显示。
+辅助模型中心首先提供「服务配置」列表，进入列表项后编辑；下方按摘要、向量化、视觉、STT、TTS、翻译用途管理模型。服务保存地址、认证方式与凭据，摘要、向量、视觉、AI 翻译、自定义兼容 TTS、角色与群管理员引用服务，模型及任务参数仍由原 owner 保存。列表与表单复用公共主题表面，说明收进顶部问号 helper。
 
-通用辅助模型复用资产的名称、连接、参数、启停、连接测试与自动保存表单，不参与首次资产初始化，不提供全局默认。单聊模型设置与群管理员设置可从当前合法草稿创建独立命名的副本；创建角色或群聊时可选择可用通用模型填入初始配置。复制字段为 API 地址、Key、模型、Temperature、Top P 与 Max Tokens，不复制角色名称、人设、上下文、工具权限或角色行为开关。复制只传递值，不保存来源 ID；双方后续编辑、停用或删除互不影响。创建表单显示填入的初始参数，连接测试使用这些参数，角色和管理员仍走原有创建命令。总结模型引用与调用见上方持续引用契约。行为验证为 `node --no-warnings scripts/verify-general-model-copies.mjs`。
+服务列表提供默认开启的「自动保存服务配置」。配置有效保存时，同事务复用相同连接或收录新服务；关闭后新连接只保存在当前配置，不影响已有服务引用。选择已有服务只填连接；用途页改连接只影响自身，服务管理页改连接才统一影响全部引用。仍被使用的服务不可删除。原通用模型复制、导入与加入按钮已删除。STT、官方 TTS 和腾讯云机器翻译保留独立连接，不关联或自动收录通用服务。
+
+摘要模型使用独立的 `summary` 资产；连接与参数变更或删除和 Chat 请求资格撤销共享事务，保留会话引用、正文和进度。共享服务修改也处理跟随角色与群管理员的摘要。迁移157原地转换旧通用模型，保留 ID 与参数，不让既有摘要引用失效。一次性应用上下文设置仍只复制四项数值。
+
+路由为 `/auxiliary-models/services`、`/auxiliary-models/services/[serviceId]`，以及已有的 `/auxiliary-models/capabilities/[kind]`、`/auxiliary-models/models/[modelId]`，均注册在 Expo Router。导航由 App／Host 适配，Feature 不持有路径。所有模型选择弹窗共用 `ModelPickerModal`，问号紧邻标题、取消选择在列表底部，统一移除弹窗内的管理跳转；已保存模型的业务选择由 `ConfiguredModelPicker` 展示。
+
+用途资产不再提供启停开关，按配置完整性与类型决定可用性。除摘要与 Memory 外，各能力首个可用资产按既有契约初始化；后续新增不覆盖已有选择。验证见 `verify:auxiliary-model-runtime` 与 `scripts/verify-model-service-configs.mjs`。
 
 角色模型设置与已有辅助模型编辑自动保存：文字失焦时提交，停输不保存；开关与选择立即提交自己的字段。
 角色模型、视觉辅助模型和群聊管理员的 Temperature / Top P 使用公共 `SliderField`；连续拖动本地预览，松手提交最终值，保留手动输入和字段错误提示。
@@ -17,7 +24,12 @@
 用户输入在表单边界转换为增量命令，保存确认不回填正在编辑的草稿。
 校验与写入错误在页面内展示；返回先提交，未保存错误可修正或恢复已保存值。新建辅助模型仍需明确点击「创建」。
 输入、提交及页面生命周期契约见 [模型设置自动保存](../../../docs/architecture/model-settings-autosave.md)，行为验证为 `verify:model-settings-autosave`。
-单聊对话设置维护名称、人设、头像、上下文可见条数、回复方式、多气泡回复与行动步骤／Token 用量显隐，沿用助手已有字段并独立自动保存；模型页只编辑调用配置，重置不影响对话上下文。助手头像命令只更新头像；通用草稿确认复用 shared/ui，契约见 [对话设置自动保存](../../../docs/architecture/conversation-settings-autosave.md)。
+AI 个人主页由 Assistants presentation 拥有，路由为 `/assistants/[aiId]`，可从单聊、群聊消息及朋友圈作者的 AI 头像进入；名称和正文不承担主页导航。顶部栏显示「AI 名称的主页」，主页使用该 AI 的个人空间封面作为全宽封面，圆形头像叠在封面下缘，下方居中展示「公开名称（专属昵称）」与最多两行的人设简介，没有昵称时只显示名称。名称／昵称后的编辑图标跳转到 `/assistants/[aiId]/edit`，名称、昵称、人设仍分开编辑并按字段自动保存，「完成」等待保存后返回主页。App 负责 Expo Router 跳转与编辑页返回拦截，Feature 只表达导航意图；主页、编辑页和朋友圈通过同一资料查询订阅读取助手，不切换聊天会话，资料提交事实继续刷新聊天头像与名称。
+主页「朋友圈」进入 `/assistants/[aiId]/moments`，由 Moments 复用时间线、分页和用户互动，按助手不可变 `agentId` 在 SQL 分页前筛选作者。顶部显示该 AI 的当前展示名和头像，封面与该 AI 的个人主页共用同一份个人空间封面；不读取用户封面、不提供替 AI 发布或设置封面的入口。空列表仍可下拉刷新。主页以朋友圈为主要入口，模型设置、上下文设置、聊天摘要归入下方的 AI 管理区域。上下文入口为 `/assistants/[aiId]/context-settings`，摘要与更多共用 `/chat/[aiId]/summary`。模型页按助手 ID 独立读取，不准备聊天；视觉模型选择由 Host 装入既有插槽。对话、上下文与摘要由 Chat 共用只读目标会话边界。
+聊天更多保留现有名片与菜单，不再重复提供个人主页入口，模型设置、对话设置和聊天摘要入口继续可用；旧 `/chat/[aiId]/model-settings` 与 `/chat/[aiId]/chat-settings` 只重定向到正式地址，不再挂载旧 Shell 设置页。普通返回回到实际来源，选择固定消息起点才显式进入目标聊天。全局服务配置和辅助模型资产管理保留应用设置入口。
+独立上下文页维护条数、固定消息起点和历史群聊注入；对话设置用一行入口跳转同一页，并保留回复方式、多气泡回复与行动步骤／Token 用量显隐。流式与多气泡本轮不改变入口或行为；模型页只编辑调用配置，重置不影响对话上下文。个人主页和对话设置均沿用助手已有字段与命令；头像命令只更新头像。通用草稿确认复用 shared/ui，契约见 [个人主页与对话设置自动保存](../../../docs/architecture/conversation-settings-autosave.md)。
+
+`npm run verify:assistant-settings` 验证主页入口、独立模型页面、正式与旧设置路由、目标会话与背景键、Host 插槽和提交事实到聊天的同步。
 
 模型设置和本地伴随的主理 AI 任命入口共用 Assistants 提供的确认弹窗，统一说明唯一主理关系、权限边界、撤销后七天冷静期及伴随与未来日程的影响；确认后的业务操作仍由各入口调用同一任命命令。
 
@@ -27,7 +39,7 @@ Host 在模型运行准备时仅向该 AI 暴露已授权的解除工具；提�
 
 任命与撤销提交后通过 Host 网关唤醒 `HostRelationshipReplyTask`。原生 Headless 宿主持有完整执行期，Host 读取最新身份配置并复用 Chat 的 `requestProactiveChatReply`。用户操作通知作为本轮 system 中的应用触发资料，明确不是用户口述，不持久化为用户消息或系统提示条；保留历史末条真实用户消息。回复与工具权限、存档和消息交付沿用已有链路，不修改 canonical `user_reply` 游标或补建任务队列。唤醒失败不回滚关系，不用页面执行兜底。行为验证：`node --no-warnings scripts/verify-host-cooldown.mjs`。
 
-用户昵称位于对话设置的 AI 名称下方，仅用户可修改；空值恢复显示公开名称。`name` 是 AI 公开名称，`nickname` 是用户私有备注，用户界面通过 `getAssistantDisplayName` 解析。Host 只将当前备注放入前置身份背景；每次实际修改由 Assistants 读出事务内前值，Host 将设置更新与 Chat 操作事件组合在同一事务提交。Chat 负责事件正文、原时刻排序、提交后通知，以及后续窗口与摘要消费；不再追加一次性改名提醒或在成功回复后确认。其他 AI 的目录、群成员模型上下文与朋友圈工具继续使用公开名称；用户结构化 @ 在模型投影时按稳定成员 ID 转回公开名称。
+用户昵称在 AI 个人主页中跟随公开名称展示，在独立编辑页中单独修改；仅用户可修改，空值恢复显示公开名称。`name` 是 AI 公开名称，`nickname` 是用户私有备注，用户界面通过 `getAssistantDisplayName` 解析。Host 只将当前备注放入前置身份背景；每次实际修改由 Assistants 读出事务内前值，Host 将设置更新与 Chat 操作事件组合在同一事务提交。Chat 负责事件正文、原时刻排序、提交后通知，以及后续窗口与摘要消费；不再追加一次性改名提醒或在成功回复后确认。其他 AI 的目录、群成员模型上下文与朋友圈工具继续使用公开名称；用户结构化 @ 在模型投影时按稳定成员 ID 转回公开名称。
 
 `node --no-warnings scripts/verify-assistant-nickname.mjs` 验证昵称保存、清空、原位历史、窗口与摘要、并发前值、历史失败整笔回滚，以及群聊和朋友圈的名称隐私。
 
@@ -37,6 +49,6 @@ Memory、Chat、Speech、Integrations、Sticker 和 Moments 各自保存实际�
 公开资产解析 `resolveAuxiliaryModel` 与选择投影 `getAuxiliaryModelSelection` 共用可用性规则，没有全局默认分支。
 Host-only 的角色语音设置装配通过 composition 出口连接；UI 不直接访问 Repository。
 
-首次资产 ID 与完成标记保存于 `auxiliary_model_initial_defaults`，由 Assistants 持有，删除资产不清空 marker。停用或未完成的首次配置暂不初始化，后续可用时只生效一次。升级保留已有业务选择，只为以后新角色记录最早创建的旧模型。
+首次资产 ID 与完成标记保存于 `auxiliary_model_initial_defaults`，由 Assistants 持有，删除资产不清空 marker。未完成的首次配置暂不初始化，后续可用时只生效一次。升级保留已有业务选择，只为以后新角色记录最早创建的旧模型。
 
 当前不变量、旧配置升级和备份恢复见 [模型选择架构](../../../docs/architecture/auxiliary-model-selection.md)。

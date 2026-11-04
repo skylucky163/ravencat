@@ -24,7 +24,7 @@ function load(file, mocks) {
 const reportModule = load('src/features/companion/presentation/CompanionDiagnosticsReport.ts', {});
 const health = {
   companionSchedulerActive: true, nextCompanionWakeAtEpochMs: 1793028000000,
-  companionExecutionForegroundRunning: false, overlayForegroundServiceRunning: true,
+  applicationBackgroundRunning: false, overlayForegroundServiceRunning: true,
   lastCompanionExecutionOutcome: 'COMPLETED', lastCompanionExecutionAtEpochMs: 1793028000000,
   lastCompanionExecutionDeliveryEventId: 'second@v1', lastCompanionExecutionForegroundRunning: false,
 };

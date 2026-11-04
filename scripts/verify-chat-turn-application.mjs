@@ -189,6 +189,7 @@ const chatReplyAbortModuleUrl = transpileToModuleUrl(
 const {
   ChatReplyRunCancelledError,
   shouldSuppressReplyErrorPersistence,
+  isChatReplyRunCancellationError,
 } = await import(chatReplyAbortModuleUrl);
 
 const chatReplyUtilsModuleUrl = transpileToModuleUrl(
@@ -570,6 +571,10 @@ async function setupTurnFixture() {
 
   // 门控单元：signal abort 或策略 settled 都压制错误气泡落库。
   const controller = new AbortController();
+  assert.equal(isChatReplyRunCancellationError(new ChatReplyRunCancelledError('superseded')), true);
+  assert.equal(isChatReplyRunCancellationError(new DOMException('已取消', 'AbortError')), true);
+  assert.equal(isChatReplyRunCancellationError(new Error('Upstream request aborted')), false,
+    '错误正文包含 aborted 不代表用户取消，不能吞掉模型或 SQLite 的真实失败');
   assert.equal(
     shouldSuppressReplyErrorPersistence({ abortSignal: controller.signal }, {}),
     false,
@@ -831,12 +836,15 @@ async function setupTurnFixture() {
 {
   const { turns, messages } = await setupTurnFixture();
   const run = await turns.claimIfIdle('s1', 'user_reply');
-  await assert.rejects(createSingleTransactionTurnCommit(run, 'ai1').persistCompletedAssistantReply({
+  const persistence = createSingleTransactionTurnCommit(run, 'ai1');
+  await assert.rejects(persistence.persistCompletedAssistantReply({
     sessionId: 's1', response: { success: true, text: '已提交回复' }, repository: messages,
     aiConfig: { id: 'ai1', agentId: 'agent1', name: 'AI' },
     policy: { bubbleDeliveryMode: 'multi-bubble' },
     callbacks: { notifyUI() { throw new Error('injected UI failure'); } },
   }), /injected UI failure/);
+  assert.equal(persistence.turnCommitOutcome(), 'committed', '展示观察者失败不能改写提交成功事实');
+  assert.equal(persistence.isCommitEligible(), false, '提交成功后的异常不能再取得错误气泡写入资格');
   assert.deepEqual(arrival.getAssistantMessageArrivalSnapshot().pendingMessageIds, []);
   assert.equal(await messages.getUnreadCountByAI('ai1'), 1);
 }

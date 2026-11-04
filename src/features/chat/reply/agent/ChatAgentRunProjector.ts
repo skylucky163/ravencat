@@ -3,7 +3,7 @@ import type {
   AgentRunEvent,
   AgentRunTerminalResult,
 } from '@platform/agentRuntime';
-import { assertChatReplyNotAborted } from '../application/ChatReplyAbort';
+import { assertChatReplyNotAborted, ChatReplyRunCancelledError } from '../application/ChatReplyAbort';
 import type { AssistantTurnCommitPort } from '../application/AssistantTurnCommit';
 import type { IMessageRepository } from '../../messages/domain/MessageRepository';
 import type {
@@ -27,10 +27,11 @@ export type { FinalAssistantPolicy } from './ChatAgentTimeline';
 /**
  * canonical Agent timeline 的提交接缝。
  *
- * user_reply 由 ConversationTurn T3 实现；无用户输入的 autonomous run 由 Chat
- * 消息命令实现。投影层只提交排好序的 Chat items，不拥有触发方业务状态。
+ * 普通回复、自主回合与群聊各自由原持久 owner 实现输出提交和整轮完成。
+ * 投影层只提交有稳定身份的 Chat items，不拥有游标、执行槽或触发方业务状态。
  */
 export interface AgentTimelineCommitPort {
+  commitAgentOutput?: AssistantTurnCommitPort['commitAgentOutput'];
   commitAgentTimeline(params: Parameters<AssistantTurnCommitPort['persistCompletedAssistantReply']>[0] & {
     items: import('../domain/ConversationTurn').ConversationTurnCommitItem[];
   }): Promise<{
@@ -173,8 +174,7 @@ export class ChatAgentRunProjector {
 
   async handleEvent(event: AgentRunEvent): Promise<void> {
     if (this.canonicalTimeline) {
-      this.handleCanonicalEvent(event);
-      return;
+      return this.handleCanonicalEvent(event);
     }
     if (this.streamingReply && event.type === 'model_turn_started') {
       this.streamingReply.startTurn(event.stepIndex);
@@ -326,7 +326,7 @@ export class ChatAgentRunProjector {
     });
   }
 
-  private handleCanonicalEvent(event: AgentRunEvent): void {
+  private async handleCanonicalEvent(event: AgentRunEvent): Promise<void> {
     const timeline = this.canonicalTimeline;
     if (!timeline) {
       throw new Error('canonical Agent timeline is not initialized');
@@ -353,6 +353,19 @@ export class ChatAgentRunProjector {
     }
     if (event.type === 'tool_call_completed') {
       timeline.completeToolCall(event.stepIndex, event.toolCallId, event.outcome);
+      const item = timeline.buildImmediateOutputItem(event.stepIndex, event.toolCallId, {
+        sessionId: this.sessionId, aiConfig: this.aiConfig, runtimeContext: this.runtimeContext,
+        policy: this.policy, finalAssistantPolicy: this.finalAssistantPolicy, finalStepIndex: event.stepIndex,
+      });
+      if (item && this.timelineCommit!.commitAgentOutput) {
+        const committed = await this.timelineCommit!.commitAgentOutput({
+          sessionId: this.sessionId, response: toAIResponse(this.requireModelTurn(event.stepIndex)),
+          item, repository: this.repository, callbacks: this.callbacks, aiConfig: this.aiConfig,
+          runtimeContext: this.runtimeContext, policy: this.policy,
+        });
+        if (committed.outcome === 'fence_failed') throw new ChatReplyRunCancelledError('superseded');
+        if (committed.outcome === 'committed') timeline.recordCommittedOutput(event.stepIndex, event.toolCallId, committed.messages);
+      }
       if (timeline.shouldWaitForExternalAction()) {
         this.waitingForExternalAction = true;
         this.stopRuntime();

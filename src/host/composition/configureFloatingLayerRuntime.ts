@@ -6,7 +6,6 @@ import {
   floatingInteractionSettingsRepository,
   floatingLayerAdapter,
 } from '@features/floatingLayer/composition';
-import { executeFloatingMessage } from '@features/companion/composition';
 import { configureFloatingConversationProjection } from '../runtime/FloatingConversationProjection';
 
 let configured = false;
@@ -25,7 +24,6 @@ export function configureFloatingLayerRuntime(): void {
     native: {
       floatingLayer: floatingLayerAdapter,
     },
-    executeFloatingMessage,
   });
   configureFloatingConversationProjection();
 }

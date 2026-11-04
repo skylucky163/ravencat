@@ -46,7 +46,7 @@ try {
   assert.ok(failed.errorInfo.message.includes(reason));
   assert.ok(failed.rawError.includes('HTTP 400'));
   assertSafe(failed.errorInfo.message);
-  for (const capabilityKind of ['general', 'ocr', 'embedding']) {
+  for (const capabilityKind of ['summary', 'ocr', 'embedding']) {
     const result = await testAuxiliaryModelConnection({ baseUrl: config.apiBaseUrl, apiKey, model: config.selectedModel, capabilityKind });
     assert.ok(result.errorInfo.message.includes(reason));
     assertSafe(result.errorInfo.message);
@@ -106,7 +106,7 @@ try {
       StyleSheet: { create: styles => styles }, useWindowDimensions: () => ({ width: 400, height: 800 }) },
     'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) },
     'lucide-react-native': { X: 'X' }, '@shared/ui': { showAppDialog: value => { alert = value; } },
-    './MomentMediaImage': { default: 'Image' },
+    '@features/media': { MediaAssetImage: 'Image' },
     '../presentationFacade': { retryMomentMediaAnalysis: async () => ({ success: false, errorMessage: reason }), saveMomentMediaAnalysis: async () => {} },
   });
   const tree = Viewer({ visible: true, media: [{ id: 'image', analysisStatus: 'failed', analysisErrorMessage: reason }], initialIndex: 0, canManage: true, onClose() {}, onUpdated() {} });

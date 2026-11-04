@@ -18,11 +18,14 @@ import type {
  * 工具定义参数类型
  */
 interface GetLedgerContextArgs {
-  mode: 'recent' | 'stats' | 'keyword' | 'categories';
+  mode: 'recent' | 'stats' | 'keyword' | 'categories' | 'quickActions';
   timeDescription?: string;
   keyword?: string;
   type?: WalletRecordType;
   category?: string;
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
 }
 
 /**
@@ -62,14 +65,14 @@ interface FilterOptions {
  */
 export const definition = {
   name: 'getLedgerContext',
-  description: '获取账本记录、统计或已有分类；categories 模式返回预设及全部已使用的自定义分类，记账时优先复用这些名称，尽量不另创；recent 或 keyword 模式会返回真实账单 ID。',
+  description: '获取账本记录、统计、已有分类或快捷记账模板；categories 返回预设及全部已用自定义分类，记账时优先复用原名；quickActions 返回模板及真实快捷记账 ID；recent 或 keyword 返回真实账单 ID。',
   parameters: {
     type: 'object' as const,
     properties: {
       mode: {
         type: 'string' as const,
-        enum: ['recent', 'stats', 'keyword', 'categories'] as const,
-        description: '查询模式：recent最近记录、stats统计、keyword关键词搜索、categories已有分类（仅 type 筛选生效）',
+        enum: ['recent', 'stats', 'keyword', 'categories', 'quickActions'] as const,
+        description: '查询模式：recent最近记录、stats统计、keyword关键词搜索、categories已有分类（仅 type 生效）、quickActions快捷记账模板（支持 type、category、keyword，不按时间筛选）',
       },
       timeDescription: {
         type: 'string' as const,
@@ -77,7 +80,7 @@ export const definition = {
       },
       keyword: {
         type: 'string' as const,
-        description: '搜索关键词（mode为keyword时使用）',
+        description: '搜索关键词；keyword 模式搜索账单，quickActions 模式搜索模板名称、分类和备注',
       },
       type: {
         type: 'string' as const,
@@ -87,6 +90,23 @@ export const definition = {
       category: {
         type: 'string' as const,
         description: '分类筛选',
+      },
+      startDate: {
+        type: 'string' as const,
+        format: 'date',
+        description: 'keyword 模式的开始日期，YYYY-MM-DD；与 endDate 一起使用时优先于 timeDescription',
+      },
+      endDate: {
+        type: 'string' as const,
+        format: 'date',
+        description: 'keyword 模式的结束日期，YYYY-MM-DD；与 startDate 一起使用时优先于 timeDescription',
+      },
+      limit: {
+        type: 'number' as const,
+        minimum: 1,
+        maximum: 50,
+        default: 10,
+        description: 'keyword 模式返回的账单数量，1–50，默认 10；统计仍计算全部命中记录',
       },
     },
     required: ['mode'] as const,
@@ -110,6 +130,21 @@ export async function execute(
 
   try {
     const mode = args?.mode;
+    if (mode === 'quickActions') {
+      const keyword = args.keyword?.trim();
+      const quickActions = (await ledgerRepo.getQuickActions()).filter((action) =>
+        (!args.type || action.type === args.type)
+        && (!args.category || action.category === args.category)
+        && (!keyword || [action.name, action.category, action.detail].some((value) => value.includes(keyword)))
+      );
+      return {
+        success: true,
+        message: quickActions.length
+          ? `快捷记账模板（非账单记录）：${JSON.stringify(quickActions)}`
+          : '没有找到匹配的快捷记账模板。',
+        data: { quickActions },
+      };
+    }
     if (mode === 'categories') {
       const categories = await ledgerRepo.getCategories(args.type);
       return {
@@ -125,27 +160,34 @@ export async function execute(
         return { success: false, error: 'keyword 模式需要 keyword 参数' };
       }
 
+      const hasExactRange = args.startDate !== undefined && args.endDate !== undefined;
+      const startDate = args.startDate ?? resolved.startDate;
+      const endDate = args.endDate ?? resolved.endDate;
+      const year = hasExactRange ? undefined : resolved.year;
+      const month = hasExactRange ? undefined : resolved.month;
+      const limit = Math.max(1, Math.min(50, Number(args.limit ?? 10)));
       const matchedRecords = await ledgerRepo.getRecords({
         keyword: args.keyword,
         type: args.type,
         category: args.category,
-        startDate: resolved.startDate,
-        endDate: resolved.endDate,
-        year: resolved.year,
-        month: resolved.month,
-        limit: 20,
+        startDate,
+        endDate,
+        year,
+        month,
+        limit,
       });
 
       const stats = await ledgerRepo.searchByKeyword(args.keyword, {
-        year: resolved.year,
-        month: resolved.month,
-        startDate: resolved.startDate,
-        endDate: resolved.endDate,
+        year,
+        month,
+        startDate,
+        endDate,
       });
 
       return {
         success: true,
-        message: buildKeywordMessage(args.keyword, matchedRecords, stats, args.timeDescription),
+        message: buildKeywordMessage(args.keyword, matchedRecords, stats,
+          hasExactRange ? `${args.startDate} 至 ${args.endDate}` : args.timeDescription),
         data: {
           records: matchedRecords,
           stats,

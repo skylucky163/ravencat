@@ -8,6 +8,8 @@ import {
   recoverInterruptedStickerAnnotations,
   releaseStickerAnnotation,
   subscribeStickerAnnotationPending,
+  subscribeStickerAutomaticRecognitionChanged,
+  StickerAnnotationClaimLostError,
 } from '@features/stickers';
 import { createStickerAnnotationExecutor } from '../composition/StickerAnnotationModelGateway';
 
@@ -20,6 +22,7 @@ let foregroundActive = false;
 let scheduled: ScheduledInteraction | null = null;
 let running: Promise<void> | null = null;
 let activeAbortController: AbortController | null = null;
+let activeManual = false;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || '未知识别错误');
@@ -33,6 +36,7 @@ function settleRunning(task: Promise<boolean>): void {
     },
     (error) => {
       running = null;
+      if (error instanceof StickerAnnotationClaimLostError) { requestStickerAnnotationRun(); return; }
       console.warn('[Sticker] 前台标注任务异常退出：', error);
     },
   );
@@ -55,6 +59,7 @@ async function runOneStickerAnnotation(): Promise<boolean> {
 
   const abortController = new AbortController();
   activeAbortController = abortController;
+  activeManual = claim.manual;
   try {
     const metadata = await execute(claim.sticker, abortController.signal);
     if (abortController.signal.aborted || !foregroundActive) {
@@ -68,6 +73,7 @@ async function runOneStickerAnnotation(): Promise<boolean> {
     });
     return true;
   } catch (error) {
+    if (error instanceof StickerAnnotationClaimLostError) throw error;
     if (abortController.signal.aborted || !foregroundActive) {
       await releaseStickerAnnotation({ stickerId: claim.sticker.id, claimId: claim.claimId });
       return false;
@@ -87,6 +93,10 @@ export function configureStickerAnnotationQueue(): void {
   if (configured) return;
   configured = true;
   subscribeStickerAnnotationPending(requestStickerAnnotationRun);
+  subscribeStickerAutomaticRecognitionChanged(enabled => {
+    if (!enabled && !activeManual) activeAbortController?.abort();
+    requestStickerAnnotationRun();
+  });
 }
 
 /** DB 初始化完成后回收上个 JS 进程遗留的 processing，再异步进入空闲调度。 */

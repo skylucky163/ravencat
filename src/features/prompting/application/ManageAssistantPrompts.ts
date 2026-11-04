@@ -1,19 +1,16 @@
 /** 管理每 AI 的语言、内置覆盖和用户提示词，并为 Host 解析本轮有效配置。 */
 
 import type { PromptScenarioId } from '@shared/prompt';
+import type { PromptDefaults } from '../domain/PromptDefaults';
 import type {
   AssistantPromptDefinitionOverride,
   AssistantPromptDefinitionState,
   AssistantPromptSettings,
   AssistantUserPrompt,
   PromptLanguageMode,
-  PromptMigrationOrphan,
   UserPromptCondition,
 } from '../domain/Prompting';
-import {
-  getPromptingRuntimeDependencies,
-  type PromptAssistantSummary,
-} from './PromptingRuntimeDependencies';
+import { getPromptingRuntimeDependencies } from './PromptingRuntimeDependencies';
 
 export interface AssistantPromptEditorDetails {
   directToolNames: string[];
@@ -40,14 +37,6 @@ export interface AssistantPromptEditorDetails {
   }[];
 }
 
-export interface AssistantPromptEditorSnapshot extends AssistantPromptEditorDetails {
-  assistants: PromptAssistantSummary[];
-}
-
-export interface AssistantPromptAdvancedSnapshot {
-  migrationOrphans: PromptMigrationOrphan[];
-}
-
 export interface ResolvedAssistantPromptConfiguration {
   agentRegistryExcludedAssistantIds: string[];
   paragraphBreaksEnabled: boolean;
@@ -69,18 +58,9 @@ export interface ResolvedAssistantPromptConfiguration {
  */
 const RESOLVED_PROMPT_LOCALE = 'zh-CN';
 
-export async function getInitialAssistantPromptEditorSnapshot(): Promise<AssistantPromptEditorSnapshot | null> {
-  const assistants = await getPromptingRuntimeDependencies().assistants.list();
-  const firstAssistant = assistants[0];
-  if (!firstAssistant) return null;
-  return {
-    assistants,
-    ...await getAssistantPromptEditorDetails(firstAssistant.id),
-  };
-}
-
 export async function getAssistantPromptEditorDetails(
-  assistantId: string
+  assistantId: string,
+  defaults?: PromptDefaults,
 ): Promise<AssistantPromptEditorDetails> {
   const dependencies = getPromptingRuntimeDependencies();
   const [storedSettings, states, overrides, userPrompts, tools, directToolNames] = await Promise.all([
@@ -88,7 +68,7 @@ export async function getAssistantPromptEditorDetails(
     dependencies.assistantPrompts.listDefinitionStates(assistantId),
     dependencies.assistantPrompts.listDefinitionOverrides(assistantId),
     dependencies.assistantPrompts.listAssistantUserPrompts(assistantId),
-    getAssistantToolPermissions(assistantId),
+    getAssistantToolPermissions(assistantId, defaults),
     dependencies.assistantPrompts.listDirectToolNames(assistantId),
   ]);
   const now = new Date().toISOString();
@@ -116,24 +96,19 @@ export async function getAssistantPromptEditorDetails(
 }
 
 /** 手机目录与编辑器共用单项权限解析，不读取 AI 专属提示词。 */
-export async function getAssistantToolPermissions(assistantId: string): Promise<AssistantPromptEditorDetails['tools']> {
+export async function getAssistantToolPermissions(
+  assistantId: string,
+  defaults?: PromptDefaults,
+): Promise<AssistantPromptEditorDetails['tools']> {
   const dependencies = getPromptingRuntimeDependencies();
-  const [definitions, overrides, defaults] = await Promise.all([
-    dependencies.tools.list(assistantId), dependencies.tools.listOverrides(assistantId), dependencies.defaults.read(),
+  const [definitions, overrides, defaultValues] = await Promise.all([
+    dependencies.tools.list(assistantId), dependencies.tools.listOverrides(assistantId), defaults ?? dependencies.defaults.read(),
   ]);
   const overrideByName = new Map(overrides.map((override) => [override.toolName, override.enabled]));
   return definitions.map((definition) => ({
     ...definition,
-    enabled: overrideByName.get(definition.name) ?? defaults.toolPermissions[definition.name] ?? definition.defaultEnabled,
+    enabled: overrideByName.get(definition.name) ?? defaultValues.toolPermissions[definition.name] ?? definition.defaultEnabled,
   }));
-}
-
-export async function getAssistantPromptAdvancedSnapshot(): Promise<AssistantPromptAdvancedSnapshot> {
-  const dependencies = getPromptingRuntimeDependencies();
-  const migrationOrphans = await dependencies.assistantPrompts.listMigrationOrphans();
-  return {
-    migrationOrphans,
-  };
 }
 
 export async function resolveAssistantPromptConfiguration(params: {
@@ -186,6 +161,18 @@ export async function resolveImageGroundingPrompt(assistantId: string): Promise<
   return overrides.find((override) => override.definitionId === 'input.image_grounding' && override.locale === RESOLVED_PROMPT_LOCALE)?.content
     ?? defaults.overrides['input.image_grounding']
     ?? dependencies.catalog.getById('input.image_grounding')!.defaultContent!;
+}
+
+/** 视觉识别正文没有独立开关，随该 AI 是否绑定视觉模型生效。 */
+export async function resolveVisionOCRPrompt(assistantId: string): Promise<string> {
+  const dependencies = getPromptingRuntimeDependencies();
+  const [overrides, defaults] = await Promise.all([
+    dependencies.assistantPrompts.listDefinitionOverrides(assistantId),
+    dependencies.defaults.read(),
+  ]);
+  return overrides.find((override) => override.definitionId === 'internal.vision_ocr' && override.locale === RESOLVED_PROMPT_LOCALE)?.content
+    ?? defaults.overrides['internal.vision_ocr']
+    ?? dependencies.catalog.getById('internal.vision_ocr')!.defaultContent!;
 }
 
 /** 群摘要没有所属 AI，只读全局正文；未覆盖时由 Chat 选择对应来源的代码默认值。 */

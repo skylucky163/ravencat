@@ -24,7 +24,6 @@ export { MediaAssetResolver } from './application/MediaAssetResolver';
 export { configureAIImageRuntime } from './application/AIImageRuntime';
 export { SQLiteAIDownloadedImageRepository } from './infrastructure/SQLiteAIDownloadedImageRepository';
 export { SQLiteMediaAssetRepository } from './infrastructure/SQLiteMediaAssetRepository';
-export { NativeBubbleSkinAssetBacking } from './infrastructure/NativeBubbleSkinAssetBacking';
 export {
   PersistentImageAssetBacking,
   PersistentMediaAssetBacking,

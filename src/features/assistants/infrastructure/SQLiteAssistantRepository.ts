@@ -1,3 +1,5 @@
+import { bindModelService, readModelService } from './SQLiteModelServiceRepository';
+import { getModelServiceConnection } from '../domain/ModelService';
 import { removeConversationWallpaperInTransaction } from '@features/profile';
 /** AI 助手仓储的 SQLite 实现。 */
 import {
@@ -69,6 +71,12 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     `;
   }
 
+  private async readModelConnection(db: import('@platform/persistence').DatabaseReadExecutor, row: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (!row.service_config_id) return row;
+    const service = await readModelService(db, row.service_config_id as string);
+    return { ...row, api_key: service.apiKey, api_base_url: service.baseUrl };
+  }
+
   private async mapRowToAIProfile(row: Record<string, unknown>): Promise<AIProfile> {
     const profile = createAIProfile({
       id: row.id as string,
@@ -77,7 +85,9 @@ export class AIAssistantRepository implements IAIAssistantRepository {
       nickname: row.nickname as string | null,
       avatar: row.avatar as string | null,
       avatarMediaAssetId: row.avatar_media_asset_id as string | null,
+      profileCoverMediaAssetId: row.profile_cover_media_asset_id as string | null,
       model: row.model as string,
+      serviceConfigId: row.service_config_id as string | null,
       apiKey: row.api_key as string | null,
       apiBaseUrl: row.api_base_url as string | null,
       systemPrompt: row.system_prompt as string | null,
@@ -174,7 +184,9 @@ export class AIAssistantRepository implements IAIAssistantRepository {
             s.last_time AS session_last_time,
             s.is_pinned AS session_is_pinned,
             s.pinned_at AS session_pinned_at,
-            s.id AS canonical_conversation_id`;
+            s.id AS canonical_conversation_id,
+            (SELECT media_asset_id FROM assistant_profile_covers WHERE assistant_id = a.id)
+              AS profile_cover_media_asset_id`;
   }
 
   /** sessions 与 AI 是 1:1（UNIQUE(ai_assistant_id)），LEFT JOIN 不会放大行数。 */
@@ -185,6 +197,11 @@ export class AIAssistantRepository implements IAIAssistantRepository {
   /**
    * 获取所有AI助手列表
    */
+  async listServiceAssistantIds(serviceConfigId: string): Promise<string[]> {
+    const db = databaseCoordinator.openTaskExecutor({ name: 'assistants.serviceUsers', feature: 'assistants', priority: 'interactive' });
+    return (await db.getAllAsync<{ id: string }>('SELECT id FROM ai_assistants WHERE service_config_id = ?', [serviceConfigId])).map(row => row.id);
+  }
+
   async getAll(): Promise<AIProfile[]> {
     try {
       const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'assistants.getAll', feature: 'assistants', priority: 'runtime' });
@@ -201,7 +218,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
         ORDER BY a.created_at ASC
       `);
 
-      return Promise.all(rows.map((row) => this.mapRowToAIProfile(row)));
+      return Promise.all(rows.map(async row => this.mapRowToAIProfile(await this.readModelConnection(database, row))));
     } catch (error) {
       console.error('[AIAssistantRepository] Failed to get all:', error);
       throw error;
@@ -257,7 +274,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
       );
 
       if (!row) return null;
-      return await this.mapRowToAIProfile(row);
+      return await this.mapRowToAIProfile(await this.readModelConnection(database, row));
     } catch (error) {
       console.error('[AIAssistantRepository] Failed to get by id:', error);
       return null;
@@ -282,7 +299,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
       );
 
       if (!row) return null;
-      return await this.mapRowToAIProfile({ ...row, is_ledger_ai: 1 });
+      return await this.mapRowToAIProfile(await this.readModelConnection(database, { ...row, is_ledger_ai: 1 }));
     } catch (error) {
       console.error('[AIAssistantRepository] Failed to get ledger AI:', error);
       return null;
@@ -307,7 +324,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
       );
 
       if (!row) return null;
-      return await this.mapRowToAIProfile({ ...row, is_host_ai: 1 });
+      return await this.mapRowToAIProfile(await this.readModelConnection(database, { ...row, is_host_ai: 1 }));
     } catch (error) {
       console.error('[AIAssistantRepository] Failed to get host AI:', error);
       return null;
@@ -344,7 +361,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     const now = new Date().toISOString();
 
     const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'assistants.insert', feature: 'assistants', priority: 'runtime' });
-    await database.withExclusiveTransactionAsync(async (transaction) => {
+    const connection = await database.withExclusiveTransactionAsync(async (transaction) => {
       await transaction.runAsync(
         `INSERT INTO ai_assistants
          (id, agent_id, name, nickname, avatar, avatar_media_asset_id, model, api_key, api_base_url, system_prompt, temperature, top_p, max_tokens, private_context_primary_limit, private_context_secondary_limit, group_context_primary_limit, group_context_secondary_limit, enable_tools, disable_thinking, enable_short_text_protocol, allow_multiple_bubbles, streaming_reply, show_token_usage, show_action_steps, supports_vision, created_at, updated_at)
@@ -381,12 +398,17 @@ export class AIAssistantRepository implements IAIAssistantRepository {
         ]
       );
 
+      const serviceId = await bindModelService(transaction, getModelServiceConnection(ai.apiBaseUrl ?? '', ai.apiKey), ai.serviceConfigId);
+      if (serviceId) await transaction.runAsync('UPDATE ai_assistants SET service_config_id = ?, api_base_url = NULL, api_key = NULL WHERE id = ?', [serviceId, ai.id]);
       await initializeAssistantAuxiliaryModelsInTransaction(transaction, ai.id,
         (id) => auxiliaryModelRepository.getModelConfigByIdInTransaction(transaction, id));
+      const service = serviceId ? await readModelService(transaction, serviceId) : null;
+      return { serviceConfigId: serviceId, apiBaseUrl: service ? service.baseUrl : ai.apiBaseUrl, apiKey: service ? service.apiKey : ai.apiKey };
     });
 
     return this.resolveAvatar(createAIProfile({
       ...ai,
+      ...connection,
       avatar: ai.avatarMediaAssetId ? null : ai.avatar,
       avatarMediaAssetId: ai.avatarMediaAssetId || null,
       createdAt: now,
@@ -399,7 +421,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
    */
   async updateModelSettings(assistantId: string, settings: AIModelSettingsUpdate): Promise<AIProfile> {
     const columns: Record<keyof AIModelSettingsUpdate, string> = {
-      model: 'model', apiKey: 'api_key', apiBaseUrl: 'api_base_url',
+      model: 'model', apiKey: 'api_key', apiBaseUrl: 'api_base_url', serviceConfigId: 'service_config_id',
       temperature: 'temperature', topP: 'top_p', maxTokens: 'max_tokens',
       enableTools: 'enable_tools', disableThinking: 'disable_thinking',
     };
@@ -407,7 +429,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     const values: (string | number | null)[] = [];
     for (const key of Object.keys(columns) as (keyof AIModelSettingsUpdate)[]) {
       const value = settings[key];
-      if (value !== undefined) {
+      if (value !== undefined && key !== 'apiBaseUrl' && key !== 'apiKey' && key !== 'serviceConfigId') {
         fields.push(`${columns[key]} = ?`);
         values.push(typeof value === 'boolean' ? Number(value) : value);
       }
@@ -418,6 +440,15 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     const database = databaseCoordinator.openTaskExecutor({ name: 'assistants.updateModelSettings', feature: 'assistants', priority: 'runtime' });
     // 更新与 canonical 投影读取共享事务；提交后再解析头像和通知消费者。
     const row = await database.withExclusiveTransactionAsync(async (transaction) => {
+      if (settings.apiBaseUrl !== undefined || settings.apiKey !== undefined || settings.serviceConfigId !== undefined) {
+        const current = await transaction.getFirstAsync<{ service_config_id: string | null; api_base_url: string | null; api_key: string | null }>('SELECT service_config_id, api_base_url, api_key FROM ai_assistants WHERE id = ?', [assistantId]);
+        if (!current) throw new Error(`AI 助手不存在：${assistantId}`);
+        const previous = current.service_config_id ? await readModelService(transaction, current.service_config_id) : null;
+        const baseUrl = settings.apiBaseUrl !== undefined ? settings.apiBaseUrl ?? '' : previous ? previous.baseUrl : current.api_base_url ?? '';
+        const apiKey = settings.apiKey !== undefined ? settings.apiKey : previous ? previous.apiKey : current.api_key;
+        const serviceId = await bindModelService(transaction, getModelServiceConnection(baseUrl, apiKey), settings.serviceConfigId);
+        await transaction.runAsync('UPDATE ai_assistants SET service_config_id = ?, api_base_url = ?, api_key = ? WHERE id = ?', [serviceId, serviceId ? null : baseUrl, serviceId ? null : apiKey, assistantId]);
+      }
       await transaction.runAsync(`UPDATE ai_assistants SET ${fields.join(', ')} WHERE id = ?`, values);
       const persisted = await transaction.getFirstAsync<Record<string, unknown>>(
         `SELECT a.*, b.blocked_until, b.reason as block_reason,
@@ -428,7 +459,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
          WHERE a.id = ?`, [assistantId],
       );
       if (!persisted) throw new Error(`AI 助手不存在：${assistantId}`);
-      return persisted;
+      return this.readModelConnection(transaction, persisted);
     });
     return this.mapRowToAIProfile(row);
   }
@@ -669,6 +700,26 @@ export class AIAssistantRepository implements IAIAssistantRepository {
   async canManageApplicationSettingsInTransaction(transaction: DatabaseTransactionExecutor, actorId: string, targetId: string | null): Promise<boolean> {
     const actor = await transaction.getFirstAsync<{ is_host_ai: number }>('SELECT is_host_ai FROM ai_assistants WHERE id = ?', [actorId]);
     return actor !== null && (actorId === targetId || actor.is_host_ai === 1);
+  }
+
+  async getProfileCoverReference(assistantId: string): Promise<{ mediaAssetId: string | null } | null> {
+    const database = databaseCoordinator.openTaskExecutor({ name: 'assistants.get-profile-cover', feature: 'assistants', priority: 'interactive' });
+    return database.getFirstAsync<{ mediaAssetId: string | null }>(
+      `SELECT (SELECT media_asset_id FROM assistant_profile_covers WHERE assistant_id = a.id) AS mediaAssetId
+       FROM ai_assistants a WHERE a.id = ?`, [assistantId]);
+  }
+
+  /** 目标身份由可信调用方固定，事务内 CAS 同时保护首次设置、并发修改和角色删除。 */
+  async tryCommitProfileCoverInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string, expectedMediaAssetId: string | null, mediaAssetId: string): Promise<boolean> {
+    const result = await transaction.runAsync(
+      `INSERT INTO assistant_profile_covers (assistant_id, media_asset_id)
+       SELECT id, ? FROM ai_assistants a WHERE id = ?
+         AND (SELECT media_asset_id FROM assistant_profile_covers WHERE assistant_id = a.id) IS ?
+       ON CONFLICT(assistant_id) DO UPDATE SET media_asset_id = excluded.media_asset_id`,
+      [mediaAssetId, assistantId, expectedMediaAssetId]);
+    if (result.changes !== 1) return false;
+    await transaction.runAsync('UPDATE ai_assistants SET updated_at = ? WHERE id = ?', [new Date().toISOString(), assistantId]);
+    return true;
   }
 
   async changeNameInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string, expectedName: string, name: string): Promise<boolean> {

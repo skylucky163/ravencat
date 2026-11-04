@@ -12,6 +12,14 @@ import {
 const STORAGE_KEY = 'presentation.theme.selectedThemeId';
 const CHAT_COLOR_OVERRIDES_KEY_PREFIX = 'presentation.theme.chatColorOverrides.';
 const GLASS_BLUR_RADIUS_KEY = 'presentation.theme.glassBlurRadius';
+// 纠正曾误加的独立主题；只在持久化/备份边界归回 daylight，运行时不保留该主题身份。
+const REMOVED_BUBBLE_THEME_ID = 'custom-bubble';
+
+function parseStoredThemeId(value: unknown): PresentationThemeId {
+  const themeId = value === REMOVED_BUBBLE_THEME_ID ? DEFAULT_THEME_ID : value;
+  if (typeof themeId !== 'string' || !isValidThemeId(themeId)) throw new Error('备份主题标识无效');
+  return themeId;
+}
 
 export interface StoredThemeBackupState {
   selectedThemeId: PresentationThemeId;
@@ -43,6 +51,18 @@ export async function saveGlassBlurRadius(radius: number): Promise<void> {
 export async function loadStoredThemeId(): Promise<PresentationThemeId> {
   try {
     const stored = await AsyncStorage.getItem(STORAGE_KEY);
+    if (stored === REMOVED_BUBBLE_THEME_ID) {
+      const oldKey = CHAT_COLOR_OVERRIDES_KEY_PREFIX + REMOVED_BUBBLE_THEME_ID;
+      const targetKey = CHAT_COLOR_OVERRIDES_KEY_PREFIX + DEFAULT_THEME_ID;
+      const colors = new Map(await AsyncStorage.multiGet([oldKey, targetKey]));
+      const oldColors = colors.get(oldKey);
+      await AsyncStorage.multiSet([
+        [STORAGE_KEY, DEFAULT_THEME_ID],
+        ...(colors.get(targetKey) === null && oldColors !== null ? [[targetKey, oldColors] as [string, string]] : []),
+      ]);
+      await AsyncStorage.removeItem(oldKey);
+      return DEFAULT_THEME_ID;
+    }
     if (stored && isValidThemeId(stored)) {
       // 旧设置和备份可保留未开放的主题，运行时只加载已开放主题。
       return getThemeSelectionDisabledReason(stored) ? DEFAULT_THEME_ID : stored;
@@ -100,17 +120,18 @@ export async function saveChatColorOverrides(
 /** 备份专用严格读取：只有“从未持久化”才表示默认值，读取或格式错误必须上抛。 */
 export async function loadStoredThemeBackupState(): Promise<StoredThemeBackupState> {
   const themeIds = Object.keys(THEME_REGISTRY) as PresentationThemeId[];
+  const storedColorIds = [...themeIds, REMOVED_BUBBLE_THEME_ID];
   const keys = [
     STORAGE_KEY,
     GLASS_BLUR_RADIUS_KEY,
-    ...themeIds.map((themeId) => CHAT_COLOR_OVERRIDES_KEY_PREFIX + themeId),
+    ...storedColorIds.map((themeId) => CHAT_COLOR_OVERRIDES_KEY_PREFIX + themeId),
   ];
   const stored = new Map(await AsyncStorage.multiGet(keys));
   const selectedValue = stored.get(STORAGE_KEY);
   const selectedThemeId = selectedValue === null || selectedValue === undefined
     ? DEFAULT_THEME_ID
     : selectedValue;
-  const chatColorOverrides = Object.fromEntries(themeIds.flatMap((themeId) => {
+  const chatColorOverrides = Object.fromEntries(storedColorIds.flatMap((themeId) => {
     const raw = stored.get(CHAT_COLOR_OVERRIDES_KEY_PREFIX + themeId);
     if (raw === null || raw === undefined) return [];
     return [[themeId, JSON.parse(raw) as unknown]];
@@ -130,9 +151,7 @@ export function parseStoredThemeBackupState(value: unknown): StoredThemeBackupSt
   const state = value as Partial<StoredThemeBackupState>;
   const glassBlurRadius = state.glassBlurRadius === undefined
     ? undefined : parseGlassBlurRadius(state.glassBlurRadius);
-  if (typeof state.selectedThemeId !== 'string' || !isValidThemeId(state.selectedThemeId)) {
-    throw new Error('备份主题标识无效');
-  }
+  const selectedThemeId = parseStoredThemeId(state.selectedThemeId);
   const overrides = state.chatColorOverrides;
   if (overrides !== undefined &&
     (!overrides || typeof overrides !== 'object' || Array.isArray(overrides))) {
@@ -140,7 +159,8 @@ export function parseStoredThemeBackupState(value: unknown): StoredThemeBackupSt
   }
   const validatedOverrides: [PresentationThemeId, ChatColorOverrides][] = [];
   for (const [themeId, colors] of Object.entries(overrides ?? {})) {
-    if (!isValidThemeId(themeId) || !colors ||
+    const normalizedThemeId = themeId === REMOVED_BUBBLE_THEME_ID ? DEFAULT_THEME_ID : themeId;
+    if (!isValidThemeId(normalizedThemeId) || !colors ||
       typeof colors !== 'object' || Array.isArray(colors)) {
       throw new Error('备份主题颜色设置无效');
     }
@@ -149,11 +169,13 @@ export function parseStoredThemeBackupState(value: unknown): StoredThemeBackupSt
       (candidate.aiText !== undefined && typeof candidate.aiText !== 'string')) {
       throw new Error('备份主题颜色值无效');
     }
-    validatedOverrides.push([themeId, candidate]);
+    // daylight 自己已有配色时保留它；只有独立主题的旧配色才迁入 daylight。
+    if (themeId === REMOVED_BUBBLE_THEME_ID && overrides[DEFAULT_THEME_ID] !== undefined) continue;
+    validatedOverrides.push([normalizedThemeId, candidate]);
   }
 
   return {
-    selectedThemeId: state.selectedThemeId,
+    selectedThemeId,
     chatColorOverrides: Object.fromEntries(validatedOverrides),
     ...(glassBlurRadius === undefined ? {} : { glassBlurRadius }),
     ...(state.paperNoteChatFooter === undefined

@@ -4,6 +4,8 @@ import {
   getChatInterruptedTurnContext,
   getChatBackgroundContexts,
   buildSharedChatRecordText,
+  buildSharedMomentText,
+  getMessageSharedMoment,
   getMessageSharedRecord,
   buildChatUserMessageModelInput,
   buildGroupMentionModelText,
@@ -55,7 +57,7 @@ export class PromptHistoryBuilder {
       summaries: source.contextSegments.map(({ content, sourceStartAt, sourceEndAt, timeZone }) => ({ content, discussionStart: sourceStartAt, discussionEnd: sourceEndAt, timeZone })),
       messages: source.timeline.map((item) => ({ source: item.source, speaker: item.speaker, actor: item.actor,
         ...(item.isVoiceMessage ? { isVoiceMessage: true } : {}),
-        timestamp: item.timestamp, content: item.sharedRecord ? buildSharedChatRecordText(item.sharedRecord, item.sharedComment!, params.aiConfig.agentId) : item.content })),
+        timestamp: item.timestamp, content: item.sharedMoment ? buildSharedMomentText(item.sharedMoment, params.aiConfig.agentId) : item.sharedRecord ? buildSharedChatRecordText(item.sharedRecord, item.sharedComment!, params.aiConfig.agentId) : item.content })),
     })).join('\n\n');
   }
 
@@ -137,7 +139,7 @@ export class PromptHistoryBuilder {
     }
     const messages: PromptPackMessage[] = timeline.flatMap((item): PromptPackMessage[] => [{
       role: item.speaker === 'assistant' ? 'assistant' : 'user',
-      content: item.sharedRecord ? buildSharedChatRecordText(item.sharedRecord, item.sharedComment!, params.aiConfig.agentId) : item.content,
+      content: item.sharedMoment ? buildSharedMomentText(item.sharedMoment, params.aiConfig.agentId) : item.sharedRecord ? buildSharedChatRecordText(item.sharedRecord, item.sharedComment!, params.aiConfig.agentId) : item.content,
       ...(item.source === 'call' && item.callBoundary === undefined ? {
         systemNotice: '下一条来自通话历史记录，来源字段仅作定位，不代表当前通话状态。\n'
           + JSON.stringify({ callId: item.callId, speaker: item.speaker }),
@@ -388,6 +390,8 @@ export class PromptHistoryBuilder {
     currentAgentId: string,
   ): Promise<PromptPackMessageContent> {
     const metadata = parseMessageMetadata(message);
+    const moment = getMessageSharedMoment(message);
+    if (moment) return buildSharedMomentText(moment, currentAgentId);
     const shared = getMessageSharedRecord(message);
     if (shared) {
       return runtimeContext.groupChat?.currentTurnUserMessageIds?.includes(message.id)

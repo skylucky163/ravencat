@@ -1,6 +1,7 @@
 /** 解析并构建聊天消息元数据，统一附件、通话与工具状态及会话预览文本格式。 */
 import type { ChatMessage } from './ChatMessage';
 import { readSnapshotModelText, type SharedChatRecord } from './SharedChatRecord';
+import { buildSharedMomentText, isSharedMoment, type SharedMoment } from './SharedMoment';
 import type {
   ChatAttachment,
   ChatMessageAttachmentAIPolicy,
@@ -204,6 +205,7 @@ export interface ParsedChatMessageMetadata {
   /** 与已有用量共同描述一次模型请求；缓存量是输入的子集。 */
   cachedTokens?: number;
   sharedRecord?: SharedChatRecord;
+  sharedMoment?: SharedMoment;
   actorName?: string | null;
   kind?: ChatMessageAttachmentMetadata['kind'] | 'sticker' | string;
   attachments?: ChatAttachment[];
@@ -244,6 +246,9 @@ export interface ParsedChatMessageMetadata {
 
 /** 引用保存当时的内容和媒体身份，原消息改写或删除不改变已发送引用。 */
 export interface ChatReplyQuote {
+  /** 引用时的界面名称快照，可含私有备注，不进入模型正文；旧引用没有此字段。 */
+  authorName?: string;
+  moment?: SharedMoment;
   text: string;
   /** 新引用保存独立的公开名称正文；text 保留用户界面的原始称呼。 */
   modelText?: string;
@@ -258,8 +263,11 @@ export interface ChatReplyTarget {
   quote: ChatReplyQuote;
 }
 
-export function createChatReplyTarget(message: ChatMessage, publicMembers: readonly { aiAssistantId: string; name: string }[]): ChatReplyTarget {
+export function createChatReplyTarget(message: ChatMessage, publicMembers: readonly { aiAssistantId: string; name: string }[], authorName?: string): ChatReplyTarget {
+  const moment = getMessageSharedMoment(message);
   const quote: ChatReplyQuote = {
+    ...(authorName ? { authorName } : {}),
+    ...(moment ? { moment } : {}),
     text: message.text,
     modelText: buildGroupMentionModelText(message.text, message, publicMembers),
     attachments: getMessageAttachments(message).map((attachment) => ({ ...attachment })),
@@ -269,7 +277,9 @@ export function createChatReplyTarget(message: ChatMessage, publicMembers: reado
   const labels = quote.attachments.map((attachment) => `[${attachment.type === 'image' ? '图片' : '文件'}：${attachment.fileName}]`);
   if (quote.sticker) labels.push(buildStickerMessagePreviewText(quote.sticker));
   if (quote.voice) labels.push('[语音消息]');
-  return { id: message.id, text: [labels.join(' '), quote.text].filter(Boolean).join('\n'), quote };
+  if (moment) labels.push(`[时刻] ${moment.author.displayName}：${moment.content}`);
+  const text = [labels.join(' '), quote.text].filter(Boolean).join('\n');
+  return { id: message.id, text: authorName ? `${authorName}：${text}` : text, quote };
 }
 
 export function getMessageReplyQuote(message: Pick<ChatMessage, 'metadataJson'>): ChatReplyQuote | null {
@@ -277,10 +287,11 @@ export function getMessageReplyQuote(message: Pick<ChatMessage, 'metadataJson'>)
 }
 
 /** 引用只告诉模型正在指向哪个媒体，原媒体内容由历史上下文提供。 */
-export function buildReplyQuoteModelText(message: Pick<ChatMessage, 'metadataJson' | 'replyToText'>): string | null {
+export function buildReplyQuoteModelText(message: Pick<ChatMessage, 'metadataJson' | 'replyToText'>, currentAgentId?: string): string | null {
   const quote = getMessageReplyQuote(message);
   if (!quote) return message.replyToText ? `[引用：${readSnapshotModelText({ text: message.replyToText })}]` : null;
   const lines = [quote.voice ? `[语音消息；mediaAssetId=${quote.voice.mediaAssetId}]` : readSnapshotModelText(quote)];
+  if (quote.moment) lines.push(buildSharedMomentText(quote.moment, currentAgentId));
   if (quote.sticker) lines.push(`[表情包：${quote.sticker.name}；mediaAssetId=${quote.sticker.mediaAssetId}]`);
   for (const attachment of quote.attachments) {
     lines.push(`[${attachment.type === 'image' ? '图片' : '文件'}：${attachment.fileName}${attachment.mediaAssetId ? `；mediaAssetId=${attachment.mediaAssetId}` : ''}]`);
@@ -292,6 +303,8 @@ function isChatReplyQuote(value: unknown): value is ChatReplyQuote {
   if (!value || typeof value !== 'object') return false;
   const quote = value as ChatReplyQuote;
   return typeof quote.text === 'string'
+    && (quote.authorName === undefined || typeof quote.authorName === 'string')
+    && (quote.moment === undefined || isSharedMoment(quote.moment))
     && (quote.modelText === undefined || typeof quote.modelText === 'string')
     && Array.isArray(quote.attachments) && quote.attachments.every((attachment) => attachment
       && typeof attachment.id === 'string' && (attachment.type === 'image' || attachment.type === 'file')
@@ -474,6 +487,11 @@ export function getMessageSharedRecord(message: Pick<ChatMessage, 'metadataJson'
   return metadata?.kind === 'shared_record' ? metadata.sharedRecord! : null;
 }
 
+export function getMessageSharedMoment(message: Pick<ChatMessage, 'metadataJson'>): SharedMoment | null {
+  const metadata = parseMessageMetadata(message);
+  return metadata?.kind === 'shared_moment' ? metadata.sharedMoment! : null;
+}
+
 function isSharedChatRecord(value: unknown): value is SharedChatRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as SharedChatRecord;
@@ -487,6 +505,7 @@ function isSharedChatRecord(value: unknown): value is SharedChatRecord {
       && (entry.author.agentId === null || typeof entry.author.agentId === 'string')
       && typeof entry.createdAt === 'string' && typeof entry.text === 'string'
       && (entry.modelText === undefined || typeof entry.modelText === 'string')
+      && (entry.moment === undefined || isSharedMoment(entry.moment))
       && (entry.kind === 'speech' || entry.kind === 'tool_status')
       && (entry.sticker === null || isStickerMessageMetadata({ kind: 'sticker', sticker: entry.sticker }))
       && Array.isArray(entry.attachments) && entry.attachments.every((attachment) => attachment
@@ -562,6 +581,7 @@ export function parseMessageMetadata(
       throw new Error('分享聊天记录损坏');
     }
     if (parsed.kind === 'shared_record') parsed.attachments = parsed.sharedRecord!.entries.flatMap((entry) => entry.attachments);
+    if (parsed.kind === 'shared_moment' && !isSharedMoment(parsed.sharedMoment)) throw new Error('分享时刻快照损坏');
 
     setCachedMetadata(raw, parsed);
     return parsed;
@@ -655,7 +675,7 @@ export function hasAttachments(
 
 export function getMessageDisplayKind(
   message: Pick<ChatMessage, 'metadataJson' | 'text'> | null | undefined
-): 'text' | 'image' | 'file' | 'mixed' | 'sticker' | 'voice' | 'shared_record' {
+): 'text' | 'image' | 'file' | 'mixed' | 'sticker' | 'voice' | 'shared_record' | 'shared_moment' {
   const metadata = parseMessageMetadata(message);
   if (!metadata) {
     return 'text';
@@ -665,6 +685,7 @@ export function getMessageDisplayKind(
     return 'sticker';
   }
   if (metadata.kind === 'shared_record') return 'shared_record';
+  if (metadata.kind === 'shared_moment') return 'shared_moment';
   if (metadata.kind === 'voice') {
     return 'voice';
   }
@@ -879,6 +900,7 @@ export function buildUserMessagePreviewText(params: {
 }): string {
   const text = String(params.text || '').trim();
   if (params.metadata?.kind === 'shared_record') return `[聊天记录] ${text || params.metadata.sharedRecord!.sourceName}`;
+  if (params.metadata?.kind === 'shared_moment') return `[时刻] ${params.metadata.sharedMoment!.author.displayName}：${params.metadata.sharedMoment!.content}`;
   if (params.metadata?.kind === 'voice') {
     return '[语音消息]';
   }

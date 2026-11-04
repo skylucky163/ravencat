@@ -5,15 +5,12 @@ export interface TranslationFieldSpec {
   key: string;
   label: string;
   placeholder: string;
-  required?: boolean;
   hint?: string;
   advanced?: boolean;
 }
 export interface TranslationProviderMeta {
   provider: TranslationProvider;
   label: string;
-  description: string;
-  credentialFields: TranslationFieldSpec[];
   optionFields: TranslationFieldSpec[];
 }
 

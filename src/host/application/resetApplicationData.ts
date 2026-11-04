@@ -17,6 +17,7 @@ import {
   clearTemporarySpeechAudioForFactoryReset,
   clearVoiceRecordingDataForFactoryReset,
   withMediaFileLifetime,
+  setBackgroundRuntimeEnabled,
 } from '@platform/device';
 import { clearSessionTimelineCache } from '@features/chat/composition';
 import { runHostAuthorityMutation } from '@features/assistants';
@@ -101,7 +102,7 @@ async function stopFloatingLayerAndWait(): Promise<void> {
  * 2. 清空全部数据库表（动态发现，不依赖手写名单），并删除历史版本数据库文件
  *    （含 `-wal` / `-shm` / `-journal`，当前 canonical 数据库文件不删除）；
  * 3. 清空 AsyncStorage、删除 persistent-media/ 根目录、删除 speech 临时音频 cache、
- *    关闭 HTTP 诊断并删除其私有缓存：这些清理彼此独立，必须全部尝试并统一报告
+ *    重置 HTTP 诊断开关并删除其持久记录：这些清理彼此独立，必须全部尝试并统一报告
  *    失败，不能因为第一项失败就跳过剩余清理；
  * 4. 无论如何都清空会话时间线缓存。
  *
@@ -121,6 +122,7 @@ export async function resetApplicationData(): Promise<void> {
           () => quiesceDeviceControlForFactoryReset(),
         ),
         settleCleanup('stopFloatingLayer', () => stopFloatingLayerAndWait()),
+        settleCleanup('stopBackgroundRuntime', () => setBackgroundRuntimeEnabled(false)),
       ])
     ).filter((item): item is CleanupFailure => item !== null);
 
@@ -160,7 +162,7 @@ export async function resetApplicationData(): Promise<void> {
     });
 
     // clearDB 已经执行，本次 reset 已经不可逆：下面各项彼此独立，必须全部尝试，
-    // 失败统一收口，避免「AsyncStorage 失败 → 私有媒体、语音与 HTTP 缓存没清」这类
+    // 失败统一收口，避免「AsyncStorage 失败 → 私有媒体、语音与 HTTP 记录没清」这类
     // 半清理状态被当成成功。
     const persistenceFailures = (
       await Promise.all([
@@ -170,7 +172,7 @@ export async function resetApplicationData(): Promise<void> {
           'clearTemporarySpeechAudio',
           () => clearTemporarySpeechAudioForFactoryReset(),
         ),
-        settleCleanup('disableHttpDiagnostics', () => aiHttpDiagnostics.setEnabled(false)),
+        settleCleanup('resetHttpDiagnostics', () => aiHttpDiagnostics.reset()),
       ])
     ).filter((item): item is CleanupFailure => item !== null);
 

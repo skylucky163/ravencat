@@ -25,11 +25,11 @@ const FILE_NAME = 'exchanges.json';
 const REDACTED = '[REDACTED]';
 
 function getDirectory(): string {
-  if (!FileSystem.cacheDirectory) {
-    throw new Error('应用缓存目录不可用');
+  if (!FileSystem.documentDirectory) {
+    throw new Error('应用持久存储目录不可用');
   }
-  // 诊断正文和选择均只属于应用缓存，不进入业务数据库、文档目录或备份。
-  return `${FileSystem.cacheDirectory}ai-http-diagnostics/`;
+  // 开关和最近十条记录一起持久保存，系统清理缓存不能撤销用户选择或删除记录。
+  return `${FileSystem.documentDirectory}ai-http-diagnostics/`;
 }
 
 function sanitizeUrl(value: string): string {
@@ -113,16 +113,27 @@ class HttpExchangeDiagnostics {
     try {
       const directory = getDirectory();
       const file = `${directory}${FILE_NAME}`;
-      const info = await FileSystem.getInfoAsync(file);
+      let info = await FileSystem.getInfoAsync(file);
+      // 只在长期文件尚未建立时迁移旧缓存；移动已提交文件，不恢复未提交的临时正文。
+      if (!info.exists && FileSystem.cacheDirectory) {
+        const legacyDirectory = `${FileSystem.cacheDirectory}ai-http-diagnostics/`;
+        const legacyFile = `${legacyDirectory}${FILE_NAME}`;
+        info = await FileSystem.getInfoAsync(legacyFile);
+        if (info.exists) {
+          await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+          await FileSystem.moveAsync({ from: legacyFile, to: file });
+          await FileSystem.deleteAsync(legacyDirectory, { idempotent: true });
+        }
+      }
       if (info.exists) {
         const saved: unknown = JSON.parse(await FileSystem.readAsStringAsync(file));
         if (typeof saved !== 'object' || saved === null) throw new Error('文件格式无效');
         const state = saved as Record<string, unknown>;
-        if (state.version !== 1 || state.enabled !== true || !Array.isArray(state.records)
+        if (state.version !== 1 || typeof state.enabled !== 'boolean' || !Array.isArray(state.records)
           || state.records.length > RETENTION || !state.records.every(isExchange)) {
           throw new Error('文件格式无效');
         }
-        this.enabled = true;
+        this.enabled = state.enabled;
         this.records = state.records.map((record) => sanitizeExchange(record));
       }
       // 未提交的临时文件不参与恢复，避免恢复失败的写入或额外保留一份正文。
@@ -138,13 +149,13 @@ class HttpExchangeDiagnostics {
     this.error = `HTTP 诊断${action}失败：${error instanceof Error ? error.message : String(error)}`;
   }
 
-  private async persist(records: AIHttpExchange[]): Promise<void> {
+  private async persist(records: AIHttpExchange[], enabled = this.enabled): Promise<void> {
     const directory = getDirectory();
     await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
     const file = `${directory}${FILE_NAME}`;
     // Android 同目录 rename 替换已提交文件；中断写入不会破坏上一份完整记录。
     try {
-      await FileSystem.writeAsStringAsync(`${file}.tmp`, JSON.stringify({ version: 1, enabled: true, records }));
+      await FileSystem.writeAsStringAsync(`${file}.tmp`, JSON.stringify({ version: 1, enabled, records }));
       await FileSystem.moveAsync({ from: `${file}.tmp`, to: file });
     } catch (error) {
       await FileSystem.deleteAsync(`${file}.tmp`, { idempotent: true });
@@ -173,14 +184,9 @@ class HttpExchangeDiagnostics {
     return this.enqueue(async () => {
       await this.initialize();
       try {
-        if (enabled) {
-          await this.persist(this.records);
-          this.enabled = true;
-        } else {
-          this.enabled = false;
-          await FileSystem.deleteAsync(getDirectory(), { idempotent: true });
-          this.records = [];
-        }
+        if (!enabled) this.enabled = false;
+        await this.persist(this.records, enabled);
+        this.enabled = enabled;
         this.error = null;
       } catch (error) {
         this.setError(enabled ? '开启' : '关闭', error);
@@ -196,15 +202,33 @@ class HttpExchangeDiagnostics {
     return this.enqueue(async () => {
       await this.initialize();
       try {
-        if (this.enabled) {
-          await this.persist([]);
-        } else {
-          await FileSystem.deleteAsync(getDirectory(), { idempotent: true });
-        }
+        await this.persist([]);
         this.records = [];
         this.error = null;
       } catch (error) {
         this.setError('清空', error);
+        throw error;
+      } finally {
+        this.notify();
+      }
+    });
+  }
+
+  async reset(): Promise<void> {
+    this.generation++;
+    return this.enqueue(async () => {
+      this.initialized = true;
+      this.enabled = false;
+      try {
+        await FileSystem.deleteAsync(getDirectory(), { idempotent: true });
+        // 恢复出厂同时移除尚未迁移的旧文件，避免下一次启动重新导入。
+        if (FileSystem.cacheDirectory) {
+          await FileSystem.deleteAsync(`${FileSystem.cacheDirectory}ai-http-diagnostics/`, { idempotent: true });
+        }
+        this.records = [];
+        this.error = null;
+      } catch (error) {
+        this.setError('重置', error);
         throw error;
       } finally {
         this.notify();

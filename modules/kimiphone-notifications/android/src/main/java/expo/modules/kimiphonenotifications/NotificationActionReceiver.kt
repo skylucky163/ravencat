@@ -53,7 +53,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
     if (type == "together-listening" && notificationAction == "leave") {
       val response = NotificationResponseDispatcher.buildResponse(intent) ?: return
       // durable 先行：Headless 启动失败时动作也不得丢失，交由 Host 恢复时幂等重放。
-      NotificationResponseDispatcher.recordForTogetherListeningHeadless(appContext, response)
+      NotificationResponseDispatcher.recordTogetherListeningAction(appContext, response)
       return
     }
 
@@ -74,7 +74,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
     if (type == "ai-incoming-call") {
       if (notificationAction == "reject") {
         // 拒接保持无 UI Headless 路径，不启动界面。
-        NotificationResponseDispatcher.recordForHeadless(appContext, response)
+        NotificationResponseDispatcher.recordCallAction(appContext, response)
       } else {
         // 新版来电通知的 open/accept 已直连 IncomingCallActivity；这里只兜底升级前
         // 遗留通知的广播，仅记录 response 等 Host 消费，不再 startActivity。

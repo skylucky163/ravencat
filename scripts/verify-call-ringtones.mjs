@@ -26,6 +26,10 @@ await bootstrapSqlite(executor);
 db.exec(`INSERT INTO ai_assistants (id, agent_id, name, model, created_at, updated_at) VALUES
   ('a', 'agent-a', 'A', 'test', '2026-10-26', '2026-10-26'), ('b', 'agent-b', 'B', 'test', '2026-10-26', '2026-10-26');`);
 // 真实已安装的 145 库没有新表，升级不得改动角色或制造铃声选择。
+for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) {
+  db.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id`);
+}
+db.exec('DROP TABLE model_service_configs; DROP TABLE model_service_settings;');
 db.exec('DROP TABLE call_ringtone_selection; PRAGMA user_version=145;');
 await bootstrapSqlite(executor);
 assert.equal(db.prepare('SELECT COUNT(*) AS n FROM call_ringtone_selection').get().n, 0);

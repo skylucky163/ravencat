@@ -30,9 +30,9 @@ name、description、tags、emotion 是唯一 canonical 语义，group/favorite/
 
 单例 `sticker_system_config` 保存 recognitionModelConfigId 与 embeddingModelConfigId；不会写入其他 Feature 的模型 binding。
 
-- Recognition 只接受 enabled 的 ocr 类资产，任务 Prompt 与严格 JSON name/description/tags/emotion 归 Sticker，不复用普通 OCR 的纯文本任务。
-- Embedding 只接受 enabled 的 embedding 类资产，复用 platform AI 客户端。
-- Sticker-owned resolver 按已选 ID 解析 active/disabled/deleted/capability_mismatch；不读取 legacy sticker_annotation 或另做自动 adoption。
+- Recognition 只接受连接完整的 ocr 类资产，任务 Prompt 与严格 JSON name/description/tags/emotion 归 Sticker，不复用普通 OCR 的纯文本任务。
+- Embedding 只接受连接完整的 embedding 类资产，复用 platform AI 客户端。
+- Sticker-owned resolver 按已选 ID 解析 active/incomplete/deleted/capability_mismatch；不读取 legacy sticker_annotation 或另做自动 adoption。
 - 未配置识别模型不领取并刷失败；未配置向量模型不影响已有 Sticker。
 - 当前选择展示与弹窗候选查询分开，配置 commit 后唤醒对应 pending 队列。
 
@@ -42,19 +42,21 @@ name、description、tags、emotion 是唯一 canonical 语义，group/favorite/
 
 ## 7. 索引有效性
 
-sticker_embeddings 保存模型 ID、模型 updatedAt 指纹、semantic revision、dimension 与 vector。有效性四项必须同时匹配当前查询；旧模型或旧正文向量可保留，但不能参与搜索。模型更换/编辑后重新建当前索引，切回未变化模型时可复用有效旧向量。
+sticker_embeddings 保存模型 ID、模型 updatedAt 指纹、semantic revision、dimension 与 vector。有效性四项必须同时匹配当前查询；旧模型或旧正文向量保留，但不能与新模型混用。模型更换／编辑不自动重建，界面明确提示原向量不适用于当前模型、旧数据保留且尚未重建。
+
+用户手动确认后，新向量在事务外分批生成并暂存内存，全部成功才在同一事务替换用户索引。发布比较模型版本、任务 ID、持久 revision 和完整语义快照；失败、取消、内容变更或 SQL 错误不发布半套结果。退出应用丢弃未发布的新向量，需手动重新发起。AI 私有收藏不在用户整批替换范围。
 
 Sticker 删除由 FK 级联删除向量，不删除其他事实共享的媒体。没有 SQLite vector extension、HNSW 或额外 ANN 依赖。
 
 ## 8. Worker 与网络边界
 
-短事务领取/提交，模型与向量请求在事务外；claim、模型指纹和 semanticRevision 拒绝晚到结果。新 ready、语义编辑或模型 commit 后发 pending 信号，Host 前台空闲时处理，不创建另一套业务队列。
+短事务领取／提交，模型与向量请求在事务外；claim、模型指纹、semanticRevision 与发布 revision 拒绝晚到结果。版本必须先于异步模型读取捕获，避免旧配置在等待后重新获得新资格。模型资产与用途选择在自己的提交事务中撤销旧资格。新 ready 或语义编辑发 pending 信号，Host 只维护已经明确发布过的当前模型索引；模型切换、冷启动和回前台都不授权为新模型全量重建。显式重建与自动维护由同一 Host 边界暂停、取消和等待，reset 前统一收口。
 
 ## 9. 搜索
 
 search_stickers 是自然语言快速路径，可按 group 过滤。有有效 embedding 时 cosine 为主要相关性，lexical 和少量 favorite/usage 信号辅助；具体权重不是永久契约，使用历史不能绕过相关性。
 
-未配置/停用/删除模型、query embedding 失败或无有效向量时，按 name/description/tags/emotion 进行 lexical 搜索。embedding 是增强，不是 Sticker 可用性的单点依赖。所有 ready 候选完成搜索排序后才取结果，不能先套 UI 列表200上限。
+未配置模型、模型连接不完整或已删除、query embedding 失败或无有效向量时，按 name/description/tags/emotion 进行 lexical 搜索。embedding 是增强，不是 Sticker 可用性的单点依赖。所有 ready 候选完成搜索排序后才取结果，不能先套 UI 列表200上限。
 
 ## 10. AI 工具
 
@@ -81,7 +83,7 @@ search_stickers 是自然语言快速路径，可按 group 过滤。有有效 em
 
 `verify:stickers-v2` 保护当前以下行为，定向媒体、模型选择与 Chat 检查按实际改动补充：
 
-- ocr/embedding 类型、enabled/disabled/deleted 和选择 commit；没有 legacy adoption。
+- ocr/embedding 类型、incomplete/deleted 和选择 commit；没有 legacy adoption。
 - 语义编辑推进 revision，favorite/useCount/group 不推进；旧 revision/模型/维度不参与 cosine。
 - 模型切换、query 失败、无有效向量可 lexical；全量候选和 group filter，AI 只读 ready。
 - ready count、稳定分页、不返回 URI、select 仅生成 intent，Chat 正式提交。

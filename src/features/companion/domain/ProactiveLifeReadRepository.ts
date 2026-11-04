@@ -2,19 +2,6 @@
 
 export type ProactiveLifeSourceType = 'ai_schedule';
 
-export interface ProactiveLifeFutureCursor {
-  plannedAt: string;
-  sourceType: ProactiveLifeSourceType;
-  sourceId: string;
-}
-
-export interface ProactiveLifeHistoryCursor {
-  /** 机会真正获得执行机会的时间（canonical claimed_at）。 */
-  occurredAt: string;
-  sourceType: ProactiveLifeSourceType;
-  sourceId: string;
-}
-
 /** 主动生活历史的用户可理解终态，不暴露 AI Schedule 的内部 disposition 名称。 */
 export type ProactiveLifeCompletionDisposition = 'completed' | 'interrupted' | 'unexecuted' | 'failed';
 
@@ -44,30 +31,28 @@ export interface ProactiveLifePage<Item, Cursor> {
   hasMore: boolean;
 }
 
-export interface ProactiveLifeOverviewRecord {
-  nextFuture: ProactiveLifeFutureRecord | null;
-  futureCount: number;
-  runningItems: ProactiveLifeRunningRecord[];
-  recentHistory: ProactiveLifeHistoryRecord[];
-  historyNextCursor: ProactiveLifeHistoryCursor | null;
+/** 本地日历日由展示层转成绝对边界；Repository 不猜测时区或一天的长度。 */
+export interface ProactiveLifeDayRange { key: string; from: string; until: string }
+export interface ProactiveLifeCalendarCursor { rank: number; at: string; sourceId: string }
+export type ProactiveLifeCalendarRecord =
+  | { kind: 'future'; item: ProactiveLifeFutureRecord }
+  | { kind: 'running'; item: ProactiveLifeRunningRecord }
+  | { kind: 'history'; item: ProactiveLifeHistoryRecord };
+export interface ProactiveLifeDayCount { key: string; count: number; runningCount: number }
+export interface ProactiveLifeDayQuery {
+  ownerAIId: string;
+  now: string;
+  day: ProactiveLifeDayRange;
+  after?: ProactiveLifeCalendarCursor | null;
+  limit: number;
 }
-
+/** days 是展示层按日期升序给出的有界窗口。 */
+export interface ProactiveLifeCalendarQuery extends ProactiveLifeDayQuery { days: ProactiveLifeDayRange[] }
+export interface ProactiveLifeCalendarRecordPage {
+  counts: ProactiveLifeDayCount[];
+  page: ProactiveLifePage<ProactiveLifeCalendarRecord, ProactiveLifeCalendarCursor>;
+}
 export interface ProactiveLifeReadRepository {
-  loadOverview(input: {
-    ownerAIId: string;
-    now: string;
-    historyLimit: number;
-  }): Promise<ProactiveLifeOverviewRecord>;
-  listFuture(input: {
-    ownerAIId: string;
-    now: string;
-    after?: ProactiveLifeFutureCursor | null;
-    limit: number;
-  }): Promise<ProactiveLifePage<ProactiveLifeFutureRecord, ProactiveLifeFutureCursor>>;
-  listHistory(input: {
-    now: string;
-    ownerAIId: string;
-    before?: ProactiveLifeHistoryCursor | null;
-    limit: number;
-  }): Promise<ProactiveLifePage<ProactiveLifeHistoryRecord, ProactiveLifeHistoryCursor>>;
+  loadCalendar(input: ProactiveLifeCalendarQuery): Promise<ProactiveLifeCalendarRecordPage>;
+  listDay(input: ProactiveLifeDayQuery): Promise<ProactiveLifePage<ProactiveLifeCalendarRecord, ProactiveLifeCalendarCursor>>;
 }

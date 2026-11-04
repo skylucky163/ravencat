@@ -5,5 +5,5 @@ export { MemoryInputError, MemoryNotFoundError } from './domain/Memory';
 export { emitMemoryChanged } from './application/MemorySignals';
 export { memoryRepository } from './infrastructure/SQLiteMemoryRepository';
 export { memoryEntryRepository } from './infrastructure/SQLiteMemoryEntryRepository';
-export { initializeMemoryEmbeddingModelInTransaction } from './infrastructure/SQLiteMemoryEntryRepository';
-export { synchronizeMemoryEmbeddingModel, processNextMemoryEmbedding } from './application/MemoryEmbeddingWorker';
+export { processNextMemoryEmbedding } from './application/MemoryEmbeddingWorker';
+export { synchronizeMemoryEmbeddingModel } from './application/MemoryEmbeddingModels';

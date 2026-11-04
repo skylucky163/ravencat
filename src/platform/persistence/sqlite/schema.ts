@@ -1,3 +1,4 @@
+import { MODEL_SERVICE_SCHEMA } from './modelServiceSchema';
 /** 集中定义 SQLite 建表与索引语句。 */
 import { CALL_HISTORY_SCHEMA } from './callHistorySchema';
 
@@ -39,6 +40,7 @@ import {
 } from './togetherListeningSchema';
 import {
   STICKER_SYSTEM_CONFIG_SCHEMA,
+  STICKER_EMBEDDING_FAILURES_SCHEMA,
   AI_STICKER_TASKS_SCHEMA,
   STICKER_OWNERSHIP_INDEXES,
   STICKER_EMBEDDINGS_SCHEMA,
@@ -78,8 +80,11 @@ import { CHAT_REGENERATION_REQUESTS_SCHEMA } from './chatRegenerationSchema';
 import { CHAT_REPLY_VERSIONS_SCHEMA } from './chatReplyVersionSchema';
 import { MCP_SERVERS_SCHEMA, MCP_TOOL_GRANTS_SCHEMA, MCP_SERVER_ASSISTANTS_SCHEMA, MCP_TOOL_GRANTS_INDEXES } from './mcpSchema';
 import { WEB_SEARCH_SCHEMA } from './webSearchSchema';
+import { CHAT_BUBBLE_SKINS_SCHEMA } from './chatBubbleSkinSchema';
 
 export const SCHEMAS: Record<string, string> = {
+  modelServices: MODEL_SERVICE_SCHEMA,
+  chatBubbleSkins: CHAT_BUBBLE_SKINS_SCHEMA,
   webSearch: WEB_SEARCH_SCHEMA,
   chatFavorites: CHAT_FAVORITES_SCHEMA,
   callBackgroundSelection: CALL_BACKGROUND_SELECTION_SCHEMA,
@@ -96,6 +101,7 @@ export const SCHEMAS: Record<string, string> = {
       avatar_media_asset_id TEXT,
       model TEXT NOT NULL,
       api_key TEXT,
+      service_config_id TEXT REFERENCES model_service_configs(id),
       api_base_url TEXT,
       system_prompt TEXT,
       temperature REAL DEFAULT 0.7,
@@ -136,6 +142,12 @@ export const SCHEMAS: Record<string, string> = {
     );
   `,
 
+  assistantProfileCovers: `
+    CREATE TABLE IF NOT EXISTS assistant_profile_covers (
+      assistant_id TEXT PRIMARY KEY REFERENCES ai_assistants(id) ON DELETE CASCADE,
+      media_asset_id TEXT NOT NULL REFERENCES media_assets(id)
+    );
+  `,
   hostAIRelationshipState: HOST_AI_RELATIONSHIP_STATE_SCHEMA,
 
   auxiliaryModelConfigs: `
@@ -145,11 +157,11 @@ export const SCHEMAS: Record<string, string> = {
       name TEXT NOT NULL,
       base_url TEXT NOT NULL,
       api_key TEXT,
+      service_config_id TEXT REFERENCES model_service_configs(id),
       model TEXT NOT NULL,
       temperature REAL,
       top_p REAL,
       max_tokens INTEGER,
-      enabled INTEGER DEFAULT 1,
       metadata_json TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -240,6 +252,7 @@ export const SCHEMAS: Record<string, string> = {
       name TEXT NOT NULL,
       model TEXT NOT NULL,
       api_key TEXT,
+      service_config_id TEXT REFERENCES model_service_configs(id),
       api_base_url TEXT,
       system_prompt TEXT,
       temperature REAL DEFAULT 0.7,
@@ -635,6 +648,7 @@ export const SCHEMAS: Record<string, string> = {
   mcpToolGrants: MCP_TOOL_GRANTS_SCHEMA,
   mcpServerAssistants: MCP_SERVER_ASSISTANTS_SCHEMA,
   stickerEmbeddings: STICKER_EMBEDDINGS_SCHEMA,
+  stickerEmbeddingFailures: STICKER_EMBEDDING_FAILURES_SCHEMA,
   stickerSystemConfig: STICKER_SYSTEM_CONFIG_SCHEMA,
   aiStickerTasks: AI_STICKER_TASKS_SCHEMA,
   aiDownloadedImages: AI_DOWNLOADED_IMAGES_SCHEMA,
@@ -722,7 +736,6 @@ export const INDEXES: Record<string, string> = {
   // Protocols 相关索引
   idxProtocolsAiId: `CREATE INDEX IF NOT EXISTS idx_protocols_ai_id ON protocols(ai_assistant_id);`,
   idxAuxiliaryModelConfigsUpdatedAt: `CREATE INDEX IF NOT EXISTS idx_auxiliary_model_configs_updated_at ON auxiliary_model_configs(updated_at DESC);`,
-  idxAuxiliaryModelConfigsEnabled: `CREATE INDEX IF NOT EXISTS idx_auxiliary_model_configs_enabled ON auxiliary_model_configs(enabled);`,
   idxAuxiliaryModelConfigsCapabilityKind: `CREATE INDEX IF NOT EXISTS idx_auxiliary_model_configs_capability_kind ON auxiliary_model_configs(capability_kind, updated_at DESC);`,
 
   // 朋友圈相关索引

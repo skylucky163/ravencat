@@ -1,13 +1,14 @@
 /**
  * Agent run 的短生命周期时间线。
  *
- * canonical user_reply 在 T3 之前不能把中间事实旁路写入 messages。这个小对象
- * 因此同时承担两件事：按 Runtime 事件首次可见的顺序分配 run-local sequence，
- * 以及在 run 成功时把内存时间线转换成 ConversationTurnCommitItem[]。
+ * 按 Runtime 事件首次可见的顺序分配 run-local sequence，并把发送意图和最终
+ * 时间线转换为同一回合提交项。图片／表情可提前取得正式消息身份，T3 只绑定
+ * 它们在整轮中的最终顺序；正文、语音与重写仍沿各自原有提交策略。
  *
  * Legacy（persistence.persistsIntermediates=true）不使用这里的提交转换，仍由
  * 原有流式草稿和工具状态 projector 负责逐条落库。
  */
+import { isSharedMomentSendIntent, type SharedMomentSendIntent } from './SharedMomentSendIntent';
 import type { ModelToolCall } from '@platform/ai';
 import type { AgentTerminalCode, AgentToolOutcome } from '@platform/agentRuntime';
 import {
@@ -105,11 +106,12 @@ interface TimelineStep {
   toolItem: AgentTimelineItem | null;
   readonly stickerItems: StickerTimelineItem[];
   readonly voiceItems: VoiceTimelineItem[];
-  readonly imageItems: ImageTimelineItem[];
+  readonly contentItems: ContentTimelineItem[];
   readonly outcomes: Map<string, AgentToolOutcome>;
+  readonly committedOutputs: Map<string, number>;
 }
 
-/** 工具返回的 Sticker intent 只在 T3 前暂存在内存，不投影为另一条 transient UI 路径。 */
+/** 表情意图交由回合 owner 提交；未取得正式消息身份前不另建 transient 媒体气泡。 */
 interface StickerTimelineItem {
   readonly sequence: number;
   readonly stepIndex: number;
@@ -130,10 +132,11 @@ interface VoiceTimelineItem {
   readonly time: string;
 }
 
-interface ImageTimelineItem {
+interface ContentTimelineItem {
   readonly sequence: number;
   readonly stepIndex: number;
-  readonly intent: ImageSendIntent;
+  readonly toolCallId: string;
+  readonly intent: ImageSendIntent | SharedMomentSendIntent;
   readonly apiMessageId: string | null;
   readonly createdAt: string;
   readonly time: string;
@@ -209,8 +212,9 @@ export class ChatAgentTimeline {
       toolItem: null,
       stickerItems: [],
       voiceItems: [],
-      imageItems: [],
+      contentItems: [],
       outcomes: new Map(),
+      committedOutputs: new Map(),
     });
   }
 
@@ -318,11 +322,12 @@ export class ChatAgentTimeline {
     if (outcome.status === 'success' && isVoiceMessageSendIntent(outcome.data)) {
       step.voiceItems.push(this.createVoiceTimelineItem(step, toolCallId, outcome.data));
     }
-    if (outcome.status === 'success' && isImageSendIntent(outcome.data)) {
+    if (outcome.status === 'success' && (isImageSendIntent(outcome.data) || isSharedMomentSendIntent(outcome.data))) {
       const now = new Date();
-      step.imageItems.push({
+      step.contentItems.push({
         sequence: this.nextSequence++,
         stepIndex,
+        toolCallId,
         intent: outcome.data,
         apiMessageId: step.turn!.messageId,
         createdAt: now.toISOString(),
@@ -337,7 +342,8 @@ export class ChatAgentTimeline {
     const toolDisplayNames = this.resolveToolDisplayNames(toolCalls);
     const failed = [...step.outcomes.values()].some(isToolStatusFailure);
     step.toolItem = this.replaceItem(step.toolItem, {
-      text: buildToolStatusText(joinToolDisplayNames(toolDisplayNames), failed ? 'failed' : 'completed'),
+      text: buildToolStatusText(joinToolDisplayNames(toolDisplayNames), failed ? 'failed' : 'completed')
+        + this.outputDeliveryText(step),
       status: failed ? 'failed' : 'completed',
       toolNames: toolCalls.map((toolCall) => toolCall.name),
       toolDisplayNames,
@@ -376,6 +382,14 @@ export class ChatAgentTimeline {
           toolDisplayNames: this.resolveToolDisplayNames(toolCalls),
         });
       }
+      if (step.toolItem && (step.stickerItems.length > 0 || step.contentItems.some(item => isImageSendIntent(item.intent)))) {
+        const reason = terminalCode === 'CANCELLED_BY_USER' ? '本轮已取消'
+          : terminalCode === 'SUPERSEDED' ? '已被新输入替代' : `本轮回复失败（${terminalCode}）`;
+        step.toolItem = this.replaceItem(step.toolItem, {
+          text: buildToolStatusText(joinToolDisplayNames(this.resolveToolDisplayNames(this.timelineToolCalls(step))),
+            step.toolItem.status === 'failed' ? 'failed' : 'completed') + this.outputDeliveryText(step, reason),
+        });
+      }
       if (step.reasoningItem && step.reasoningItem.status !== 'sent') {
         step.reasoningItem = this.replaceItem(step.reasoningItem, { status: 'failed' });
       }
@@ -406,6 +420,49 @@ export class ChatAgentTimeline {
     return this.snapshotItems(this.items);
   }
 
+  /** 只转换已有素材的工具输出；语音暂存物化和重写策略仍由原提交 owner 裁决。 */
+  buildImmediateOutputItem(
+    stepIndex: number,
+    toolCallId: string,
+    params: BuildAgentTimelineItemsParams,
+  ): ConversationTurnCommitItem | null {
+    const step = this.requireStep(stepIndex);
+    const sticker = step.stickerItems.find(item => item.toolCallId === toolCallId);
+    if (sticker) return { message: this.buildStickerMessage(sticker, params) };
+    const image = step.contentItems.find(item => item.toolCallId === toolCallId && isImageSendIntent(item.intent));
+    return image ? { message: this.buildContentMessage(image, params) } : null;
+  }
+
+  recordCommittedOutput(stepIndex: number, toolCallId: string, messages: readonly ChatMessage[]): void {
+    const step = this.requireStep(stepIndex);
+    step.committedOutputs.set(toolCallId, messages[0].id);
+    if (step.toolItem) {
+      const status = step.toolItem.status === 'failed' ? 'failed'
+        : step.toolItem.status === 'completed' ? 'completed' : 'running';
+      step.toolItem = this.replaceItem(step.toolItem, {
+        text: buildToolStatusText(joinToolDisplayNames(this.resolveToolDisplayNames(this.timelineToolCalls(step))), status)
+          + this.outputDeliveryText(step),
+      });
+    }
+    // 交接一条已提交消息，不清除仍在执行的时间线或宣布整轮完成。
+    this.sink.onCommitted?.({ runId: this.runId, messages, outcome: 'committed' });
+    this.publish();
+  }
+
+  private outputDeliveryText(step: TimelineStep, failureReason?: string): string {
+    return [
+      { label: '表情', items: step.stickerItems },
+      { label: '图片', items: step.contentItems.filter(item => isImageSendIntent(item.intent)) },
+    ].flatMap(({ label, items }) => {
+      const committed = items.filter(item => step.committedOutputs.has(item.toolCallId)).length;
+      return [
+        ...(committed > 0 ? [`\n${label}消息已提交。`] : []),
+        ...(committed < items.length ? [failureReason
+          ? `\n${label}未发送：${failureReason}。` : `\n${label}已准备，等待提交。`] : []),
+      ];
+    }).join('');
+  }
+
   private snapshotItems(items: readonly AgentTimelineItem[]): AgentTimelineItemSnapshot[] {
     return items.flatMap(item => {
       let snapshot = toSnapshot(item);
@@ -433,7 +490,7 @@ export class ChatAgentTimeline {
     const projected: {
       sourceSequence: number;
       segmentIndex: number;
-      item: AgentTimelineItem | StickerTimelineItem | VoiceTimelineItem | ImageTimelineItem;
+      item: AgentTimelineItem | StickerTimelineItem | VoiceTimelineItem | ContentTimelineItem;
       commitItem: ConversationTurnCommitItem;
     }[] = [];
 
@@ -508,6 +565,7 @@ export class ChatAgentTimeline {
           item: stickerItem,
           commitItem: {
             message: this.buildStickerMessage(stickerItem, params),
+            committedMessageId: step.committedOutputs.get(stickerItem.toolCallId),
           },
         });
       }
@@ -519,12 +577,13 @@ export class ChatAgentTimeline {
           commitItem: this.buildVoiceMessage(voiceItem, params),
         });
       }
-      for (const imageItem of step.imageItems) {
+      for (const contentItem of step.contentItems) {
         projected.push({
-          sourceSequence: imageItem.sequence,
+          sourceSequence: contentItem.sequence,
           segmentIndex: 0,
-          item: imageItem,
-          commitItem: { message: this.buildImageMessage(imageItem, params) },
+          item: contentItem,
+          commitItem: { message: this.buildContentMessage(contentItem, params),
+            committedMessageId: step.committedOutputs.get(contentItem.toolCallId) },
         });
       }
     }
@@ -731,17 +790,21 @@ export class ChatAgentTimeline {
     const toolNames = [...(item.toolNames ?? [])];
     const toolDisplayNames = [...(item.toolDisplayNames ?? [])];
     const status = item.status === 'failed' ? 'failed' : item.status === 'completed' ? 'completed' : 'running';
+    // 选择结果与表情消息同属 T3；正式工具记录不再保留提交前的等待文案。
+    const text = this.requireStep(item.stepIndex).stickerItems.length > 0
+      ? buildToolStatusText(joinToolDisplayNames(toolDisplayNames), status)
+      : item.text;
     const metadata = buildChatToolStatusMessageMetadata({
       aiConfig: params.aiConfig,
       runtimeContext,
       status,
       toolNames,
       toolDisplayNames,
-      displayText: item.text,
+      displayText: text,
     });
     return {
       sessionId: params.sessionId,
-      text: item.text,
+      text,
       isMe: false,
       senderType: 'system',
       agentId: params.aiConfig.agentId,
@@ -807,8 +870,8 @@ export class ChatAgentTimeline {
     };
   }
 
-  private buildImageMessage(
-    item: ImageTimelineItem,
+  private buildContentMessage(
+    item: ContentTimelineItem,
     params: BuildAgentTimelineItemsParams,
   ): CreateMessageInput {
     const clientMessageId = buildAgentTimelineClientMessageId(this.runId, item.sequence);
@@ -832,11 +895,10 @@ export class ChatAgentTimeline {
       completionTokens: 0,
       logicalMessageId: buildAgentTimelineLogicalMessageId(this.runId, item.stepIndex),
       metadataJson: JSON.stringify(buildMessageMetadata(params.aiConfig, params.runtimeContext ?? {}, {
-        kind: 'image',
-        attachments: [item.intent.attachment],
+        ...(isImageSendIntent(item.intent) ? { kind: 'image', attachments: [item.intent.attachment] } : { kind: 'shared_moment', sharedMoment: item.intent.moment }),
         transientIdentity: clientMessageId,
         timelineSequence: item.sequence,
-        timelineKind: 'image',
+        timelineKind: isImageSendIntent(item.intent) ? 'image' : 'shared_moment',
         stepIndex: item.stepIndex,
       })),
     };

@@ -315,7 +315,6 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
       />
 
       <ModalSheet
-        avoidKeyboard
         visible={modalVisible}
         onClose={handleCloseModal}
         title={editingProtocol ? '编辑协议' : '新增协议'}

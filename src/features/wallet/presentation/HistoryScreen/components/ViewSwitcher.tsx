@@ -6,7 +6,7 @@ import React from 'react';
 import { Text, TouchableOpacity } from 'react-native';
 import { ThemedSurface } from '@shared/theme';
 import { useHistoryStyles } from '../styles';
-import type { ViewType } from '../types';
+import type { ViewType } from '../../historyTypes';
 
 interface ViewSwitcherProps {
   currentView: ViewType;

@@ -498,6 +498,7 @@ export function subscribeAgentTransientTimeline(
 
 /**
  * 渲染层统一 key：Agent timeline 使用 commit 前后不变的 clientMessageId，
+ * 用户消息使用发送前已确定的 clientMessageId，落库不重建列表项；
  * 其它 canonical 历史消息使用 turnRunId + turnItemIndex，其余消息继续使用数据库 id。
  */
 export function getAgentTimelineRenderKey(message: ChatMessage): string {
@@ -505,6 +506,7 @@ export function getAgentTimelineRenderKey(message: ChatMessage): string {
   if (identity) {
     return identity;
   }
+  if (message.isMe && message.clientMessageId) return `client:${message.clientMessageId}`;
   const orderedMessage = message as TimelineMessageWithOrder;
   if (orderedMessage.turnRunId && Number.isInteger(orderedMessage.turnItemIndex)) {
     return `turn:${orderedMessage.turnRunId}:${orderedMessage.turnItemIndex}`;

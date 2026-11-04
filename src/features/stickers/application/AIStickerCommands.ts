@@ -1,11 +1,11 @@
 import type { AgentToolExecutionContext } from '@shared/aiTools';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { inspectLocalImage } from '@platform/device';
-import { buildStickerSemanticText, isStickerEmbeddingValid } from '../domain/StickerEmbedding';
+import { buildStickerSemanticText, isStickerEmbeddingValid, type StickerEmbedding } from '../domain/StickerEmbedding';
 import { deriveStickerName, normalizeStickerName, normalizeStickerTags, StickerNotFoundError,
   STICKER_MAX_DIMENSION_PX, STICKER_MAX_FILE_SIZE_BYTES } from '../domain/Sticker';
 import type { Sticker, StickerMetadataPatch } from '../domain/Sticker';
-import type { AIStickerOperation } from '../domain/AIStickerProcessing';
+import type { AIStickerOperation, AIStickerTask } from '../domain/AIStickerProcessing';
 import { getStickersRuntimeDependencies } from './StickerRuntime';
 import { resolveStickerEmbeddingModel } from './StickerSystemModels';
 
@@ -22,18 +22,32 @@ async function requireOwnSticker(id: string, context: AgentToolExecutionContext)
 
 /** 搜索、选择和维护结果共用当前模型 / 语义版本的真实索引状态。 */
 export async function getStickerVectorState(sticker: Sticker) {
+  const [state] = await getStickerVectorStates([sticker]);
+  return state;
+}
+
+/** 整批结果共用一次模型解析和批量读取，状态按输入顺序返回。 */
+export async function getStickerVectorStates(stickers: readonly Sticker[]) {
+  if (stickers.length === 0) return [];
   const runtime = getStickersRuntimeDependencies();
   const model = await resolveStickerEmbeddingModel();
-  const embeddings = model ? await runtime.repository.listStickerEmbeddingsByStickerIds([sticker.id], model.id) : [];
-  const embedding = embeddings[0];
-  const valid = model !== null && embedding !== undefined && isStickerEmbeddingValid(embedding, {
-    modelConfigId: model.id, modelConfigUpdatedAt: model.updatedAt,
-    semanticRevision: sticker.semanticRevision, dimension: embedding.dimension,
+  const ownedIds = stickers.filter(sticker => sticker.ownerAssistantId).map(sticker => sticker.id);
+  const [embeddings, tasks] = await Promise.all([
+    model ? runtime.repository.listStickerEmbeddingsByStickerIds(stickers.map(sticker => sticker.id), model.id) : Promise.resolve<StickerEmbedding[]>([]),
+    ownedIds.length > 0 ? runtime.aiProcessing.repository.getTasks(ownedIds) : new Map<string, AIStickerTask>(),
+  ]);
+  const embeddingsByStickerId = new Map(embeddings.map(embedding => [embedding.stickerId, embedding]));
+  return stickers.map(sticker => {
+    const embedding = embeddingsByStickerId.get(sticker.id);
+    const valid = model !== null && embedding !== undefined && isStickerEmbeddingValid(embedding, {
+      modelConfigId: model.id, modelConfigUpdatedAt: model.updatedAt,
+      semanticRevision: sticker.semanticRevision, dimension: embedding.dimension,
+    });
+    const task = tasks.get(sticker.id);
+    return { status: valid ? 'ready' : 'missing_or_stale',
+      error: task?.operation === 'embed' ? task.error : null,
+      reminder: valid ? null : '没有当前有效向量，仍可按名称、描述和标签检索与发送；自己的收藏可显式重新向量化，不要求立即修复。' };
   });
-  const task = sticker.ownerAssistantId ? await runtime.aiProcessing.repository.getTask(sticker.id) : null;
-  return { status: valid ? 'ready' : 'missing_or_stale',
-    error: task?.operation === 'embed' ? task.error : null,
-    reminder: valid ? null : '没有当前有效向量，仍可按名称、描述和标签检索与发送；自己的收藏可显式重新向量化，不要求立即修复。' };
 }
 
 export async function addAISticker(input: { media_asset_id: string; name?: string }, context: AgentToolExecutionContext) {

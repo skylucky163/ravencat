@@ -77,20 +77,8 @@ export function isChatReplyRunCancellationError(error: unknown): boolean {
     return true;
   }
 
-  if (!error) {
-    return false;
-  }
-
-  if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
-    return error.name === 'AbortError';
-  }
-
-  if (typeof error === 'object') {
-    const maybeError = error as { name?: unknown; message?: unknown };
-    const name = String(maybeError.name || '');
-    const message = String(maybeError.message || '');
-    return name === 'AbortError' || /aborted|aborterror/i.test(message);
-  }
-
-  return /aborted|aborterror/i.test(String(error));
+  // Provider / SQLite 的失败正文也可能含 aborted；文字不是用户取消的证据。
+  // 模型网关已把真正的请求失败包装为专用异常，不能在这里按正文推翻其契约。
+  return error !== null && typeof error === 'object'
+    && 'name' in error && error.name === 'AbortError';
 }

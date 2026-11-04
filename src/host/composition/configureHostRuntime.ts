@@ -22,7 +22,7 @@ import { configureStickerRuntime } from '@features/stickers/composition';
 import { recognizeSticker } from './StickerAnnotationModelGateway';
 import { assertImageToolRunCurrent } from './agent/assertImageToolRunCurrent';
 import { configureStickerAnnotationQueue } from '../runtime/StickerAnnotationQueueCoordinator';
-import { configureStickerEmbeddingQueue } from '../runtime/StickerEmbeddingQueueCoordinator';
+import { configureStickerEmbeddingQueue, updateStickerEmbeddingModel } from '../runtime/StickerEmbeddingQueueCoordinator';
 import { configureMomentsRuntime } from './configureMomentsRuntime';
 import { configureWebToolsRuntime, sqliteSearchSettingsRepository, secureSearchCredentialStore } from '@features/webTools/composition';
 
@@ -45,7 +45,7 @@ export function configureHostRuntime(): void {
   configureMediaRuntime();
   configureAIImageTools();
   configureMomentsRuntime();
-  configureStickerRuntime(recognizeSticker, assertImageToolRunCurrent);
+  configureStickerRuntime(recognizeSticker, assertImageToolRunCurrent, updateStickerEmbeddingModel);
   configureStickerAnnotationQueue();
   configureStickerEmbeddingQueue();
   configureChatCallGateway({

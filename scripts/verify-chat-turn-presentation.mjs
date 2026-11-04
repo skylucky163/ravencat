@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
+import { INDEXES } from './helpers/sqlite-bootstrap-fixture.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 let database;
@@ -43,7 +44,7 @@ try {
   database.exec(`PRAGMA foreign_keys = ON;
     CREATE TABLE chat_conversations(id TEXT PRIMARY KEY);
     CREATE TABLE sessions(id TEXT PRIMARY KEY, visible_after_message_id INTEGER);
-    CREATE TABLE messages(id INTEGER PRIMARY KEY, client_message_id TEXT);
+    CREATE TABLE messages(id INTEGER PRIMARY KEY, session_id TEXT, client_message_id TEXT);
     CREATE TABLE conversation_turn_runs(run_id TEXT PRIMARY KEY, session_id TEXT, status TEXT,
       revision_at_claim INTEGER, input_high_watermark INTEGER, created_at TEXT, kind TEXT DEFAULT 'user_reply');
     CREATE TABLE conversation_turn_state(session_id TEXT PRIMARY KEY, active_run_id TEXT, revision INTEGER, reply_cursor INTEGER);
@@ -51,6 +52,7 @@ try {
     INSERT INTO conversation_turn_runs(run_id,session_id,status,revision_at_claim,input_high_watermark,created_at) VALUES ('r', 's', 'active', 2, 10, '2026-10-15');
     INSERT INTO conversation_turn_state VALUES ('s', 'r', 2, 0);`);
   database.exec(schema.CHAT_TURN_PRESENTATIONS_SCHEMA);
+  database.exec(INDEXES.idxMessagesSessionClientMessage);
   const repository = new ChatTurnPresentationRepository();
   assert.equal(await repository.open({ runId: 'r' }), true);
   const item = (version, text, sequence = 1, kind = 'reasoning') => ({ version, snapshot: {
@@ -87,6 +89,35 @@ try {
   assert.deepEqual(await repository.publishMessage(11), item(3, '未交付正文', 2, 'assistant'));
   assert.equal(database.prepare("SELECT state FROM chat_turn_presentations WHERE run_id = 'r'").get().state, 'completed');
   assert.equal(await repository.publishMessage(11), null, '终态后的迟到发布不能取得新资格');
+  // client identity 的消息归属包含会话，其他会话的同名来源不能改变历史窗口或清空边界。
+  database.exec(`INSERT INTO chat_conversations VALUES ('other'); INSERT INTO sessions VALUES ('other', 0);
+    INSERT INTO conversation_turn_runs(run_id,session_id,status,revision_at_claim,input_high_watermark,created_at,kind)
+      VALUES ('autonomous', 's', 'failed', 2, 0, '2026-10-16', 'autonomous');
+    INSERT INTO chat_turn_presentations(run_id,session_id,state,updated_at)
+      VALUES ('autonomous', 's', 'interrupted', '2026-10-16');
+    INSERT INTO messages(id,session_id,client_message_id) VALUES
+      (30, 's', 'agent_activity:autonomous:started'),
+      (40, 'other', 'agent_activity:autonomous:started');`);
+  const autonomousItem = { ...item(1, '已经交付的自主正文', 1, 'assistant'), snapshot: {
+    ...item(1, '已经交付的自主正文', 1, 'assistant').snapshot,
+    runId: 'autonomous', clientMessageId: 'agent-timeline:autonomous:1:0',
+  } };
+  database.prepare(`INSERT INTO chat_turn_display_items(run_id,identity,version,snapshot_json,shown_version,shown_json)
+    VALUES (?, ?, ?, ?, ?, ?)`).run('autonomous', autonomousItem.snapshot.clientMessageId, 1,
+    JSON.stringify(autonomousItem.snapshot), 1, JSON.stringify(autonomousItem.snapshot));
+  assert.equal((await repository.listHistory('s')).filter(run => run.runId === 'autonomous').length, 1,
+    '同名来源不能重复注入自主历史');
+  assert.deepEqual(await repository.listHistory('s', { fromMessageId: 35, runIds: [] }), [],
+    '其他会话更晚的来源不能把旧运行带入当前历史窗口');
+  assert.equal((await repository.listHistory('s', { fromMessageId: 35, runIds: ['autonomous'] }))[0].runId, 'autonomous',
+    '窗口显式包含的运行仍可恢复');
+  const autonomousContext = await repository.listInterruptedContext('s', 0);
+  assert.equal(autonomousContext.length, 1);
+  assert.equal(autonomousContext[0].inputHighWatermark, 30, '中断上下文以本会话来源定位');
+  database.exec("UPDATE sessions SET visible_after_message_id = 30 WHERE id = 's'");
+  assert.deepEqual(await repository.listHistory('s', { fromMessageId: 0, runIds: ['autonomous'] }), [],
+    '清空后的可见边界不被其他会话来源或显式运行身份绕过');
+  assert.deepEqual(await repository.listInterruptedContext('s', 0), []);
   console.log('Chat 展示持久化：原始快照与交付分离、中断封口、迟到版本、重开数据库及游标隔离通过。');
 } finally {
   database?.close();

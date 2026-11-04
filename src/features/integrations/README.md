@@ -2,11 +2,11 @@
 
 聊天消息支持 AI 模型和腾讯云 TMT 翻译。入口为「发现 → 辅助模型中心 → 翻译」，AI 和腾讯云配置一起显示在翻译模型列表中，复用 Assistants 的辅助模型资产管理。列表顶部直接提供「聊天翻译模型」选择，选后立即保存，不增加设置页跳转；实际使用的模型 ID 仍由 Integrations 持有。
 
-翻译资产使用 `translation` 能力类型，与历史退休的 `translate` 占位资产隔离。配置名称、启停、连接信息、密钥和参数存于 `auxiliary_model_configs`，由 Assistants 创建、更新和删除。已有资产复用公共自动保存、字段校验、错误恢复与返回提交规则；新建明确点击「创建」。配置页与 STT/TTS 使用同一套 `DropdownField`、`InputField` 平铺表单，AI 先填 API 地址再填 API Key，凭据使用普通文本输入。腾讯云地域与项目 ID 收进高级参数。
+翻译资产使用 `translation` 能力类型，与历史退休的 `translate` 占位资产隔离。模型名称和任务参数存于 `auxiliary_model_configs`；AI 翻译可以引用通用服务（关闭自动收录时可独立保存连接），腾讯云机器翻译独立保存地址、SecretId 和 SecretKey，不选择或自动收录通用服务。配置由 Assistants 创建、更新和删除。已有资产复用公共自动保存、字段校验、错误恢复与返回提交规则；新建明确点击「创建」。配置页与 STT/TTS 使用同一套 `DropdownField`、`InputField` 平铺表单，AI 先填 API 地址再填 API Key，凭据使用普通文本输入。腾讯云地域与项目 ID 收进高级参数。
 
 AI 模型支持获取列表、再次选择与手工输入，接受任意支持 OpenAI 兼容文本接口的模型 ID。地址、密钥或提供方改变后清空旧列表；切换提供方重置其连接字段，完整有效的连接与 metadata 作为一组提交，避免混合两种凭据。模型测试读取当前合法草稿，不创建资产、不更改业务选择。
 
-Integrations 仅在 `translation_settings` 保存明确选择，通过 `databaseCoordinator` 读写。`TranslationModelPicker` 复用 `ConfiguredModelPicker` 并嵌入列表，查询、选择与调用端口由 Host 装配。首次翻译配置可用时由 Host 组合初始化空选择；之后新建、编辑、停用或删除资产不自动改选，取消后不重填。失效引用保留并展示原因，用户可以取消或重新选择。聊天菜单继续调用 `translateMessageText`，只解析已选择的可用资产。
+Integrations 仅在 `translation_settings` 保存明确选择，通过 `databaseCoordinator` 读写。`TranslationModelPicker` 复用 `ConfiguredModelPicker` 并嵌入列表，查询、选择与调用端口由 Host 装配。首次翻译配置可用时由 Host 组合初始化空选择；之后新建、编辑或删除资产不自动改选，取消后不重填。失效引用保留并展示原因，用户可以取消或重新选择。聊天菜单继续调用 `translateMessageText`，只解析已选择的可用资产。
 
 AI 翻译复用 `@platform/ai` 的 `OpenAIClient` 和模型发现接口，接受任意支持 OpenAI 兼容文本接口的模型 ID，也允许手工填写模型。翻译提示词由 Integrations 持有，仅发送待翻译文本，不继承聊天历史、角色设定或工具。源语言默认 `auto`，目标语言默认 `zh`；允许使用语言名称。使用服务商的默认采样参数与输出预算。请求失败、空译文、截断或只有思考过程时明确失败，不自动改用腾讯云。单聊和群聊展示译文及实际服务商或模型名。
 

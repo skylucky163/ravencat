@@ -76,7 +76,7 @@ export default function McpConnectionFields(props: Props) {
         autoCorrect={false} editable={!props.disabled} />
       <Text style={styles.hint}>Token 保存在设备安全存储中。恢复备份或换机后需要重新填写。</Text>
     </>}
-    <ModalSheet visible={open} onClose={close} title="粘贴官方 MCP 配置" avoidKeyboard>
+    <ModalSheet visible={open} onClose={close} title="粘贴官方 MCP 配置">
       <ScrollView contentContainerStyle={styles.dialog} keyboardShouldPersistTaps="handled">
         <AppTextInput style={[styles.input, styles.json]} value={json} onChangeText={(value) => { setJson(value); setDrafts([]); }}
           multiline autoCapitalize="none" autoCorrect={false} placeholder={'{"mcpServers": { ... }}'}

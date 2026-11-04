@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.backgroundruntime'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.backgroundruntime'
+  defaultConfig { versionCode 1; versionName '1.0.0' }
+  testOptions { unitTests.includeAndroidResources = true }
+}
+
+dependencies {
+  implementation 'androidx.core:core-ktx:1.13.1'
+  compileOnly 'com.facebook.react:react-android'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.14.1'
+  testImplementation 'com.facebook.react:react-android'
+  testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3'
+}

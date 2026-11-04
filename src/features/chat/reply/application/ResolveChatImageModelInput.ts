@@ -2,7 +2,6 @@
 
 import { createAIClient } from '@platform/ai';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
-import { readAuxiliaryTaskPromptOverride } from '@shared/prompt';
 import {
   getChatReplyRuntimeDependencies,
   type ChatMediaReadInput,
@@ -128,7 +127,9 @@ export async function resolveChatImageModelInput(
   const promptPack = await getChatReplyRuntimeDependencies().prompt.assembleStandalone({
     scenarioId: 'vision.ocr',
     assistantId: params.assistantId,
-    blocks: buildVisionOCRPromptBlocks(readAuxiliaryTaskPromptOverride(ocrModel.metadataJson)),
+    blocks: buildVisionOCRPromptBlocks(
+      await getChatReplyRuntimeDependencies().prompt.resolveVisionOCRPrompt(params.assistantId),
+    ),
     currentInput: ocrTaskInput,
   });
   const client = createAIClient({

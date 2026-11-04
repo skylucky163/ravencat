@@ -3,19 +3,15 @@ import type { WalletRecord } from '../domain/WalletRecord';
 import {
   type TriggerLedgerAIReplyParams,
   type TriggerLedgerAIReplyResult,
-  type LedgerAIReplyPayload,
 } from './TriggerLedgerAIReply';
 
 const LEDGER_AI_BATCH_WINDOW_MS = 5500;
-
-export type LedgerAIReplyCallback = (payload: LedgerAIReplyPayload) => void | Promise<void>;
 
 export interface QueueLedgerAIReplyParams {
   record: WalletRecord;
 }
 
 export interface QueueLedgerAIReplyCallbacks {
-  onLedgerAIReply?: LedgerAIReplyCallback;
   onError?: (error: Error) => void;
 }
 
@@ -29,7 +25,6 @@ export interface QueueLedgerAIReplyResult {
 interface PendingLedgerBatch {
   recordIds: Set<string>;
   timer: ReturnType<typeof setTimeout> | null;
-  listeners: Set<LedgerAIReplyCallback>;
 }
 
 export interface QueueLedgerAIReplyDeps {
@@ -88,14 +83,9 @@ export async function queueLedgerAIReply(
   const batch: PendingLedgerBatch = existingBatch || {
     recordIds: new Set<string>(),
     timer: null,
-    listeners: new Set<LedgerAIReplyCallback>(),
   };
 
   batch.recordIds.add(params.record.id);
-
-  if (callbacks.onLedgerAIReply) {
-    batch.listeners.add(callbacks.onLedgerAIReply);
-  }
 
   if (batch.timer) {
     clearTimeout(batch.timer);
@@ -135,7 +125,6 @@ async function flushLedgerAIReplyBatch(
     clearTimeout(batch.timer);
   }
 
-  const listeners = Array.from(batch.listeners);
   const isCurrent = () => !stopped && queuedGeneration === generation;
   let result: TriggerLedgerAIReplyResult;
   try {
@@ -151,20 +140,7 @@ async function flushLedgerAIReplyBatch(
   }
   if (!isCurrent()) return;
 
-  if (!result.success || !result.payload) {
-    if (result.error) {
-      const error = new Error(result.error);
-      callbacks.onError?.(error);
-    }
-    return;
-  }
-
-  for (const listener of listeners) {
-    if (!isCurrent()) return;
-    try {
-      await listener(result.payload);
-    } catch (listenerError) {
-      console.warn('[queueLedgerAIReply] Listener failed:', listenerError);
-    }
+  if (!result.success && result.error) {
+    callbacks.onError?.(new Error(result.error));
   }
 }

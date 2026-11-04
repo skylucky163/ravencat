@@ -47,7 +47,7 @@ const mocks = {
   '@shared/theme/themeVariants': {},
   '@platform/persistence': { databaseCoordinator: coordinator },
   '@features/media': { releaseMediaAssetCandidates: async () => {} },
-  '@features/stickers': { isStickerSendIntent: () => false },
+  '@features/stickers': { isStickerSendIntent: value => value?.discriminator === 'ravencat.sticker.send.v1' },
   '@shared/diagnostics/TurnTimelineLog': { logTurnTimeline() {} },
   ...agentToolSchemaDependencies,
 };
@@ -91,6 +91,7 @@ if (!directory) {
   await messages.markMessagesAsRead('stream-bubbles-stopped');
   const unreadAfterRead = await messages.getUnreadCountByAI('ai');
   const orphan = await turns.takeOverOrphan('orphan-tools', 'user_reply');
+  const mediaOrphan = await turns.takeOverOrphan('early-media-crash', 'user_reply');
   console.log(JSON.stringify({ unreadBeforeRead, unreadAfterRead, history: await displays.listHistory('s'), visible: (await messages.getMessages('s', { limit: 100 })).messages,
     orphan, orphanStatus: db.prepare("SELECT status, terminal_reason FROM conversation_turn_runs WHERE session_id = 'orphan-tools'").get(),
     earlyHistory: await displays.listHistory('early-text'),
@@ -100,7 +101,9 @@ if (!directory) {
     streamedInterrupted: await displays.listHistory('stream-bubbles-stopped'),
     completeVisible: (await messages.getMessages('complete-loop', { limit: 100 })).messages,
     crashVisible: (await messages.getMessages('crash-display', { limit: 100 })).messages,
-    timeoutVisible: (await messages.getMessages('timeout-display', { limit: 100 })).messages }));
+    timeoutVisible: (await messages.getMessages('timeout-display', { limit: 100 })).messages,
+    mediaOrphan, mediaCrashMessages: (await messages.getMessages('early-media-crash', { limit: 100 })).messages,
+    mediaCrashContext: await presentation.getChatInterruptedTurnContext('early-media-crash', 0) }));
   db.close();
   process.exit(0);
 }
@@ -456,6 +459,18 @@ try {
     streamingExpected.at(-1), 'T3 身份交接不能把已经显示的列表预览退回用户输入');
   assert.equal((await messages.getLatestArrivedConversationPreview(streamingSession, streamingResult.messages.slice(1).map(item => item.id))).text,
     streamingExpected.at(-1), '同一时间生成的正式气泡逐条接管时，预览仍保留已经交付的末泡');
+  db.exec('SAVEPOINT preview_newer_input');
+  const addBackdatedUser = db.prepare(`INSERT INTO messages(session_id, text, is_me, sender_type, time, created_at, metadata_json)
+    VALUES (?, ?, 1, 'user', '12:00', '2000-01-01T00:00:00.000Z', ?)`);
+  const streamingExcludedIds = streamingResult.messages.map(item => item.id);
+  addBackdatedUser.run(streamingSession, '通话记录', JSON.stringify({ type: 'callStatus' }));
+  assert.equal((await messages.getLatestArrivedConversationPreview(streamingSession, streamingExcludedIds)).text,
+    streamingExpected.at(-1), '通话记录不作为后续用户输入压住已交付正文预览');
+  addBackdatedUser.run(streamingSession, '后续用户输入', null);
+  assert.equal((await messages.getLatestArrivedConversationPreview(streamingSession, streamingExcludedIds)).text,
+    '边说边分泡', '后续用户输入按持久 ID 关闭旧运行预览，不依赖消息时间戳');
+  db.exec('ROLLBACK TO preview_newer_input');
+  db.exec('RELEASE preview_newer_input');
   db.exec('SAVEPOINT preview_clear_boundary');
   db.prepare('UPDATE sessions SET visible_after_message_id = (SELECT MAX(id) FROM messages WHERE session_id = ?) WHERE id = ?')
     .run(streamingSession, streamingSession);
@@ -1017,6 +1032,20 @@ try {
       assert.deepEqual(deliveries.map(item => item.segmentIndex), [0, 1]);
       assert.deepEqual(deliveries.map(item => item.clientMessageId), bodies.map(message => message.clientMessageId),
         '日程通知沿正文稳定身份逐条交付，T3 不另造通知');
+      const excludedIds = bodies.map(message => message.id);
+      assert.equal((await messages.getLatestArrivedConversationPreview(sessionId, excludedIds)).text, '想你了。',
+        '没有用户输入的自主会话仍从持久交付正文读取预览');
+      db.exec('SAVEPOINT autonomous_preview_boundary');
+      const originClientId = `agent_activity:${sessionId}:started`;
+      db.prepare('UPDATE sessions SET visible_after_message_id = (SELECT MAX(id) FROM messages WHERE session_id = ?) WHERE id = ?')
+        .run(sessionId, sessionId);
+      db.prepare(`INSERT INTO messages(session_id, client_message_id, text, is_me, sender_type, time, created_at)
+        VALUES ('s', ?, '其他会话的来源', 0, 'system', '12:00', ?)`)
+        .run(originClientId, stamp);
+      assert.equal(await messages.getLatestArrivedConversationPreview(sessionId, excludedIds), null,
+        '自主消息清空后，其他会话的同名客户端消息不能重新开放旧预览');
+      db.exec('ROLLBACK TO autonomous_preview_boundary');
+      db.exec('RELEASE autonomous_preview_boundary');
     }
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM messages WHERE session_id = ? AND sender_type = ?').get(sessionId, 'reasoning').count, 1);
     assert.equal((await summaries.readContext(sessionId, [])).raw.some(item => item.pending), false,
@@ -1099,11 +1128,343 @@ try {
   assert.equal((await turns.getActiveRun('schedule-replaced')).runId, latestScheduleRun.runId, '旧 finally 不能释放最新 owner');
   assert.deepEqual((await turns.listRunStates([replaced.runId])).map(run => run.status), ['cancelled']);
   await turns.finishAutonomous(latestScheduleRun);
+
+  // 表情 continue 的完整回复链：真实 Flow / Runtime / Projector / T3 / 展示发布，
+  // 只替换模型、工具和 Prompt 等外部输入，不用孤立投影成功冒充端到端成功。
+  let stickerClient;
+  mocks['@platform/ai'] = { ...load('src/platform/ai/agent/AgentModelGateway.ts'),
+    createAIClient: () => stickerClient, getErrorDisplayInfo: error => ({ message: error.message }) };
+  Object.assign(mocks['@platform/agentRuntime'], load('src/platform/agentRuntime/BaseAIClientAgentModelGateway.ts'));
+  mocks['@shared/aiTools'] = { ...load('src/shared/aiTools/AgentToolInputSchema.ts'),
+    ...load('src/shared/aiTools/HostModelRunPreparation.ts') };
+  override('src/features/chat/reply/application/ChatReplyRuntime.ts', {
+    buildRuntimeAIToolsConfig: config => config,
+    createRuntimeToolContext: () => ({}),
+    assemblePromptPackForRuntimeContext: async () => ({ systemPrompt: '', modelMessages: [{ role: 'user', content: '发个表情' }] }),
+  });
+  const { processAIReply } = load('src/features/chat/reply/application/ProcessAIReply.ts');
+  const sticker = { stickerId: 'cat', mediaAssetId: 'cat-asset', name: '开心猫猫', description: '开心',
+    tags: ['开心'], emotion: '开心', mimeType: 'image/png', width: 128, height: 128, isAnimated: false };
+  db.prepare('INSERT INTO media_assets VALUES (?)').run(sticker.mediaAssetId);
+  holdArrival = false;
+  for (const kind of ['sticker', 'image']) for (const transport of ['complete', 'stream']) for (const mode of [
+    'success', 'model-failure', 'model-aborted-error', 'commit-failure', 'commit-failure-stale',
+    'cancelled', 'superseded', 'fence-failed', 'output-failure', 'output-fence-failed', 'deleted-output', 'read-output', 'observer-failure', 'finish',
+  ]) {
+    const sessionId = `media-${kind}-${transport}-${mode}`;
+    const toolName = kind === 'sticker' ? 'select_sticker' : 'send_image';
+    db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run(sessionId, 'direct');
+    db.prepare('INSERT INTO sessions(id) VALUES (?)').run(sessionId);
+    const input = await commitCanonicalUserMessage({ message: { ...user('发个表情'), sessionId } });
+    const run = await turns.claimIfIdle(sessionId, 'user_reply');
+    const controller = new AbortController();
+    const display = new presentation.ChatTurnPresentation(run, ai.agentId, ai.id, { signal: controller.signal });
+    await display.start();
+    const commit = createSingleTransactionTurnCommit(run, ai.id, display);
+    commit.timelineSink = display.sink;
+    commit.recordToolExecutionStarted = () => display.recordToolStart();
+    commit.observeRunEvent = event => display.observeRunEvent(event);
+    let selection;
+    let calls = 0;
+    let terminalCode;
+    let earlyMessage;
+    let completed = 0;
+    const segments = [];
+    const failures = [];
+    const newInput = () => commitCanonicalUserMessage({ message: { ...user('新的输入'), sessionId } });
+    const request = async () => {
+      calls++;
+      if (calls === 1) return { success: true, text: '', messageId: 'sticker-model', isToolCall: true,
+        toolCalls: [{ id: 'select', type: 'function', function: { name: toolName,
+          arguments: JSON.stringify({ sticker_id: sticker.stickerId, media_asset_id: sticker.mediaAssetId,
+            on_success: mode === 'finish' ? 'finish' : 'continue' }) } }], finishReason: 'tool_calls' };
+      await display.flush();
+      selection = (await displays.listHistory(sessionId))[0].items.find(item => item.snapshot.kind === 'tool').snapshot;
+      assert.match(selection.text, /消息已提交/u);
+      assert.equal(selection.status, 'completed');
+      earlyMessage = (await messages.getMessages(sessionId, { limit: 100 })).messages.find(message => JSON.parse(message.metadataJson || '{}').kind === kind);
+      assert.ok(earlyMessage, '续轮请求开始前，图片／表情已经作为真实可见消息提交');
+      const active = db.prepare('SELECT active_run_id, reply_cursor, revision FROM conversation_turn_state WHERE session_id = ?').get(sessionId);
+      assert.equal(active.active_run_id, run.runId, '提前发送不能释放执行槽');
+      assert.equal(active.reply_cursor, run.replyCursorAtClaim);
+      assert.equal(active.revision, run.revisionAtClaim, '部分输出不改变执行 revision');
+      assert.equal(commit.turnCommitOutcome(), null, '提交媒体不是整轮完成');
+      assert.equal(completed, 0, '媒体交付不能提前发出整轮完成回调');
+      if (mode === 'deleted-output') await messages.deleteMessagesWithMediaCandidates([earlyMessage.id]);
+      if (mode === 'read-output') await messages.markMessagesAsRead(sessionId);
+      if (mode === 'model-failure') return { success: false, text: '', error: '模拟续轮网络失败' };
+      if (mode === 'model-aborted-error') return { success: false, text: '', error: 'Upstream request aborted' };
+      if (mode === 'cancelled') controller.abort('CANCELLED_BY_USER');
+      if (mode === 'superseded') { await newInput(); controller.abort('SUPERSEDED'); }
+      return { success: true, text: '', finishReason: 'stop' };
+    };
+    stickerClient = {
+      chatWithTools: () => { assert.equal(transport, 'complete'); return request(); },
+      chatStreamWithTools: () => { assert.equal(transport, 'stream'); return request(); },
+    };
+    const registry = new AgentToolRegistry();
+    registry.register({ descriptor: { name: toolName, description: '准备测试媒体', inputSchema: { type: 'object' } },
+      execute: async args => ({ status: 'success', data: kind === 'sticker' ? { discriminator: 'ravencat.sticker.send.v1', sticker }
+        : { discriminator: 'ravencat.chat.image.send.v1', attachment: { id: 'test-image', type: 'image', source: 'media_library',
+          mediaAssetId: sticker.mediaAssetId, fileName: 'cat.png', mimeType: 'image/png', fileSize: 100, parseStatus: 'skipped' } },
+        modelContent: '已选择测试表情', metadata: { fulfillsUserVisibleOutput: true, completionIntent: args.on_success } }) });
+    configureChatReplyRuntime({
+      assistantDirectory: { getBlockState: async () => ({ isBlocked: false }) },
+      tools: { resolveRuntimeContext: async () => ({}), resolveAllowedNames: async () => [toolName],
+        resolveMcpExposure: async () => ({ allowedToolNames: [], services: [] }), getRuntimeAllowedNames: () => [toolName] },
+      runPreparation: { prepare: async () => ({ additionalPromptBlocks: [], dynamicAllowedToolNames: [] }) },
+      agent: { run: async request => {
+        const result = await new AgentRuntime({ registry, modelGateway: request.modelGateway }).run(request);
+        terminalCode = result.terminalCode;
+        return result;
+      } },
+    });
+    if (mode.startsWith('commit-failure') || mode === 'output-failure') db.exec(`CREATE TRIGGER reject_sticker_commit BEFORE INSERT ON messages
+      WHEN NEW.session_id = '${sessionId}' AND NEW.sender_type = '${mode === 'output-failure' ? 'assistant' : 'system'}'
+        AND (${mode === 'output-failure' ? '1' : "json_extract(NEW.metadata_json, '$.type') = 'toolStatus'"})
+      BEGIN SELECT RAISE(ABORT, '模拟表情 T3 事务失败'); END;`);
+    if (mode === 'fence-failed') {
+      const originalCommit = commit.commitAgentTimeline;
+      commit.commitAgentTimeline = async params => { await newInput(); return originalCommit(params); };
+    }
+    if (mode === 'output-fence-failed') {
+      const originalCommit = commit.commitAgentOutput;
+      commit.commitAgentOutput = async params => { await newInput(); return originalCommit(params); };
+    }
+    if (mode === 'commit-failure-stale') {
+      const originalCommit = commit.commitAgentTimeline;
+      commit.commitAgentTimeline = async params => {
+        try { return await originalCommit(params); }
+        catch (error) { await newInput(); throw error; }
+      };
+    }
+    await processAIReply(sessionId, '发个表情', { ...ai, enableTools: true, enableStreamingReply: transport === 'stream' },
+      input.id, messages, { notifyUI() {}, onReplyFailed: payload => failures.push(payload),
+        onReplyCommitted: () => completed++, onReplySegment: payload => { segments.push(payload); },
+        onAIMessageDelivered: () => { if (mode === 'observer-failure') throw new Error('模拟交付观察者失败'); } },
+      { replyRunId: run.runId, abortSignal: controller.signal }, commit);
+    if (mode.startsWith('commit-failure') || mode === 'output-failure') db.exec('DROP TRIGGER reject_sticker_commit');
+    await display.finish();
+    assert.equal(calls, mode === 'finish' || mode.startsWith('output-') ? 1 : 2, 'continue 正常续轮，finish 与输出提交失败不追加模型请求');
+    if (!mode.startsWith('output-')) assert.equal(terminalCode, mode.startsWith('model-') ? 'MODEL_REQUEST_FAILED'
+      : mode === 'cancelled' ? 'CANCELLED_BY_USER' : mode === 'superseded' ? 'SUPERSEDED' : 'COMPLETED');
+    const persisted = (await messages.getMessages(sessionId, { limit: 100 })).messages;
+    const errors = persisted.filter(message => JSON.parse(message.metadataJson || '{}').kind === 'error');
+    const media = persisted.filter(message => JSON.parse(message.metadataJson || '{}').kind === kind);
+    const sent = !mode.startsWith('output-');
+    assert.equal(media.length, sent && mode !== 'deleted-output' ? 1 : 0,
+      '后续失败与取消保留已发送媒体，用户删除的媒体不得被 T3 复活');
+    assert.equal(segments.length, Number(sent), '整轮完成不能重复触发已发送媒体的分段回调');
+    assert.equal(deliveryEvents.filter(event => event.sessionId === sessionId).length, Number(sent), '媒体仅交付一次');
+    if (earlyMessage && media.length) assert.equal(media[0].id, earlyMessage.id, 'T3 绑定原消息，保持数据库身份');
+    if (mode === 'success' || mode === 'finish' || mode === 'read-output' || mode === 'deleted-output' || mode === 'observer-failure') {
+      if (kind === 'sticker' && media.length) assert.deepEqual(JSON.parse(media[0].metadataJson).sticker, sticker);
+      assert.equal((await displays.listHistory(sessionId))[0].state, 'completed');
+      assert.equal(commit.turnCommitOutcome(), 'committed');
+      assert.equal(completed, 1, '整轮完成信号仅发出一次');
+      if (mode === 'read-output') assert.equal(media[0].isRead, true, '最终绑定不能把已读媒体改成未读');
+      assert.doesNotMatch(persisted.find(message => message.senderType === 'system').text, /将在/u, '正式工具记录不保留等待提交文案');
+    }
+    const failed = mode === 'model-failure' || mode === 'model-aborted-error' || mode === 'commit-failure' || mode === 'output-failure';
+    assert.equal(errors.length, Number(failed), '真正失败有持久错误；取消、替代与 fence 失败没有故障气泡');
+    assert.equal(failures.length, Number(failed));
+    if (mode === 'model-failure' || mode === 'model-aborted-error') {
+      assert.match(errors[0].text, mode === 'model-failure' ? /模拟续轮网络失败/u : /Upstream request aborted/u);
+      const tool = (await displays.listHistory(sessionId))[0].items.find(item => item.snapshot.kind === 'tool').snapshot;
+      assert.match(tool.text, /消息已提交/u);
+      assert.doesNotMatch(tool.text, /未发送/u, '后续请求失败不能把已经发出的媒体记成未发送');
+      assert.equal(tool.toolExecutions[0].status, 'success', '回复失败不能改写选择工具的真实成功结果');
+    }
+    if (failed) {
+      assert.equal(commit.isCommitEligible(), true, '未提交时保留错误反馈资格');
+      assert.equal(db.prepare('SELECT reply_cursor FROM conversation_turn_state WHERE session_id = ?').get(sessionId).reply_cursor, 0,
+        '错误反馈不消费输入，也不伪装成成功回复');
+    }
+    await turns.revoke(run, mode === 'cancelled' ? 'cancelled' : 'failed', mode);
+    if (mode.startsWith('model-')) {
+      const context = await presentation.getChatInterruptedTurnContext(sessionId, 0);
+      assert.match(context[0].content, /committedMessage/u, '下一轮上下文必须知道媒体已经发送，不能隐式重发');
+      assert.match(context[0].content, /cat-asset/u);
+    }
+  }
+  // 重写依旧等待原子替换，失败不能把尝试中的图片追加到原回复后。
+  const regenerationSession = 'media-sticker-complete-success';
+  const sourceMedia = (await messages.getMessages(regenerationSession, { limit: 100 })).messages.find(message => JSON.parse(message.metadataJson || '{}').kind === 'sticker');
+  await turns.requestRegeneration(regenerationSession, sourceMedia.id);
+  const regeneration = await turns.claimIfIdle(regenerationSession, 'user_reply');
+  const deferred = await createSingleTransactionTurnCommit(regeneration, ai.id).commitAgentOutput({
+    sessionId: regenerationSession, response: { success: true, text: '' }, repository: messages,
+    item: { message: { ...user(''), sessionId: regenerationSession, isMe: false, senderType: 'assistant',
+      clientMessageId: `agent-timeline:${regeneration.runId}:2:0`, metadataJson: sourceMedia.metadataJson } },
+  });
+  assert.equal(deferred.outcome, 'deferred');
+  await turns.revoke(regeneration, 'failed', 'model_failure');
+  assert.equal((await messages.getMessages(regenerationSession, { limit: 100 })).messages.some(message => message.id === sourceMedia.id), true,
+    '失败的重写保留原媒体，不提前生成新媒体消息');
+
+  const readyStickerTimeline = (runId, sessionId, sink = {}, runtimeContext = {}, assistantText = '') => {
+    const timeline = new ChatAgentTimeline(runId, sink);
+    timeline.startStep(1);
+    timeline.reconcileModelTurn(1, { assistantText, reasoningText: '', usage: {}, messageId: 'ready-media',
+      toolCalls: [{ id: 'ready-sticker', name: 'select_sticker', arguments: '{}', index: 0 }] });
+    timeline.startToolStatus(1);
+    timeline.markToolStarted(1, 'ready-sticker');
+    timeline.completeToolCall(1, 'ready-sticker', { status: 'success', modelContent: '已准备',
+      data: { discriminator: 'ravencat.sticker.send.v1', sticker } });
+    const params = { sessionId, aiConfig: ai, runtimeContext: { ...runtimeContext, replyRunId: runId },
+      policy: { bubbleDeliveryMode: 'multi-bubble' }, finalAssistantPolicy: 'commit_as_reply', finalStepIndex: 1 };
+    return { timeline, params, item: timeline.buildImmediateOutputItem(1, 'ready-sticker', params) };
+  };
+
+  for (const reason of ['closed', 'aborted', 'deadline']) {
+    const sessionId = `early-media-${reason}`;
+    db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run(sessionId, 'direct');
+    db.prepare('INSERT INTO sessions(id) VALUES (?)').run(sessionId);
+    await commitCanonicalUserMessage({ message: { ...user('停止边界'), sessionId } });
+    const run = await turns.claimIfIdle(sessionId, 'user_reply');
+    const display = new presentation.ChatTurnPresentation(run, ai.agentId, ai.id);
+    await display.start();
+    const output = readyStickerTimeline(run.runId, sessionId);
+    const cancellation = new AbortController();
+    if (reason === 'closed') await display.stopFromHost('execution_host_stopped');
+    if (reason === 'aborted') cancellation.abort();
+    const committing = turns.commitOutput(run, output.item, {
+      signal: cancellation.signal, deadlineAt: reason === 'deadline' ? performance.now() - 1 : undefined,
+    });
+    if (reason === 'closed') assert.equal((await committing).outcome, 'fence_failed');
+    else await assert.rejects(committing, /execution_host_(?:stopped|timeout)/u);
+    assert.equal((await messages.getMessages(sessionId, { limit: 100 })).messages.length, 1,
+      '停止、取消与过期必须在输出事务内拒绝消息和媒体引用');
+    await turns.revoke(run, 'failed', reason);
+    await display.finish();
+  }
+
+  // 两张媒体与多泡前言共用源顺序；未到达的非流式前言不能扣留已准备好的图片。
+  const orderSession = 'early-media-order';
+  db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run(orderSession, 'direct');
+  db.prepare('INSERT INTO sessions(id) VALUES (?)').run(orderSession);
+  await commitCanonicalUserMessage({ message: { ...user('发两张图'), sessionId: orderSession } });
+  const orderRun = await turns.claimIfIdle(orderSession, 'user_reply');
+  const orderDisplay = new presentation.ChatTurnPresentation(orderRun, ai.agentId, ai.id);
+  await orderDisplay.start();
+  const orderCommit = createSingleTransactionTurnCommit(orderRun, ai.id, orderDisplay);
+  const orderTimeline = new ChatAgentTimeline(orderRun.runId, orderDisplay.sink, { bubbleDeliveryMode: 'multi-bubble' });
+  const orderParams = { sessionId: orderSession, aiConfig: ai, runtimeContext: { replyRunId: orderRun.runId },
+    policy: { bubbleDeliveryMode: 'multi-bubble' }, finalAssistantPolicy: 'commit_as_reply', finalStepIndex: 2 };
+  orderTimeline.startStep(1);
+  orderTimeline.reconcileModelTurn(1, { assistantText: '我找到了。\n\n看这张。', reasoningText: '挑图片', messageId: 'order-model', usage: {},
+    toolCalls: [{ id: 'order-sticker', name: 'select_sticker', arguments: '{}', index: 0 },
+      { id: 'order-image', name: 'send_image', arguments: '{}', index: 1 }] });
+  orderTimeline.startToolStatus(1);
+  holdArrival = true;
+  const orderedMediaIds = [];
+  for (const [callId, data] of [['order-sticker', { discriminator: 'ravencat.sticker.send.v1', sticker }],
+    ['order-image', { discriminator: 'ravencat.chat.image.send.v1', attachment: { id: 'ordered-image', type: 'image',
+      source: 'media_library', mediaAssetId: sticker.mediaAssetId, fileName: 'cat.png', mimeType: 'image/png', fileSize: 100, parseStatus: 'skipped' } }]]) {
+    orderTimeline.markToolStarted(1, callId);
+    await orderDisplay.recordToolStart();
+    orderTimeline.completeToolCall(1, callId, { status: 'success', data, modelContent: '已准备' });
+    const result = await orderCommit.commitAgentOutput({ ...orderParams, response: { success: true, text: '' }, repository: messages,
+      item: orderTimeline.buildImmediateOutputItem(1, callId, orderParams) });
+    orderTimeline.recordCommittedOutput(1, callId, result.messages);
+    orderedMediaIds.push(result.messages[0].id);
+  }
+  const beforeFinal = (await messages.getMessages(orderSession, { limit: 100 })).messages;
+  assert.deepEqual(beforeFinal.filter(message => message.senderType === 'assistant').map(message => message.id), orderedMediaIds,
+    '前言仍等待到达时，媒体已经真实可见');
+  await messages.markMessagesAsRead(orderSession);
+  orderTimeline.startStep(2);
+  orderTimeline.reconcileModelTurn(2, { assistantText: '这是两张图。', reasoningText: '', toolCalls: [], messageId: 'order-final', usage: {} });
+  holdArrival = false;
+  for (const pending of pendingPaces) if (pending.runId === orderRun.runId) pending.gate.resolve(true);
+  const orderedResult = await orderCommit.commitAgentTimeline({ ...orderParams, response: { success: true, text: '这是两张图。' },
+    repository: messages, items: orderTimeline.buildCommitItems(orderParams) });
+  await orderDisplay.finish();
+  const orderedMessages = (await messages.getMessages(orderSession, { limit: 100 })).messages.filter(message => !message.isMe);
+  assert.deepEqual(orderedMessages.filter(message => message.senderType === 'assistant').map(message => message.text),
+    ['我找到了。', '看这张。', '', '', '这是两张图。'], '最终顺序保持前言 → 两张媒体 → 后续正文');
+  assert.equal(new Set(orderedResult.messages.map(message => message.id)).size, orderedResult.messages.length);
+  assert.ok(orderedMediaIds.every(id => orderedResult.messages.some(message => message.id === id && message.isRead)));
+  assert.equal(deliveryEvents.filter(event => event.sessionId === orderSession && orderedMediaIds.includes(event.committedMessageId)).length, 2,
+    '多媒体各自交付一次，T3 不重发');
+
+  // 日程仍由原自主 owner 持有执行槽，提前输出不消费用户游标。
+  db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run('early-media-auto', 'direct');
+  db.prepare('INSERT INTO sessions(id) VALUES (?)').run('early-media-auto');
+  const autoRun = await turns.claimAutonomousIfIdle('early-media-auto', 'early-media-auto');
+  const autoOutput = readyStickerTimeline(autoRun.runId, autoRun.sessionId);
+  const autoCommit = createSingleTransactionTurnCommit(autoRun, ai.id);
+  const autoResult = await autoCommit.commitAgentOutput({ ...autoOutput.params, item: autoOutput.item,
+    response: { success: true, text: '' }, repository: messages });
+  assert.equal(autoResult.outcome, 'committed');
+  assert.equal((await turns.getActiveRun(autoRun.sessionId)).runId, autoRun.runId);
+  assert.equal(autoCommit.turnCommitOutcome(), null);
+  await turns.finishAutonomous(autoRun);
+
+  // 群聊使用真实 Repository 的 plan/task fence，提前输出仍属于正在执行的发言。
+  mocks['@features/assistants'] = {};
+  mocks['@features/profile'] = {};
+  for (const key of ['groupSpeechPlans', 'groupSpeechTasks']) db.exec(SCHEMAS[key]);
+  const { groupChatRepository: groups } = load('src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts');
+  load('src/features/chat/group/application/ChatGroupRuntime.ts').configureChatGroupRuntime({ groups });
+  const { createGroupSegmentedReplyPersistence } = load('src/features/chat/group/application/GroupAssistantTurnCommit.ts');
+  for (const mode of ['success', 'failed', 'superseded', 'deleted']) {
+    const groupId = `early-media-group-${mode}`;
+    const planId = `plan-${mode}`;
+    const taskId = `task-${mode}`;
+    db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run(groupId, 'group');
+    db.prepare('INSERT INTO group_chats(id,name,created_at,updated_at) VALUES (?,?,?,?)').run(groupId, groupId, stamp, stamp);
+    db.prepare('INSERT INTO group_speech_plans(id,group_id,status,created_at,updated_at) VALUES (?,?,\'running\',?,?)').run(planId, groupId, stamp, stamp);
+    db.prepare(`INSERT INTO group_speech_tasks(id,plan_id,group_id,ai_assistant_id,agent_id,sequence_order,source,status,created_at,updated_at)
+      VALUES (?,?,?,?,?,0,'admin','running',?,?)`).run(taskId, planId, groupId, ai.id, ai.agentId, stamp, stamp);
+    const output = readyStickerTimeline(taskId, groupId, {}, { groupChat: { groupId } }, '先发这张。');
+    let completeSignals = 0;
+    const commit = createGroupSegmentedReplyPersistence({ task: { id: taskId, planId, groupId, aiAssistantId: ai.id, sequenceOrder: 0 },
+      directory: { groupId, currentUser: { displayName: '用户', targetType: 'user', userProfileId: 'self' }, assistants: [] } });
+    const commitParams = { ...output.params, response: { success: true, text: '' }, repository: messages,
+      callbacks: { onReplyCommitted: () => completeSignals++ } };
+    const sent = await commit.commitAgentOutput({ ...commitParams, item: output.item });
+    output.timeline.recordCommittedOutput(1, 'ready-sticker', sent.messages);
+    assert.equal(completeSignals, 0);
+    assert.equal(commit.getReplyOutput().visibleReplyCommitted, true);
+    assert.equal(db.prepare('SELECT status FROM group_speech_tasks WHERE id = ?').get(taskId).status, 'running');
+    if (mode === 'deleted') await messages.deleteMessagesWithMediaCandidates([sent.messages[0].id]);
+    if (mode === 'superseded') {
+      await groups.terminateActiveSpeechPlan(groupId);
+      await assert.rejects(commit.commitAgentOutput({ ...commitParams, item: output.item }), error => error.name === 'ChatReplyRunCancelledError');
+    } else if (mode !== 'failed') {
+      await commit.commitAgentTimeline({ ...commitParams, items: output.timeline.buildCommitItems(output.params) });
+      assert.equal(completeSignals, 1);
+    }
+    const visible = (await messages.getMessages(groupId, { limit: 100 })).messages.filter(message => JSON.parse(message.metadataJson || '{}').kind === 'sticker');
+    assert.equal(visible.length, mode === 'deleted' ? 0 : 1, '群聊失败、换代保留已发媒体，末尾不重复插入或复活删除');
+    if (visible.length) assert.equal(visible[0].id, sent.messages[0].id);
+    if (mode === 'success') assert.equal(db.prepare('SELECT last_message_id FROM group_chats WHERE id = ?').get(groupId).last_message_id,
+      sent.messages[0].id, '最终补写的前言不能把群预览从媒体倒退为前言');
+  }
+
+  // 模拟消息已提交、工具完成投影还未来得及确认时进程死亡。
+  db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run('early-media-crash', 'direct');
+  db.prepare('INSERT INTO sessions(id) VALUES (?)').run('early-media-crash');
+  await commitCanonicalUserMessage({ message: { ...user('发图后进程退出'), sessionId: 'early-media-crash' } });
+  const crashRun = await turns.claimIfIdle('early-media-crash', 'user_reply');
+  const crashDisplay = new presentation.ChatTurnPresentation(crashRun, ai.agentId, ai.id);
+  await crashDisplay.start();
+  const crashOutput = readyStickerTimeline(crashRun.runId, crashRun.sessionId, crashDisplay.sink);
+  await crashDisplay.recordToolStart();
+  await createSingleTransactionTurnCommit(crashRun, ai.id, crashDisplay).commitAgentOutput({
+    ...crashOutput.params, item: crashOutput.item, response: { success: true, text: '' }, repository: messages,
+  });
   await writer;
   db.close();
   const child = spawnSync(process.execPath, ['--no-warnings', import.meta.filename, '--read', filename], { encoding: 'utf8' });
   assert.equal(child.status, 0, child.stderr);
   const restored = JSON.parse(child.stdout);
+  assert.equal(restored.mediaOrphan, null, '已开始工具的孤儿不自动重放发送');
+  assert.equal(restored.mediaCrashMessages.filter(message => JSON.parse(message.metadataJson || '{}').kind === 'sticker').length, 1,
+    '工具完成投影丢失时，独立进程仍读到已经提交的图片');
+  assert.match(restored.mediaCrashContext[0].content, /committedMessage/u);
+  assert.match(restored.mediaCrashContext[0].content, /cat-asset/u);
   assert.equal(restored.unreadBeforeRead, 1, '独立进程恢复后未读仍来自持久交付事实');
   assert.equal(restored.unreadAfterRead, 0, '恢复后打开会话可清除尚无正式消息 ID 的未读');
   assert.deepEqual(restored.autonomousFailureHistory[0].items.map(item => item.snapshot.text), ['收到的半段'],
@@ -1127,7 +1488,7 @@ try {
     [...firstExposure.values()].map(item => item.usage), '正常完成后重启保持相同统计');
   assert.equal(restored.completeVisible.filter(message => message.senderType === 'reasoning').length, 3);
   assert.equal(restored.completeVisible.filter(message => message.senderType === 'system').length, 2);
-  console.log('真实 Agent 多轮工具、稳定过程、输入与结果顺序、折叠卡片完成、T3 后批量交付、中断及独立进程恢复通过。');
+  console.log('真实 Agent 多轮工具、媒体即时交付与去重、删除与已读、群聊 fence、重写隔离、消息顺序及独立进程恢复通过。');
 } finally {
   try { db.close(); } catch {}
   assert.equal(path.dirname(path.resolve(directory)), path.resolve(os.tmpdir()));

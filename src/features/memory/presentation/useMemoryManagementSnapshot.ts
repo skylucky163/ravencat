@@ -4,7 +4,9 @@ import { getMemoryManagementSnapshot, type MemoryManagementSnapshot } from '../a
 import { subscribeMemoryChanged } from '../application/MemorySignals';
 
 export default function useMemoryManagementSnapshot(assistantId?: string) {
-  const [snapshot, setSnapshot] = useState<MemoryManagementSnapshot | null>(null);
+  const [loaded, setLoaded] = useState<{
+    assistantId?: string; snapshot: MemoryManagementSnapshot;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const request = useRef({ revision: 0 });
@@ -13,9 +15,9 @@ export default function useMemoryManagementSnapshot(assistantId?: string) {
     try {
       const next = await getMemoryManagementSnapshot(assistantId);
       if (assistantId && next.selectedSpace?.assistantId !== assistantId) throw new Error('这个记忆空间已不存在');
-      if (revision === request.current.revision) { setSnapshot(next); setError(null); }
+      if (revision === request.current.revision) { setLoaded({ assistantId, snapshot: next }); setError(null); }
     } catch (failure) {
-      if (revision === request.current.revision) { setSnapshot(null); setError(failure instanceof Error ? failure.message : '读取记忆失败'); }
+      if (revision === request.current.revision) { setLoaded(null); setError(failure instanceof Error ? failure.message : '读取记忆失败'); }
     } finally { if (revision === request.current.revision) setRefreshing(false); }
   }, [assistantId]);
   useEffect(() => {
@@ -25,5 +27,7 @@ export default function useMemoryManagementSnapshot(assistantId?: string) {
     return () => { unsubscribe(); revisions.revision++; };
   }, [load]);
   const refresh = () => { setRefreshing(true); void load(); };
-  return { snapshot, error, refreshing, refresh };
+  // 切换空间时保留星空，但不能把上一空间的详情交给新面板。
+  const snapshot = loaded && loaded.assistantId === assistantId ? loaded.snapshot : null;
+  return { snapshot, spaces: loaded?.snapshot.spaces, error, refreshing, refresh };
 }

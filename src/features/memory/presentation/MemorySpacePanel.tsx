@@ -34,7 +34,7 @@ export default function MemorySpacePanel({ visible, snapshot, error, busy, refre
     return snapshot?.entries.filter(entry => normalizeMemoryText(memorySearchText(entry)).includes(normalized)) ?? [];
   }, [snapshot, query]);
 
-  return <ModalSheet visible={visible} onClose={onClose} avoidKeyboard style={styles.sheet}>
+  return <ModalSheet visible={visible} onClose={onClose} style={styles.sheet}>
         <View style={styles.handle} />
         <View style={styles.sheetHeader}>
           <View style={{ flex: 1 }}>
@@ -52,12 +52,15 @@ export default function MemorySpacePanel({ visible, snapshot, error, busy, refre
           </View>
           {tab === 'entries' ? <>
             <View style={styles.search}><Search size={17} color={secondaryColor} /><AppTextInput accessibilityLabel="查找记忆里的文字" style={styles.input} value={query} onChangeText={setQuery} placeholder="查找记忆里的文字" placeholderTextColor={secondaryColor} /></View>
+            {!snapshot.embeddingEnabled && <Text style={styles.description}>记忆向量化已关闭，可在记忆设置中开启后逐条请求。</Text>}
             <FlatList key="entries" data={filtered} keyExtractor={entry => entry.id} contentContainerStyle={styles.list} keyboardShouldPersistTaps="handled" refreshing={refreshing} onRefresh={refresh} initialNumToRender={8} maxToRenderPerBatch={8} windowSize={5}
-              renderItem={({ item: entry }) => <Pressable accessibilityRole="button" style={styles.card} disabled={busy} onPress={() => onEditMemory(selected.assistantId, entry.id)}>
+              renderItem={({ item: entry }) => <View style={styles.card}>
+                <Pressable accessibilityRole="button" style={{ gap: theme.spacing.md }} disabled={busy} onPress={() => onEditMemory(selected.assistantId, entry.id)}>
                 {entry.summary && <Text style={styles.meta} numberOfLines={2}>{entry.summary}</Text>}
                 <Text style={styles.body} numberOfLines={4}>{entry.content}</Text>
                 <View style={styles.row}><Text style={styles.meta}>{new Date(entry.rememberedAt).toLocaleDateString()}{entry.embeddingStatus === 'failed' ? ' · 向量更新失败' : ''}</Text><ChevronRight size={16} color={secondaryColor} /></View>
-              </Pressable>}
+                </Pressable>
+              </View>}
               ListEmptyComponent={<Text style={styles.meta}>{query ? '没有包含这些文字的记忆。' : '这里还没有记忆。点右上角加号，留下第一件重要的事。'}</Text>} />
           </> : <>
             {creatingGroup ? <FlatList key="create-group" data={filtered} keyExtractor={entry => entry.id} contentContainerStyle={styles.list} keyboardShouldPersistTaps="handled" initialNumToRender={8} maxToRenderPerBatch={8} windowSize={5}

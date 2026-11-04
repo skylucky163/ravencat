@@ -49,7 +49,6 @@ module.exports = ({ config }) => {
       ["./plugins/withAndroidDevelopmentIcon", developmentIcon],
       "./plugins/withAndroidReleaseSigning",
       "./plugins/withFixedFontScale",
-      "./plugins/withHeadlessJsTaskSupport",
       "expo-router",
       "expo-font",
       [

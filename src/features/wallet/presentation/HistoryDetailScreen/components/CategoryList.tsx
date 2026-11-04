@@ -6,7 +6,7 @@ import React from 'react';
 import { View, Text } from 'react-native';
 import { CategoryGroup } from './CategoryGroup';
 import { useStyles } from '../styles';
-import type { CategoryGroupData } from '../types';
+import type { CategoryGroupData } from '../../historyTypes';
 import type { WalletRecord } from '../../../domain/WalletRecord';
 
 interface CategoryListProps {

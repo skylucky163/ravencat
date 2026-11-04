@@ -6,8 +6,6 @@ import { TencentCloudTmtClient, type TranslateTextResult } from './infrastructur
 
 export interface TranslateMessageTextParams {
   text: string;
-  source?: string | null;
-  target?: string | null;
 }
 export interface TranslateMessageTextResult extends TranslateTextResult {
   provider: TranslationProvider;
@@ -19,8 +17,8 @@ async function translateWithModel(config: TranslationModelConfig, params: Transl
   const text = params.text.trim();
   if (!text) throw new Error('消息文本不能为空');
   const metadata = JSON.parse(config.metadataJson) as TranslationMetadata;
-  const source = params.source?.trim() || metadata.source;
-  const target = params.target?.trim() || metadata.target;
+  const source = metadata.source;
+  const target = metadata.target;
   if (metadata.provider === 'tencentCloudTmt') {
     const client = new TencentCloudTmtClient({ secretId: metadata.secretId!, secretKey: config.apiKey }, {
       endpoint: new URL(config.baseURL).host, region: metadata.region, projectId: metadata.projectId, source, target,

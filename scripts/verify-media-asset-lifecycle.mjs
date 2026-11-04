@@ -7,6 +7,7 @@
  * - dangling reference 存在时 destructive physical cleanup 必须 fail-closed。
  */
 import assert from 'node:assert/strict';
+import { SCHEMAS } from './helpers/sqlite-bootstrap-fixture.mjs';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,6 +52,7 @@ const { MEDIA_ASSET_SCHEMA, MEDIA_ASSET_CONTENT_HASH_INDEX } = await loadTypeScr
   'src/platform/persistence/sqlite/mediaAssetSchema.ts',
 );
 const { CALL_BACKGROUND_SELECTION_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/callBackgroundSchema.ts');
+const { CHAT_BUBBLE_SKINS_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/chatBubbleSkinSchema.ts');
 const { CALL_RINGTONE_SELECTION_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/callRingtoneSchema.ts');
 const { CALL_HISTORY_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/callHistorySchema.ts');
 const { CHAT_FAVORITES_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/chatFavoriteSchema.ts');
@@ -109,6 +111,8 @@ function createDatabase() {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(MEDIA_ASSET_SCHEMA);
+  db.exec(SCHEMAS.assistantProfileCovers);
+  db.exec(CHAT_BUBBLE_SKINS_SCHEMA);
   db.exec(CHAT_FAVORITES_SCHEMA);
   db.exec(CHAT_REPLY_VERSIONS_SCHEMA);
   db.exec('PRAGMA user_version = 137;');
@@ -222,6 +226,38 @@ function createHarness() {
   const repository = new SQLiteMediaAssetRepository(database);
   const lifecycle = new MediaAssetLifecycle(repository, backings, database);
   return { db, database, writer, backings, repository, lifecycle };
+}
+
+// 皮肤是独立业务引用：没有聊天消息、没有选中主题，也必须被两条清理路径保留。
+{
+  const { db, database, writer, repository, lifecycle } = createHarness();
+  insertAsset(db, 'bubble-only');
+  writer.canonicalKeys.add('catalog/media/bubble-only.bin');
+  for (const id of ['first', 'second']) {
+    db.prepare("INSERT INTO chat_bubble_presets VALUES (?, 'user', ?, 1, ?, 12, 12, ?)")
+      .run(id, id, 'bubble-only', JSON.stringify({ slices: { left: 3, top: 3, right: 3, bottom: 3 },
+        padding: { left: 14, top: 10, right: 14, bottom: 10 }, scale: 1 }));
+  }
+  assert.equal((await lifecycle.audit()).references.filter(ref => ref.kind === 'chat_bubble_skin').length, 2);
+  assert.deepEqual((await lifecycle.cleanup()).deletedAssets, []);
+  assert.deepEqual((await lifecycle.releaseCandidates(['bubble-only'])).releasedAssets, []);
+  db.exec('PRAGMA user_version = 154;');
+  assert.deepEqual((await repository.listBackupAssets(database)).map(asset => asset.id), ['bubble-only'],
+    '仅被皮肤引用的 PNG 必须进入备份媒体清单');
+  insertAsset(db, 'decoration-only');
+  writer.canonicalKeys.add('catalog/media/decoration-only.bin');
+  db.prepare('INSERT INTO chat_bubble_preset_decorations VALUES (?, ?, 3, ?, 24, 12, ?)')
+    .run('logo', 'first', 'decoration-only', JSON.stringify({ anchor: 'bottom-left', size: 64, offsetX: 0, offsetY: 0 }));
+  assert.equal((await lifecycle.audit()).references.some(ref => ref.kind === 'chat_bubble_decoration'), true);
+  assert.deepEqual((await lifecycle.cleanup()).deletedAssets, []);
+  assert.deepEqual((await lifecycle.releaseCandidates(['decoration-only'])).releasedAssets, []);
+  assert.deepEqual((await repository.listBackupAssets(database)).map(asset => asset.id).sort(), ['bubble-only', 'decoration-only']);
+  db.exec("DELETE FROM chat_bubble_presets WHERE id = 'first'");
+  assert.equal((await lifecycle.releaseCandidates(['decoration-only'])).releasedAssets[0].id, 'decoration-only', '级联删除后才可清理独立装饰');
+  assert.deepEqual((await lifecycle.releaseCandidates(['bubble-only'])).releasedAssets, []);
+  db.exec("DELETE FROM chat_bubble_presets WHERE id = 'second'");
+  assert.equal((await lifecycle.releaseCandidates(['bubble-only'])).releasedAssets[0].id, 'bubble-only');
+  assert.deepEqual(writer.deletedKeys, ['catalog/media/decoration-only.bin', 'catalog/media/bubble-only.bin']);
 }
 
 // 数据库 ready 不代表物理文件存在；显式维护将缺失状态写回，保留仍有业务引用的身份。

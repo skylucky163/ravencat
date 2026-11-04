@@ -6,7 +6,6 @@ import type { UpdateUserProfileInput, UserProfile } from './UserProfile';
 export interface UserAvatarMediaAssetMigrationCandidate {
   id: string;
   avatar: string;
-  avatarMediaAssetId: string | null;
 }
 
 export interface CommitUserAvatarMediaAssetReferenceInput {
@@ -27,14 +26,10 @@ export interface IUserProfileRepository {
   get(): Promise<UserProfile | null>;
   ensureDefault(): Promise<UserProfile>;
   update(updates: UpdateUserProfileInput): Promise<UserProfile>;
-  updateAvatar(avatar: string | null): Promise<UserProfile>;
   getMomentsCoverSelection(): Promise<MomentsCoverSelection>;
   commitMomentsCoverInTransaction(transaction: DatabaseTransactionExecutor, expectedRevision: number, assetId: string | null): Promise<void>;
   getAvatarMediaAssetReference(ownerId: string): Promise<UserAvatarMediaAssetReference | null>;
   listAvatarMediaAssetMigrationCandidates(): Promise<UserAvatarMediaAssetMigrationCandidate[]>;
-  getAvatarMediaAssetMigrationCandidate(
-    ownerId: string,
-  ): Promise<UserAvatarMediaAssetMigrationCandidate | null>;
   commitAvatarMediaAssetReferenceInTransaction(
     transaction: DatabaseTransactionExecutor,
     input: CommitUserAvatarMediaAssetReferenceInput,

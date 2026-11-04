@@ -1,7 +1,6 @@
 package expo.modules.ravencatfloatinglayer.companion
 
 import android.content.Context
-import android.content.Intent
 import expo.modules.ravencatfloatinglayer.RavenCatCompanionWakeEvent
 import expo.modules.ravencatfloatinglayer.RavenCatCompanionWakeStore
 import expo.modules.ravencatfloatinglayer.service.RavenCatOverlayService
@@ -12,13 +11,11 @@ import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 
@@ -62,15 +59,12 @@ class RavenCatCompanionExecutionHostTest {
     assertTrue(port.headlessStarted.await(5, TimeUnit.SECONDS))
     // runner 尚未回执终态时，宿主不得宣告成功、也不得释放唯一执行保障。
     assertNull(outcome.get())
-    assertEquals(0, port.foregroundStops.get())
 
     RavenCatCompanionExecutionHost.signalRunnerCompletion("wake-1")
     executed.join(5_000)
 
     assertEquals(RavenCatCompanionExecutionOutcome.COMPLETED, outcome.get())
-    assertEquals(1, port.foregroundStarts.get())
-    assertEquals(1, port.foregroundStops.get())
-    // 收口诊断记录的是「释放前」前台执行的真实状态，而不是请求投递状态。
+    // 收口诊断记录的是「收口时」前台执行的真实状态，而不是请求投递状态。
     assertTrue(RavenCatCompanionWakeStore.status(context).lastExecutionForegroundRunning)
   }
 
@@ -88,11 +82,10 @@ class RavenCatCompanionExecutionHostTest {
     // 超时后必须先显式请求 runner 取消，再收口；不得留下无 owner 的 autonomous 执行。
     assertEquals(RavenCatCompanionExecutionOutcome.TIMED_OUT, outcome)
     assertEquals(1, port.cancelRequests.get())
-    assertEquals(1, port.foregroundStops.get())
     assertEquals(1, port.headlessStarts.get())
     val status = RavenCatCompanionWakeStore.status(context)
     assertEquals("TIMED_OUT", status.lastExecutionOutcome)
-    // 本用例的前台执行请求被接受：收口真值（释放前读取）是「已建立」。
+    // 应用总开关仍开启；日程终态不能停止应用服务。
     assertTrue(status.lastExecutionForegroundRunning)
   }
 
@@ -109,7 +102,6 @@ class RavenCatCompanionExecutionHostTest {
     // 取消请求让 runner 走 cancellation → terminal → 回执，宿主在宽限期内等到终态。
     assertEquals(RavenCatCompanionExecutionOutcome.COMPLETED, outcome)
     assertEquals(1, port.cancelRequests.get())
-    assertEquals(1, port.foregroundStops.get())
   }
 
   @Test
@@ -123,12 +115,11 @@ class RavenCatCompanionExecutionHostTest {
     )
 
     assertEquals(RavenCatCompanionExecutionOutcome.START_REJECTED, outcome)
-    assertEquals(1, port.foregroundStops.get())
   }
 
   @Test
-  fun `foreground rejection does not block execution`() {
-    val port = FakeExecutionPort(foregroundAccepted = false)
+  fun `disabled application background does not block worker execution`() {
+    val port = FakeExecutionPort(backgroundRunning = false)
     val executed = Thread {
       RavenCatCompanionExecutionHost.execute(
         context,
@@ -144,7 +135,6 @@ class RavenCatCompanionExecutionHostTest {
     executed.join(5_000)
 
     assertEquals(1, port.headlessStarts.get())
-    assertEquals(1, port.foregroundStops.get())
   }
 
   @Test
@@ -198,8 +188,6 @@ class RavenCatCompanionExecutionHostTest {
     // 取消请求在宽限内让 runner 走完 cancellation → terminal → 回执，就如实记为 COMPLETED。
     assertEquals(RavenCatCompanionExecutionOutcome.COMPLETED, outcome.get())
     assertEquals(1, port.cancelRequests.get())
-    assertEquals(1, port.foregroundStops.get())
-    assertFalse(port.foregroundRunning)
   }
 
   @Test
@@ -227,8 +215,6 @@ class RavenCatCompanionExecutionHostTest {
     // 也不得把这次结果报成 TIMED_OUT——两者在系统语义上是不同的事实。
     assertEquals(RavenCatCompanionExecutionOutcome.WORKER_STOPPED, outcome.get())
     assertEquals(1, port.cancelRequests.get())
-    assertEquals(1, port.foregroundStops.get())
-    assertFalse(port.foregroundRunning)
     val status = RavenCatCompanionWakeStore.status(context)
     assertEquals("WORKER_STOPPED", status.lastExecutionOutcome)
   }
@@ -311,7 +297,7 @@ class RavenCatCompanionExecutionHostTest {
 
   @Test
   fun `execution host records its own outcome without touching wake business state`() {
-    val port = FakeExecutionPort(foregroundAccepted = false, headlessStartAccepted = false)
+    val port = FakeExecutionPort(backgroundRunning = false, headlessStartAccepted = false)
     RavenCatCompanionExecutionHost.execute(
       context,
       dispatch(deliveryEventId = "wake-diagnostics"),
@@ -324,41 +310,10 @@ class RavenCatCompanionExecutionHostTest {
     assertEquals("START_REJECTED", status.lastExecutionOutcome)
     assertEquals("wake-diagnostics", status.lastExecutionDeliveryEventId)
     assertTrue(status.lastExecutionAtEpochMs > 0L)
-    // 前台执行请求被拒：收口真值必须如实记录为「未建立」。
+    // 应用持续后台运行关闭：收口真值必须如实记录为「未建立」。
     assertFalse(status.lastExecutionForegroundRunning)
     // 执行宿主只写自己的诊断，不得写入 runner 完成回执。
     assertFalse(RavenCatCompanionWakeStore.hasRecentRunnerCompletion(context, "wake-diagnostics"))
-  }
-
-  @Test
-  fun `companion execution foreground service owns its own bounded lifetime`() {
-    val controller = Robolectric
-      .buildService(RavenCatCompanionExecutionService::class.java)
-      .create()
-
-    controller.withIntent(executeIntent("wake-foreground")).startCommand(0, 0)
-    assertTrue(RavenCatCompanionExecutionService.isForegroundRunning)
-
-    controller.withIntent(releaseIntent("wake-foreground")).startCommand(0, 0)
-    assertFalse(RavenCatCompanionExecutionService.isForegroundRunning)
-  }
-
-  @Test
-  fun `one delivery release does not remove another delivery execution guarantee`() {
-    val controller = Robolectric
-      .buildService(RavenCatCompanionExecutionService::class.java)
-      .create()
-    controller.withIntent(executeIntent("wake-a")).startCommand(0, 0)
-    controller.withIntent(executeIntent("wake-b")).startCommand(0, 0)
-
-    controller.withIntent(releaseIntent("wake-a")).startCommand(0, 0)
-    assertTrue(
-      "仍有 delivery 在执行时不得提前释放前台执行",
-      RavenCatCompanionExecutionService.isForegroundRunning,
-    )
-
-    controller.withIntent(releaseIntent("wake-b")).startCommand(0, 0)
-    assertFalse(RavenCatCompanionExecutionService.isForegroundRunning)
   }
 
   @Test
@@ -379,23 +334,7 @@ class RavenCatCompanionExecutionHostTest {
       RavenCatOverlayService.isRunning,
     )
     assertFalse(RavenCatOverlayService.isForegroundRunning)
-    assertFalse(RavenCatCompanionExecutionService.isForegroundRunning)
   }
-
-  private fun executeIntent(deliveryEventId: String) = Intent(
-    context,
-    RavenCatCompanionExecutionService::class.java,
-  )
-    .setAction(RavenCatCompanionExecutionService.ACTION_EXECUTE)
-    .putExtra(RavenCatCompanionExecutionService.EXTRA_DELIVERY_EVENT_ID, deliveryEventId)
-    .putExtra(RavenCatCompanionExecutionService.EXTRA_CONTEXT, "正在执行一次 self wake")
-
-  private fun releaseIntent(deliveryEventId: String) = Intent(
-    context,
-    RavenCatCompanionExecutionService::class.java,
-  )
-    .setAction(RavenCatCompanionExecutionService.ACTION_RELEASE_EXECUTION)
-    .putExtra(RavenCatCompanionExecutionService.EXTRA_DELIVERY_EVENT_ID, deliveryEventId)
 
   private fun dispatch(deliveryEventId: String) = RavenCatCompanionWakeDispatch(
     event = RavenCatCompanionWakeEvent(
@@ -411,39 +350,19 @@ class RavenCatCompanionExecutionHostTest {
   )
 
   private class FakeExecutionPort(
-    private val foregroundAccepted: Boolean = true,
+    private val backgroundRunning: Boolean = true,
     private val headlessStartAccepted: Boolean = true,
     private val cancelLeadsToRunnerReceipt: Boolean = false,
     /** 模拟「runner 立刻回执终态」：不经过取消路径也能收口。 */
     private val runnerCompletesImmediately: Boolean = false,
   ) : RavenCatCompanionExecutionPort {
-    val foregroundStarts = AtomicInteger(0)
-    val foregroundStops = AtomicInteger(0)
     val headlessStarts = AtomicInteger(0)
     val cancelRequests = AtomicInteger(0)
     val headlessStarted = CountDownLatch(1)
-    var foregroundRunning = false
 
-    override fun requestExecutionForeground(
-      context: Context,
-      deliveryEventId: String,
-      executionContext: String,
-    ): Boolean {
-      assertNotNull(deliveryEventId.takeIf { it.isNotBlank() })
-      assertNotNull(executionContext.takeIf { it.isNotBlank() })
-      foregroundStarts.incrementAndGet()
-      foregroundRunning = foregroundAccepted
-      return foregroundAccepted
-    }
+    override fun isApplicationBackgroundRunning(context: Context): Boolean = backgroundRunning
 
-    override fun stopExecutionForeground(context: Context, deliveryEventId: String) {
-      foregroundStops.incrementAndGet()
-      foregroundRunning = false
-    }
-
-    override fun isExecutionForegroundRunning(context: Context): Boolean = foregroundRunning
-
-    override fun startHeadless(context: Context, event: RavenCatCompanionWakeEvent): Boolean {
+    override fun dispatchExecution(context: Context, event: RavenCatCompanionWakeEvent): Boolean {
       headlessStarts.incrementAndGet()
       headlessStarted.countDown()
       if (runnerCompletesImmediately) {
@@ -454,7 +373,7 @@ class RavenCatCompanionExecutionHostTest {
       return headlessStartAccepted
     }
 
-    override fun cancelHeadlessExecution(context: Context, deliveryEventId: String) {
+    override fun cancelExecution(context: Context, deliveryEventId: String) {
       cancelRequests.incrementAndGet()
       // 模拟「runner 收到取消 → cancellation → terminal → 回执」的最短路径。
       if (cancelLeadsToRunnerReceipt) {

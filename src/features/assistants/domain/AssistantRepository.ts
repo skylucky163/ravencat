@@ -41,7 +41,7 @@ export interface AIAssistantSummary {
   isBlocked: boolean;
 }
 
-/** 对话设置拥有展示信息、人设、上下文与消息呈现策略，不接受身份键。 */
+/** 助手可编辑资料、上下文与消息呈现策略的增量命令，不接受身份键。 */
 export type AIAssistantSettingsUpdate = Partial<Pick<
   AIProfile,
   'name' | 'nickname' | 'avatar' | 'avatarMediaAssetId' | 'systemPrompt' | 'allowMultipleBubbles' | 'streamingReply' | 'showTokenUsage' | 'showActionSteps'
@@ -51,7 +51,7 @@ export type AIAssistantSettingsUpdate = Partial<Pick<
 
 /** 角色模型页只拥有调用配置；身份、名称、头像和人设由各自入口维护。 */
 export type AIModelSettingsUpdate = Partial<Pick<AIProfile,
-  'model' | 'apiKey' | 'apiBaseUrl' | 'temperature' | 'topP' | 'maxTokens'
+  'model' | 'apiKey' | 'apiBaseUrl' | 'serviceConfigId' | 'temperature' | 'topP' | 'maxTokens'
   | 'enableTools' | 'disableThinking'
 >>;
 
@@ -86,6 +86,8 @@ export interface IAIAssistantRepository {
    */
   delete(assistantId: string): Promise<AIAssistantDeletionResult>;
   getAvatarMediaAssetReference(ownerId: string): Promise<AIAvatarMediaAssetReference | null>;
+  getProfileCoverReference(assistantId: string): Promise<{ mediaAssetId: string | null } | null>;
+  tryCommitProfileCoverInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string, expectedMediaAssetId: string | null, mediaAssetId: string): Promise<boolean>;
   listAvatarMediaAssetMigrationCandidates(): Promise<AIAvatarMediaAssetMigrationCandidate[]>;
   commitAvatarMediaAssetReferenceInTransaction(
     transaction: DatabaseTransactionExecutor,

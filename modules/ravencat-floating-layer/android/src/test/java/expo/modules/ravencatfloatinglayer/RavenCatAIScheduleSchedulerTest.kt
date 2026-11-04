@@ -211,7 +211,6 @@ class RavenCatAIScheduleSchedulerTest {
     assertEquals(ListenableWorker.Result.success(), worker(projectionToken = "v1").doWork())
 
     assertEquals(1, executionPort.headlessStarts.get())
-    assertEquals(1, executionPort.foregroundStarts.get())
   }
 
   @Test
@@ -221,7 +220,6 @@ class RavenCatAIScheduleSchedulerTest {
 
     assertEquals(ListenableWorker.Result.success(), result)
     assertEquals(0, executionPort.headlessStarts.get())
-    assertEquals(0, executionPort.foregroundStarts.get())
   }
 
   @Test

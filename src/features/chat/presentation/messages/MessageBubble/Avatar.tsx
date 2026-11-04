@@ -1,6 +1,7 @@
 /** 解析并渲染聊天消息气泡中的用户或助手头像及其回退内容。 */
 
 import React, { memo } from 'react';
+import { Pressable } from 'react-native';
 import AvatarImage from '@shared/ui/AvatarImage';
 import { AVATAR_SHAPE } from '@shared/avatar/avatarConstants';
 import { resolveAIAvatarSource, resolveUserAvatarSource } from '@shared/avatar/resolveAvatarSource';
@@ -12,9 +13,10 @@ interface AvatarProps {
   isUser: boolean;
   userName?: string;
   aiName?: string;
+  onPress?: () => void;
 }
 
-export const Avatar = memo(function Avatar({ avatarContent, isUser, userName, aiName }: AvatarProps) {
+export const Avatar = memo(function Avatar({ avatarContent, isUser, userName, aiName, onPress }: AvatarProps) {
   const styles = useThemedStyles(createMessageBubbleStyles);
   const resolved = isUser
     ? resolveUserAvatarSource({
@@ -26,7 +28,7 @@ export const Avatar = memo(function Avatar({ avatarContent, isUser, userName, ai
         avatar: avatarContent || null,
       });
 
-  return (
+  const avatar = (
     <AvatarImage
       source={resolved.source}
       fallbackSource={resolved.fallbackSource}
@@ -38,4 +40,6 @@ export const Avatar = memo(function Avatar({ avatarContent, isUser, userName, ai
       textStyle={styles.avatarText}
     />
   );
+  return onPress ? <Pressable onPress={onPress} accessibilityRole="button"
+    accessibilityLabel={`查看${aiName || 'AI'}的个人主页`}>{avatar}</Pressable> : avatar;
 });

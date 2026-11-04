@@ -62,3 +62,5 @@ export type {
   PreparedMediaAssetBatchCommitResult,
 } from './application/PreparedMediaAssetBatch';
 export type { MediaAssetReferenceUriInput } from './application/MediaAssetRuntime';
+
+export { default as MediaAssetImage } from './presentation/MediaAssetImage';

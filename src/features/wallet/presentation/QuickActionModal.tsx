@@ -14,7 +14,7 @@ interface QuickActionModalProps {
   onClose: () => void;
   quickActions: QuickAction[];
   availableCategories: WalletCategories;
-  onAdd: (action: Omit<QuickAction, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  onAdd: (action: Omit<QuickAction, 'id' | 'sortOrder' | 'createdAt' | 'updatedAt'>) => void;
   onDelete: (id: string) => void;
 }
 
@@ -54,7 +54,6 @@ const QuickActionModal: React.FC<QuickActionModalProps> = ({
       category: category.trim(),
       detail: '',
       type,
-      sortOrder: quickActions.length,
     });
     resetForm();
     setShowAddForm(false);
@@ -63,7 +62,7 @@ const QuickActionModal: React.FC<QuickActionModalProps> = ({
   const categories = availableCategories[type];
 
   return (
-    <ModalSheet visible={visible} onClose={onClose} avoidKeyboard>
+    <ModalSheet visible={visible} onClose={onClose}>
       <View style={styles.content}>
           <View style={styles.header}>
             <TouchableOpacity onPress={onClose}>

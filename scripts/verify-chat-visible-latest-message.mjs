@@ -1,3 +1,4 @@
+import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /**
  * clear history 可见边界的 latest-message 回归测试。
@@ -124,9 +125,9 @@ async function importMessageRepository(db) {
      };`,
   );
   globalThis.__VERIFY_PERSISTENCE__ = createPersistenceStub(db);
-  const metadataUrl = transpileToModuleUrl(read('src/features/chat/messages/domain/chatMessageMetadata.ts')
+  const metadataUrl = transpileToModuleUrl(read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`)
     .replaceAll("from './ChatSticker'", `from '${transpileToModuleUrl(read('src/features/chat/messages/domain/ChatSticker.ts'))}'`)
-    .replaceAll("from './SharedChatRecord'", `from '${transpileToModuleUrl(read('src/features/chat/messages/domain/SharedChatRecord.ts'))}'`));
+    .replaceAll("from './SharedChatRecord'", `from '${sharedChatRecordModuleUrl}'`));
   const source = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`)
     .replace("from '../domain/chatMessageMetadata'", `from '${metadataUrl}'`);
   const output = ts.transpileModule(source, {

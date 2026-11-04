@@ -32,7 +32,6 @@ export {
   selectBubbleSkin,
   updateBubbleSkinImage,
   setBubbleSize,
-  resolveBubbleSkinAsset,
   getBubbleSkinBackupSource,
   restoreBubbleSkinBackupSettings,
   validateBubbleSkinBackupSettings,

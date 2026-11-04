@@ -80,7 +80,7 @@ assert.equal(profileFieldValue(original, 'age'), '');
 await Promise.all([
   repository.update({ name: '枫渡', gender: '霸王龙', age: 0 }),
   repository.update({ identity: '设计师', region: '杭州', other, signature: '自由而有趣' }),
-  repository.updateAvatar('new-avatar.jpg'),
+  repository.update({ avatar: 'new-avatar.jpg' }),
 ]);
 const persisted = await repository.get();
 assert.equal(persisted.name, '枫渡');
@@ -111,6 +111,11 @@ const empty = factory.createUserIdentityBlock({ displayName: '用户', source: '
 assert.ok(!empty.content.includes('性别：'));
 assert.ok(!empty.content.includes('年龄：'));
 assert.ok(!empty.content.includes('其他设定：'));
+const expectedProfileWarning = mock.method(console, 'warn', () => undefined);
+const failedIdentity = await factory.resolveUserIdentity({ repositories: { profile: { get: async () => { throw new Error('资料读取失败'); } } } });
+expectedProfileWarning.mock.restore();
+assert.equal(failedIdentity.displayName, '用户', '资料读取失败时 Prompt 保留默认身份');
+assert.equal(failedIdentity.profile, null);
 
 // 宿主重放原来的 Stack action；按钮、硬件返回和手势没有第二套提交路径。
 let guard;
@@ -185,5 +190,34 @@ try {
   expectedLog.mock.restore();
   failSave = false;
   assert.equal(await failure.flush(), true, '重试成功后允许返回');
+
+  // null 只表示缺行；读取故障不能触发默认资料，也不能被插入后的重读 fallback 吞掉。
+  db.prepare('DELETE FROM user_profile WHERE id = ?').run('self');
+  assert.equal((await repository.ensureDefault()).name, '用户');
+  assert.equal(db.prepare('SELECT name FROM user_profile WHERE id = ?').get('self').name, '用户');
+  const originalGetFirst = executor.getFirstAsync;
+  const originalRun = executor.runAsync;
+  let profileWrites = 0;
+  try {
+    executor.runAsync = async (...args) => { profileWrites += 1; return originalRun(...args); };
+    executor.getFirstAsync = async () => { throw new Error('资料读取故障'); };
+    await assert.rejects(repository.get(), /资料读取故障/);
+    await assert.rejects(repository.ensureDefault(), /资料读取故障/);
+    assert.equal(profileWrites, 0, '读取故障不能进入默认资料插入流程');
+
+    db.prepare('DELETE FROM user_profile WHERE id = ?').run('self');
+    let reads = 0;
+    executor.getFirstAsync = async (...args) => {
+      reads += 1;
+      if (reads === 2) throw new Error('插入后的读取故障');
+      return originalGetFirst(...args);
+    };
+    await assert.rejects(repository.ensureDefault(), /插入后的读取故障/);
+    assert.equal(profileWrites, 1);
+  } finally {
+    executor.getFirstAsync = originalGetFirst;
+    executor.runAsync = originalRun;
+  }
+  assert.equal((await repository.ensureDefault()).name, '用户', '故障恢复后读取已持久化的默认资料');
 } finally { mock.timers.reset(); db.close(); }
-console.log('个人资料迁移、独立字段提交、自动保存与完整人设注入验证通过。');
+console.log('个人资料迁移、独立字段提交、自动保存、读取故障与完整人设注入验证通过。');

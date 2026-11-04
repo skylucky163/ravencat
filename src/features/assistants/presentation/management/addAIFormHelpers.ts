@@ -1,7 +1,6 @@
 // AddAIScreen 表单校验与保存辅助函数
 
 import { createAIProfile, type AIProfile } from '../../domain/AIProfile';
-import type { ModelCallConfig } from '../../domain/ModelCallConfig';
 
 export const DEFAULT_MAX_TOKENS = 2000;
 
@@ -33,23 +32,24 @@ export function getCurrentAddAIStep({ apiBaseUrl, apiKey, selectedModel }: { api
 }
 
 export function buildNewAI({
+  serviceConfigId,
   name,
   selectedModel,
   apiKey,
   apiBaseUrl,
   systemPrompt,
-  modelParams,
 }: {
   name: string;
   selectedModel: string;
   apiKey: string;
   apiBaseUrl: string;
   systemPrompt: string;
-  modelParams?: Pick<ModelCallConfig, 'temperature' | 'topP' | 'maxTokens'>;
+  serviceConfigId?: string | null;
 }): AIProfile {
   const id = `ai_${Date.now()}`;
   return createAIProfile({
     id,
+    serviceConfigId,
     agentId: `agent_${id}`,
     name: name.trim(),
     avatar: null,
@@ -58,7 +58,6 @@ export function buildNewAI({
     apiBaseUrl: apiBaseUrl.trim(),
     systemPrompt: systemPrompt.trim() || null,
     maxTokens: DEFAULT_MAX_TOKENS,
-    ...modelParams,
     enableTools: false,
     allowMultipleBubbles: true,
   });

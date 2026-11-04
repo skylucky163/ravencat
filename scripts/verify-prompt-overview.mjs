@@ -483,6 +483,7 @@ const Screen = load('src/features/prompting/presentation/PromptCenterScreen.tsx'
     { id: 'output.paragraph_breaks', defaultContent: '默认分段规则' },
     { id: 'internal.chat_summary', defaultContent: '默认一级摘要规则' },
     { id: 'internal.chat_secondary_summary', defaultContent: '默认二级摘要规则' },
+    { id: 'internal.vision_ocr', defaultContent: '默认图片识别规则' },
   ] }) },
   '../application/ManagePromptDefaults': {
     getAgentRegistrySettings: registryManagement.getAgentRegistrySettings,
@@ -765,14 +766,14 @@ await systemBack();
 await renderer.act(async () => button('AI 人设').props.onPress());
 assert.equal(stackState.routes.at(-1).params.assistantId, ai.id);
 assert.ok(text(activeScreen()).includes('原始人设'));
-assert.equal(activeScreen().findAllByType('TextInput').length, 0, '人设编辑入口归对话设置');
+assert.equal(activeScreen().findAllByType('TextInput').length, 0, '人设编辑入口归 AI 个人主页');
 assert.equal(button('保存'), undefined);
 await renderer.act(async () => {
-  ai.persona = '对话设置保存后的人设';
+  ai.persona = '个人主页保存后的人设';
   expo.useRouter().push('/mcp-tools');
 });
 await systemBack();
-assert.ok(text(activeScreen()).includes('对话设置保存后的人设'), '保留的人设页重新获得焦点后读取数据库最新正文');
+assert.ok(text(activeScreen()).includes('个人主页保存后的人设'), '保留的人设页重新获得焦点后读取数据库最新正文');
 await systemBack();
 assert.equal(currentTitle(), '提示词中心');
 await renderer.act(async () => button('协议空间常驻提示词').props.onPress());
@@ -969,6 +970,20 @@ for (const [definitionId, label] of [['foundation.default_core', '系统基础�
   if (definitionId === 'input.image_grounding' || summaryRule) await systemBack();
 }
 assert.deepEqual(fixture, globalDefaultBeforeApply);
+// 「其他提示词」同时承载视觉识别正文；编辑器按内置默认回落，并共用覆盖与全局应用。
+await renderer.act(async () => button('其他提示词').props.onPress());
+await renderer.act(async () => button('图片识别提示词').props.onPress());
+assert.equal(currentTitle(), '图片识别提示词');
+assert.equal(activeScreen().findByType('TextInput').props.value, '默认图片识别规则');
+assert.equal(activeScreen().findAllByType('Switch').length, 0, '图片识别提示词没有独立开关');
+await renderer.act(async () => activeScreen().findByType('TextInput').props.onChangeText('自定义图片识别正文'));
+await renderer.act(async () => button('全局应用').props.onPress());
+assert.deepEqual(globalPromptSnapshots.at(-1), { definitionId: 'internal.vision_ocr', content: '自定义图片识别正文' });
+await renderer.act(async () => button('恢复默认').props.onPress());
+await renderer.act(async () => alerts.at(-1)[2].find((item) => item.text === '恢复').onPress());
+assert.equal(activeScreen().findByType('TextInput').props.value, '默认图片识别规则');
+await systemBack();
+await systemBack();
 // 关闭期间仍可编辑；从摘要设置回来时刷新状态，但不覆盖编辑草稿。
 summaryGenerationState = { primaryEnabled: true, secondaryEnabled: false };
 await renderer.act(async () => button('其他提示词').props.onPress());

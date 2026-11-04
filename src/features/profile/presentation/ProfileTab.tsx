@@ -8,7 +8,7 @@ import { useTheme } from '@shared/theme';
 import { createProfileStyles } from './ProfileTab.styles';
 import { ProfileContent } from './ProfileContent';
 import { useCurrentUserProfile } from './useCurrentUserProfile';
-import { DEFAULT_USER_PROFILE } from './userProfileConstants';
+import { DEFAULT_USER_PROFILE } from '../domain/UserProfile';
 
 interface ProfileTabProps {
   onOpenProfile(): void;

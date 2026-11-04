@@ -10,12 +10,12 @@ import {
   STICKER_MAX_DIMENSION_PX,
   STICKER_MAX_FILE_SIZE_BYTES,
   StickerGroupNotFoundError,
-  StickerNotFoundError,
   type Sticker,
   type StickerAnnotationClaim,
   type StickerAnnotationMetadata,
   type StickerGroup,
   type StickerMetadataPatch,
+  type StickerMessageSnapshot,
 } from '../domain/Sticker';
 import type { CreateStickerGroupInput } from '../domain/StickerRepository';
 import {
@@ -42,9 +42,45 @@ export interface ImportStickerInput {
 
 export interface ImportStickerResult {
   sticker: Sticker;
-  mediaAsset: import('@features/media').MediaAsset;
   mediaAssetReused: boolean;
   stickerReused: boolean;
+}
+
+/** 已提交消息的快照已通过消息边界校验，不要求原收藏项仍然存在。 */
+export async function addStickerFromMessage(
+  snapshot: Omit<StickerMessageSnapshot, 'sourceFileName'> & { sourceFileName?: string | null },
+): Promise<{ sticker: Sticker; reused: boolean }> {
+  const runtime = getStickersRuntimeDependencies();
+  const now = runtime.now();
+  const result = await runtime.repository.createStickerIfAbsent({
+    id: runtime.generateId(),
+    ownerAssistantId: null,
+    mediaAssetId: snapshot.mediaAssetId,
+    groupId: null,
+    name: snapshot.name,
+    description: snapshot.description,
+    tags: [...snapshot.tags],
+    emotion: snapshot.emotion,
+    sourceFileName: snapshot.sourceFileName ?? null,
+    mimeType: snapshot.mimeType,
+    width: snapshot.width,
+    height: snapshot.height,
+    isAnimated: snapshot.isAnimated,
+    isFavorite: false,
+    useCount: 0,
+    lastUsedAt: null,
+    // 发送快照已经具备语义，新增用户收藏无需再次识图；向量属于新收藏独立生成。
+    annotationStatus: 'ready',
+    annotationError: null,
+    semanticRevision: 1,
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (!result.reused) {
+    emitStickerAnnotationChanged();
+    emitStickerEmbeddingPending();
+  }
+  return result;
 }
 
 export interface CreateStickerGroupCommandInput {
@@ -134,7 +170,7 @@ export async function importSticker(input: ImportStickerInput): Promise<ImportSt
         isFavorite: false,
         useCount: 0,
         lastUsedAt: null,
-        annotationStatus: isAnimated ? 'manual_required' : 'pending',
+        annotationStatus: description ? 'ready' : isAnimated || input.name !== undefined || tags.length > 0 || emotion ? 'manual_required' : 'pending',
         annotationError: null,
         semanticRevision: 1,
         createdAt: now,
@@ -149,9 +185,10 @@ export async function importSticker(input: ImportStickerInput): Promise<ImportSt
     // commit 已完成后才唤醒 Host，信号失败不能改变已提交的业务事实。
     emitStickerAnnotationPending();
   }
+  if (!created.value.reused) emitStickerAnnotationChanged();
+  if (!created.value.reused && created.value.sticker.annotationStatus === 'ready') emitStickerEmbeddingPending();
   return {
     sticker: created.value.sticker,
-    mediaAsset: created.asset,
     mediaAssetReused: created.reused,
     stickerReused: created.value.reused,
   };
@@ -212,6 +249,7 @@ export async function editStickerMetadata(
     normalized,
     runtime.now(),
   );
+  emitStickerAnnotationChanged();
   emitStickerEmbeddingPending();
   return updated;
 }
@@ -249,6 +287,7 @@ export async function deleteStickerFromLibrary(stickerId: string): Promise<boole
   const sticker = await runtime.repository.getStickerById(normalizedId);
   const deleted = await runtime.repository.deleteSticker(normalizedId);
   if (deleted) {
+    emitStickerAnnotationChanged();
     await runtime.media.releaseMediaAssetCandidates([sticker?.mediaAssetId ?? null]);
   }
   return deleted;
@@ -271,7 +310,17 @@ export async function claimStickerAnnotation(
   const runtime = getStickersRuntimeDependencies();
   const claimId = input.claimId?.trim() || runtime.generateId();
   const claimedAt = input.now ?? runtime.now();
-  return runtime.repository.claimNextAnnotation(claimId, claimedAt);
+  const claim = await runtime.repository.claimNextAnnotation(claimId, claimedAt);
+  if (claim) emitStickerAnnotationChanged();
+  return claim;
+}
+
+/** 失败项只有显式重试才重新入队，复用原来的持久 claim 与执行宿主。 */
+export async function retryStickerAnnotation(stickerId: string): Promise<void> {
+  const runtime = getStickersRuntimeDependencies();
+  await runtime.repository.retryAnnotation(requireId(stickerId, 'Sticker'), runtime.now());
+  emitStickerAnnotationChanged();
+  emitStickerAnnotationPending();
 }
 
 export async function completeStickerAnnotation(
@@ -409,8 +458,3 @@ function normalizeBoundedName(value: string, label: string, maxLength: number): 
   }
   return normalized;
 }
-
-export {
-  StickerGroupNotFoundError,
-  StickerNotFoundError,
-};

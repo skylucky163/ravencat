@@ -148,6 +148,10 @@ export function createMomentItemStyles(theme: PresentationTheme) {
       marginRight: theme.spacing.xl,
       paddingVertical: theme.spacing.sm,
     },
+    shareButton: {
+      marginLeft: 'auto',
+      marginRight: 0,
+    },
     actionButtonActive: {
       // 激活状态
     },

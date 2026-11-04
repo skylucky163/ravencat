@@ -199,6 +199,7 @@ function requireAgentTimelineCommitPort(
   }
   return {
     commitAgentTimeline: (params) => persistence.commitAgentTimeline!(params),
+    commitAgentOutput: persistence.commitAgentOutput,
   };
 }
 

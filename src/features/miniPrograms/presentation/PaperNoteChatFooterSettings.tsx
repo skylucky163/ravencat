@@ -247,7 +247,7 @@ export default function PaperNoteChatFooterSettings() {
 
       <Text style={styles.hint}>显示在聊天消息列表的最后，跟随页面滚动。支持 SVG / PNG / JPG，每张最多 5MB。</Text>
 
-      <ModalSheet visible={editingText} onClose={() => setEditingText(false)} onOpened={focusTextEditor} title="底栏文字" avoidKeyboard>
+      <ModalSheet visible={editingText} onClose={() => setEditingText(false)} onOpened={focusTextEditor} title="底栏文字">
         <View style={styles.renameSheet}>
           <AppTextInput
             ref={textInputRef}

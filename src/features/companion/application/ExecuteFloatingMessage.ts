@@ -1,4 +1,4 @@
-/** 执行悬浮层截图草稿与显式发送，不拥有 Android Headless 宿主。 */
+/** 执行悬浮层截图草稿与显式发送，共用应用运行宿主。 */
 import { getAssistantDisplayName } from '@features/assistants';
 
 import type { ChatAttachment } from '@features/chat';
@@ -40,6 +40,7 @@ const stagedScreens = new Map<string, CapturedScreen>();
 
 export async function executeFloatingMessage(
   data: FloatingMessageTaskData,
+  execution: { signal: AbortSignal; executionDeadlineAt: number },
 ): Promise<void> {
   const correlationId = data.correlationId?.trim();
   if (!correlationId) {
@@ -75,6 +76,7 @@ export async function executeFloatingMessage(
   };
 
   try {
+    if (execution.signal.aborted) throw new Error('后台执行已取消或超时');
     if (action === 'discard_screen') {
       capture = takeStagedScreen(data.screenshotCorrelationId!);
       succeeded = true;
@@ -104,7 +106,7 @@ export async function executeFloatingMessage(
     }
     const targetResult = await resolveCompanionConversationTarget();
     if ('error' in targetResult) {
-      // 目标不可用是已知业务结果，由悬浮提示和原生回执收口，不升级为 Headless 异常。
+      // 目标不可用是已知业务结果，由悬浮提示和原生回执收口。
       failureMessage = targetResult.error;
       await updateReplyPreview({
         correlationId,
@@ -126,7 +128,7 @@ export async function executeFloatingMessage(
       capture = null;
     }
 
-    await deliverFloatingMessage({ correlationId, text, attachment, target: targetResult });
+    await deliverFloatingMessage({ correlationId, text, attachment, target: targetResult }, execution);
 
     succeeded = true;
   } catch (error) {
@@ -169,8 +171,7 @@ export async function executeFloatingMessage(
     });
   }
 
-  // 截屏策略拒绝已通过悬浮预览和原生回执表达，不再把预期失败升级为
-  // React Native 未处理的 Headless Task ERROR。
+  // 截屏策略拒绝已通过悬浮预览和原生回执表达，不再升级为执行异常。
   if (taskError && !(taskError instanceof ScreenCaptureError)) {
     throw taskError;
   }
@@ -190,7 +191,7 @@ async function deliverFloatingMessage(params: {
   text: string;
   attachment: ChatAttachment | null;
   target: CompanionConversationTarget;
-}): Promise<void> {
+}, execution: { signal: AbortSignal; executionDeadlineAt: number }): Promise<void> {
   const dependencies = getCompanionRuntimeDependencies();
   let deliveredSegmentCount = 0;
   let replySettled = false;
@@ -222,91 +223,101 @@ async function deliverFloatingMessage(params: {
     text: 'Waiting for reply...',
   });
 
-  // 该窄端口由 Host 固定受控 Headless 执行模式；任务自身等待回复投影完成。
-  const result = await dependencies.chat.sendUserMessageFromExecutionHost({
-    message: {
-      sessionId: params.target.session.id,
-      text: params.text,
-      clientMessageId: params.correlationId,
-      attachments: params.attachment ? [params.attachment] : [],
-    },
-    aiConfig: buildCompanionAIRequestConfig(params.target.ai),
-    correlationId: params.correlationId,
-    replyCallbacks: {
-      onReplyDisplaySegment: async (payload) => {
-        const correlationId = deliveredSegmentCount === 0
-          ? params.correlationId
-          : `${params.correlationId}:reply-segment:${payload.clientMessageId}`;
-        deliveredSegmentCount++;
-        const segment = { correlationId, displayed: false };
-        displayedSegments.set(payload.clientMessageId, segment);
-        const displayed = await queuePreviewUpdate(() => updateReplyPreview({
-          correlationId, sessionId: payload.sessionId, status: 'reply', text: payload.previewText,
-        }));
-        segment.displayed = displayed;
-        return { userNotificationHandled: displayed };
+  // 取消时 Coordinator 可以直接撤销 owner，不再产生回复回调；等待方也必须收口。
+  execution.signal.addEventListener('abort', settleAfterPreview, { once: true });
+  if (execution.signal.aborted) settleAfterPreview();
+  try {
+    // 该窄端口由 Host 固定当前宿主执行模式；调用方等待回复投影完成。
+    const result = await dependencies.chat.sendUserMessageFromExecutionHost({
+      execution,
+      message: {
+        sessionId: params.target.session.id,
+        text: params.text,
+        clientMessageId: params.correlationId,
+        attachments: params.attachment ? [params.attachment] : [],
       },
-      onReplySegment: async (payload) => {
-        if (payload.clientMessageId && displayedSegments.has(payload.clientMessageId)) {
-          const segment = displayedSegments.get(payload.clientMessageId)!;
-          // 沿同一预览身份绑定正式 ID，让实际可见回执和会话投影接管；不新增气泡。
-          await queuePreviewUpdate(() => updateReplyPreview({
-            correlationId: segment.correlationId, sessionId: payload.sessionId, messageId: payload.messageId,
-            status: 'reply', text: payload.previewText,
-          }));
-          return { userNotificationHandled: segment.displayed };
-        }
-        const segmentCorrelationId = payload.segmentIndex === 0
-          ? params.correlationId
-          : `${params.correlationId}:reply-segment:${payload.segmentIndex}`;
-        deliveredSegmentCount = Math.max(deliveredSegmentCount, payload.segmentIndex + 1);
-        try {
+      aiConfig: buildCompanionAIRequestConfig(params.target.ai),
+      correlationId: params.correlationId,
+      replyCallbacks: {
+        onReplyDisplaySegment: async (payload) => {
+          const correlationId = deliveredSegmentCount === 0
+            ? params.correlationId
+            : `${params.correlationId}:reply-segment:${payload.clientMessageId}`;
+          deliveredSegmentCount++;
+          const segment = { correlationId, displayed: false };
+          displayedSegments.set(payload.clientMessageId, segment);
           const displayed = await queuePreviewUpdate(() => updateReplyPreview({
-            correlationId: segmentCorrelationId,
-            sessionId: payload.sessionId,
-            messageId: payload.messageId,
-            status: 'reply',
-            text: payload.previewText.trim() || payload.text.trim(),
+            correlationId, sessionId: payload.sessionId, status: 'reply', text: payload.previewText,
           }));
+          segment.displayed = displayed;
           return { userNotificationHandled: displayed };
-        } catch (error) {
-          console.warn('[RavenCatFloatingMessageTask] 回复预览更新失败，将保留系统通知：', error);
-          return undefined;
-        }
-      },
-      onFinalReply: (payload) => {
-        if (deliveredSegmentCount === 0) {
+        },
+        onReplySegment: async (payload) => {
+          if (payload.clientMessageId && displayedSegments.has(payload.clientMessageId)) {
+            const segment = displayedSegments.get(payload.clientMessageId)!;
+            // 沿同一预览身份绑定正式 ID，让实际可见回执和会话投影接管；不新增气泡。
+            await queuePreviewUpdate(() => updateReplyPreview({
+              correlationId: segment.correlationId, sessionId: payload.sessionId, messageId: payload.messageId,
+              status: 'reply', text: payload.previewText,
+            }));
+            return { userNotificationHandled: segment.displayed };
+          }
+          // 工具输出可各自独立提交，分段序号不再是整轮唯一身份；媒体沿正式消息的稳定身份展示。
+          const segmentCorrelationId = payload.clientMessageId
+            ? `${params.correlationId}:reply-segment:${payload.clientMessageId}`
+            : payload.segmentIndex === 0 ? params.correlationId : `${params.correlationId}:reply-segment:${payload.segmentIndex}`;
+          deliveredSegmentCount = Math.max(deliveredSegmentCount, payload.segmentIndex + 1);
+          try {
+            const displayed = await queuePreviewUpdate(() => updateReplyPreview({
+              correlationId: segmentCorrelationId,
+              sessionId: payload.sessionId,
+              messageId: payload.messageId,
+              status: 'reply',
+              text: payload.previewText.trim() || payload.text.trim(),
+            }));
+            return { userNotificationHandled: displayed };
+          } catch (error) {
+            console.warn('[RavenCatFloatingMessageTask] 回复预览更新失败，将保留系统通知：', error);
+            return undefined;
+          }
+        },
+        onFinalReply: (payload) => {
+          if (deliveredSegmentCount === 0) {
+            queuePreviewUpdate(() => updateReplyPreview({
+              correlationId: params.correlationId,
+              sessionId: payload.sessionId,
+              messageId: payload.segments[0]?.messageId,
+              status: 'reply',
+              text: payload.previewText.trim() || payload.joinedText.trim() || payload.text.trim(),
+            }));
+          }
+          settleAfterPreview();
+        },
+        onReplyCommitted: settleAfterPreview,
+        onReplyFailed: (payload) => {
           queuePreviewUpdate(() => updateReplyPreview({
             correlationId: params.correlationId,
             sessionId: payload.sessionId,
-            messageId: payload.segments[0]?.messageId,
-            status: 'reply',
-            text: payload.previewText.trim() || payload.joinedText.trim() || payload.text.trim(),
+            messageId: payload.messageId ?? undefined,
+            status: 'error',
+            text: payload.previewText.trim() || payload.error,
           }));
-        }
-        settleAfterPreview();
+          settleAfterPreview();
+        },
       },
-      onReplyCommitted: settleAfterPreview,
-      onReplyFailed: (payload) => {
-        queuePreviewUpdate(() => updateReplyPreview({
-          correlationId: params.correlationId,
-          sessionId: payload.sessionId,
-          messageId: payload.messageId ?? undefined,
-          status: 'error',
-          text: payload.previewText.trim() || payload.error,
-        }));
-        settleAfterPreview();
-      },
-    },
-  });
+    });
 
 
-  if (!result.success) {
-    throw new Error(result.error || '悬浮窗消息发送失败。');
+    if (!result.success) {
+      throw new Error(result.error || '悬浮窗消息发送失败。');
+    }
+
+    await replyCompletion;
+    await previewUpdates;
+    if (execution.signal.aborted) throw new Error('后台执行已取消或超时');
+  } finally {
+    execution.signal.removeEventListener('abort', settleAfterPreview);
   }
-
-  await replyCompletion;
-  await previewUpdates;
 }
 
 function normalizeAction(value: string | undefined): FloatingMessageAction {

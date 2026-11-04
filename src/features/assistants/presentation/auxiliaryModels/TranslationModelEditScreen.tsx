@@ -1,10 +1,11 @@
+import ServiceConnectionPicker from './ServiceConnectionPicker';
 /** 翻译资产编辑复用辅助模型命令与自动保存，业务选择不随编辑改变。 */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TRANSLATION_PROVIDERS, testTranslationModelConnection, type TranslationProvider } from '@features/integrations';
 import { fetchModelList, type ModelInfo } from '@platform/ai';
-import { KeyboardAvoidingContainer, Button, DropdownField, InputField, ModelPickerModal, NavigationHeader, ToggleField, showAppDialog } from '@shared/ui';
+import { KeyboardAvoidingContainer, Button, DropdownField, InputField, ModelPickerModal, NavigationHeader, showAppDialog } from '@shared/ui';
 import { useTheme } from '@shared/theme';
 import { useAutoSaveDraft, useAutoSaveNavigation } from '@shared/ui/useAutoSaveDraft';
 import { useAutoSaveFeedback } from '@shared/ui/useAutoSaveFeedback';
@@ -47,7 +48,7 @@ export default function TranslationModelEditScreen({ modelId, initialData, savin
   const blur = () => { if (modelId) void commit(); };
   const set = useCallback(<K extends keyof TranslationModelDraft>(key: K, value: TranslationModelDraft[K], immediate = false) => {
     setRequestError(null);
-    change({ [key]: value } as Pick<TranslationModelDraft, K>, immediate);
+    change({ [key]: value, ...(['baseUrl', 'apiKey', 'secretId'].includes(key) ? { serviceConfigId: '' } : {}) } as Pick<TranslationModelDraft, K>, immediate);
   }, [change]);
   const field = (key: keyof TranslationModelDraft, label: string, placeholder = '', hint?: string) => (
     <View key={key} onLayout={feedback.fieldLayout([key])}>
@@ -77,7 +78,7 @@ export default function TranslationModelEditScreen({ modelId, initialData, savin
     if (!config) return;
     setCreationError(null);
     const { baseURL, ...settings } = config;
-    try { await onCreate({ ...settings, baseUrl: baseURL, name: draft.name.trim(), enabled: draft.enabled }); }
+    try { await onCreate({ ...settings, baseUrl: baseURL, name: draft.name.trim(), serviceConfigId: draft.serviceConfigId || null }); }
     catch (error) { setCreationError(error instanceof Error ? error.message : '创建失败，你的输入已保留'); }
   };
   const test = async () => {
@@ -106,20 +107,21 @@ export default function TranslationModelEditScreen({ modelId, initialData, savin
         retry={modelId ? blur : () => { void create(); }} restore={modelId ? reset : undefined} />
       <ScrollView ref={feedback.scrollRef} contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: theme.spacing.xl }}
         keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-        <View onLayout={feedback.fieldLayout(['provider'])}><DropdownField label="提供方" value={draft.provider}
+        <View onLayout={feedback.fieldLayout(['provider'])}><DropdownField label="翻译方式" value={draft.provider}
           options={TRANSLATION_PROVIDERS.map((entry) => ({ value: entry.provider, label: entry.label }))} error={errors.provider}
           onChange={(value) => { if (value !== draft.provider) change(switchTranslationProvider(value as TranslationProvider), true); }} /></View>
         {field('name', '配置名称', `例如：${provider.label}`)}
-        <ToggleField label="启用配置" value={draft.enabled} onValueChange={(value) => set('enabled', value, true)} />
         {ai ? field('baseUrl', 'API 地址', 'https://你的服务地址/v1', '填写服务商提供的 OpenAI 兼容接口地址') : field('secretId', 'SecretId', 'AKID...')}
         {field('apiKey', ai ? 'API Key' : 'SecretKey', ai ? '填写服务商提供的 API Key' : 'SecretKey')}
+        {ai && <ServiceConnectionPicker baseUrl={draft.baseUrl} apiKey={draft.apiKey} disabled={testing || loadingModels}
+          onFill={service => change({ serviceConfigId: service.id, baseUrl: service.baseUrl, apiKey: service.apiKey }, true)} />}
         {ai && <>
           <Button title={loadingModels ? '获取中…' : models.length ? '重新获取模型列表' : '获取模型列表'} variant="text"
             disabled={loadingModels || testing} onPress={() => { void loadModels(); }} />
           {field('model', '模型名称', '填写模型 ID，或从模型列表选择')}
           {models.length > 0 && <Button title="从已获取的列表选择" variant="text" onPress={() => setShowModelPicker(true)} />}
         </>}
-        {provider.optionFields.filter((entry) => !['baseURL', 'model'].includes(entry.key) && (!entry.advanced || advanced))
+        {provider.optionFields.filter((entry) => !entry.advanced || advanced)
           .map((entry) => field(entry.key as keyof TranslationModelDraft, entry.label, entry.placeholder, entry.hint))}
         {provider.optionFields.some((entry) => entry.advanced) && <TouchableOpacity accessibilityRole="button"
           accessibilityState={{ expanded: advanced }} onPress={() => setAdvanced(!advanced)}>

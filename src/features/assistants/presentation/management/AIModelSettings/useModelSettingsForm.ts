@@ -41,8 +41,8 @@ export default function useModelSettingsForm({ aiAssistant, onUpdated }: {
     // 无效草稿保留原输入，滑杆只接受已保存的合法投影。
     temperature: temperatureInput.error ? aiAssistant.temperature : temperatureInput.value,
     topP: topPInput.error ? aiAssistant.topP : topPInput.value,
-    setApiBaseUrl: (value: string) => setField('apiBaseUrl', value),
-    setApiKey: (value: string) => setField('apiKey', value),
+    setApiBaseUrl: (value: string) => change({ apiBaseUrl: value, serviceConfigId: '' }),
+    setApiKey: (value: string) => change({ apiKey: value, serviceConfigId: '' }),
     setSelectedModel: (value: string) => setField('selectedModel', value, true),
     setEnableTools: (value: boolean) => setField('enableTools', value, true),
     setDisableThinking: (value: boolean) => setField('disableThinking', value, true),
@@ -50,6 +50,7 @@ export default function useModelSettingsForm({ aiAssistant, onUpdated }: {
     handleTopPChange: (value: string, immediate = false) => setField('topPInput', value, immediate),
     handleMaxTokensChange: (value: string, immediate = false) => setField('maxTokens', value, immediate),
     getConnectionParams,
+    fillServiceConnection: (service: { id: string; baseUrl: string; apiKey: string }) => change({ serviceConfigId: service.id, apiBaseUrl: service.baseUrl, apiKey: service.apiKey }, true),
     handleReset: () => change({ tempInput: '', topPInput: '', maxTokens: String(DEFAULT_MAX_TOKENS) }, true),
   };
 }

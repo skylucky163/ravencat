@@ -1,6 +1,6 @@
 /** 渲染图片附件缩略图，检查资源可用性并提供全屏预览。 */
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useContext, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -21,6 +21,7 @@ import {
 import { useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
 import ImagePreviewModal from './ImagePreviewModal';
+import { ChatMediaResolutionCacheContext } from '../components/chatMediaResolutionCache';
 
 interface ImageAttachmentCardProps {
   attachment: ChatAttachment;
@@ -45,6 +46,7 @@ export default function ImageAttachmentCard({
 }: ImageAttachmentCardProps) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
+  const mediaCache = useContext(ChatMediaResolutionCacheContext)?.images;
   const { mediaAssetId, thumbnailMediaAssetId, localUri, thumbnailUri } = attachment;
   // 只在媒体引用变化时重新解析，正文、识别结果与 metadata 对象换代不影响图片展示。
   const mediaReference = useMemo((): ChatAttachmentMediaReference => {
@@ -53,17 +55,23 @@ export default function ImageAttachmentCard({
     }
     return { localUri, thumbnailUri };
   }, [mediaAssetId, thumbnailMediaAssetId, localUri, thumbnailUri]);
-  const [previewVisible, setPreviewVisible] = useRecyclingState(false, [attachment.id, mediaReference]);
+  const mediaKey = JSON.stringify(mediaReference);
+  const [previewVisible, setPreviewVisible] = useRecyclingState(false, [attachment.id, mediaKey]);
   const [resolution, setResolution] = useRecyclingState<ImageResolutionState>(
-    { status: 'loading' },
-    [mediaReference],
+    () => {
+      const uris = mediaCache?.get(mediaKey);
+      return uris ? { status: 'ready', uris } : { status: 'loading' };
+    },
+    [mediaCache, mediaKey],
   );
   const resolvedUris = resolution.status === 'ready' ? resolution.uris : null;
 
   useEffect(() => {
+    if (resolution.status !== 'loading') return;
     let isMounted = true;
 
     void resolveChatImageAttachmentUris(mediaReference).then((uris) => {
+      if (uris) mediaCache?.set(mediaKey, uris);
       if (isMounted) {
         setResolution(uris ? { status: 'ready', uris } : { status: 'unavailable' });
       }
@@ -72,7 +80,7 @@ export default function ImageAttachmentCard({
     return () => {
       isMounted = false;
     };
-  }, [mediaReference, setResolution]);
+  }, [mediaReference, mediaCache, mediaKey, resolution.status, setResolution]);
 
   const imageStyle = useMemo(() => {
     if (thumbnail) return { ...styles.imageFixed, ...styles.imageThumbnail };

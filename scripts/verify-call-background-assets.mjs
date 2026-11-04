@@ -37,10 +37,14 @@ const { CreateMediaAsset } = load('src/features/media/application/CreateMediaAss
 const db = new DatabaseSync(':memory:');
 db.exec(CALL_BACKGROUND_SELECTION_SCHEMA);
 db.exec(MEDIA_ASSET_SCHEMA);
+db.exec('CREATE TABLE assistant_profile_covers (assistant_id TEXT PRIMARY KEY, media_asset_id TEXT NOT NULL)');
+db.exec(load('src/platform/persistence/sqlite/chatBubbleSkinSchema.ts').CHAT_BUBBLE_SKINS_SCHEMA);
 db.exec(load('src/platform/persistence/sqlite/chatFavoriteSchema.ts').CHAT_FAVORITES_SCHEMA);
 db.exec(load('src/platform/persistence/sqlite/aiImageSchema.ts').AI_DOWNLOADED_IMAGES_SCHEMA);
 db.exec(load('src/platform/persistence/sqlite/wallpaperSelectionSchema.ts').WALLPAPER_SELECTION_SCHEMA);
 db.exec('CREATE TABLE chat_conversations (id TEXT PRIMARY KEY, kind TEXT)');
+db.exec('CREATE TABLE call_sessions (id TEXT PRIMARY KEY)');
+db.exec('CREATE TABLE conversation_turn_runs (run_id TEXT PRIMARY KEY)');
 db.exec(`
   CREATE TABLE user_profile (id TEXT, avatar_media_asset_id TEXT, moments_cover_media_asset_id TEXT);
   CREATE TABLE ai_assistants (id TEXT PRIMARY KEY, avatar_media_asset_id TEXT, moments_cover_media_asset_id TEXT);
@@ -49,6 +53,9 @@ db.exec(`
   CREATE TABLE stickers (id TEXT, media_asset_id TEXT);
   CREATE TABLE messages (id INTEGER, metadata_json TEXT);
 `);
+db.exec(load('src/platform/persistence/sqlite/callHistorySchema.ts').CALL_HISTORY_SCHEMA);
+db.exec(load('src/platform/persistence/sqlite/callRingtoneSchema.ts').CALL_RINGTONE_SELECTION_SCHEMA);
+db.exec(load('src/platform/persistence/sqlite/chatReplyVersionSchema.ts').CHAT_REPLY_VERSIONS_SCHEMA);
 const executor = {
   execAsync: async (sql) => db.exec(sql),
   getFirstAsync: async (sql, params = []) => db.prepare(sql).get(...params) ?? null,
@@ -308,7 +315,7 @@ assert.deepEqual(inventory.map((asset) => asset.id), [selected]);
 // 旧全局数据库尚未激活/迁移时，恢复 preflight 仍能枚举它的背景文件。
 {
   const oldSnapshot = new DatabaseSync(':memory:');
-  for (const table of db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'").all()) {
+  for (const table of db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
     oldSnapshot.exec(table.name === 'call_background_selection'
       ? 'CREATE TABLE call_background_selection (id INTEGER PRIMARY KEY CHECK (id = 1), media_asset_id TEXT, revision INTEGER)'
       : table.sql);
@@ -317,7 +324,8 @@ assert.deepEqual(inventory.map((asset) => asset.id), [selected]);
   const columns = Object.keys(assetRow);
   oldSnapshot.prepare(`INSERT INTO media_assets (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`).run(...Object.values(assetRow));
   oldSnapshot.prepare('INSERT INTO call_background_selection VALUES (1, ?, 0)').run(selected);
-  const snapshotExecutor = { getAllAsync: async (sql) => oldSnapshot.prepare(sql).all() };
+  const snapshotExecutor = { getAllAsync: async (sql) => oldSnapshot.prepare(sql).all(),
+    getFirstAsync: async (sql) => oldSnapshot.prepare(sql).get() ?? null };
   assert.deepEqual((await catalogRepository.listBackupAssets(snapshotExecutor)).map((asset) => asset.id), [selected], '旧全局背景备份的媒体清单不依赖新 schema');
   oldSnapshot.close();
 }
@@ -355,7 +363,7 @@ const gatewayModule = load('src/features/backup/infrastructure/ApplicationBackup
   '@platform/device': { PERSISTENT_IMAGE_CATEGORY: { wallpaper: 'wallpaper' }, getPersistentImageCategoryPrefix: () => 'wallpapers/', persistentMediaStore: {} },
   '@platform/device/DeviceMediaService': { getPersistentImageInfoInRoot: async (mediaRoot, key) => ({ exists: mediaRoot === 'file:///staging', isDirectory: false, size: 5 }) },
   '@features/media': { MEDIA_ASSET_STORAGE_BACKEND },
-  '@shared/theme': { parseStoredThemeBackupState() {} },
+  '@shared/theme': { parseStoredThemeBackupState: value => value },
   '../../../../modules/ravencat-floating-layer': { validateBubbleSkinBackupSettings: async () => {} },
   './stableSettingsBackupState': load('src/features/backup/infrastructure/stableSettingsBackupState.ts'),
 });

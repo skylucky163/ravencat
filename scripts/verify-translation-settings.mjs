@@ -42,6 +42,8 @@ const { migrateAuxiliaryModelDefaults } = load('src/platform/persistence/sqlite/
 function createDb() {
   const db = new DatabaseSync(':memory:');
   for (const schema of Object.values(SCHEMAS)) db.exec(schema);
+  // 106 的迁移仍按当时包含 enabled 的表结构写入。
+  db.exec('ALTER TABLE auxiliary_model_configs ADD COLUMN enabled INTEGER DEFAULT 1;');
   return db;
 }
 function executor(db) {
@@ -148,8 +150,8 @@ await commands.updateAuxiliaryModelConfig({ id: another.id, settings: { name: '�
 assert.equal(await translationSettingsRepository.getModelId(), 'translation_ai');
 await selection.selectTranslationModel(another.id);
 assert.equal((await selection.resolveTranslationModel()).model, 'second-model');
-await commands.updateAuxiliaryModelConfig({ id: another.id, settings: { enabled: false } });
-assert.equal((await selection.getTranslationModelSettings()).unavailableReason, '模型已停用');
+await commands.updateAuxiliaryModelConfig({ id: another.id, settings: { apiKey: null } });
+assert.equal((await selection.getTranslationModelSettings()).unavailableReason, '请填写 API Key');
 await assert.rejects(() => selection.resolveTranslationModel(), /不可用/);
 await commands.deleteAuxiliaryModelConfig({ id: another.id });
 assert.equal((await selection.getTranslationModelSettings()).unavailableReason, '模型已删除');
@@ -157,7 +159,8 @@ assert.equal(await translationSettingsRepository.getModelId(), another.id, '删�
 await selection.selectTranslationModel(null);
 assert.equal((await selection.getTranslationModelSettings()).status, 'unconfigured');
   await assert.rejects(() => selection.resolveTranslationModel(), /翻译模型列表/);
-await assert.rejects(() => selection.selectTranslationModel('translation_disabled'), /可用/);
+await selection.selectTranslationModel('translation_disabled');
+assert.equal((await selection.getTranslationModelSettings()).status, 'active', '旧停用字段不再影响可用性');
 await selection.selectTranslationModel('translation_ai');
 assert.ok(signals > 0); unsubscribe();
 const snapshotFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'translation-models-'));
@@ -207,8 +210,7 @@ try {
   assert.equal(requests.at(-1).body.messages[1].content, 'Hello!\nWorld.');
   assert.equal(requests.at(-1).body.temperature, undefined);
   assert.equal(requests.at(-1).body.max_tokens, undefined);
-  await translation.translateMessageText({ text: 'Bonjour', source: 'fr', target: '英文' });
-  assert.ok(requests.at(-1).body.messages[0].content.includes('源语言：fr；目标语言：英文'));
+  assert.ok(requests.at(-1).body.messages[0].content.includes('源语言：自动识别；目标语言：zh'));
   networkError = true;
   await assert.rejects(() => translation.translateMessageText({ text: 'Hello' }), /翻译密钥无效/);
   assert.equal(tencentCalls.length, 0);
@@ -251,7 +253,18 @@ try {
   assert.equal(JSON.parse((await repository.getModelConfigById(model.id)).metadataJson).provider, 'aiModel');
   await editor.restore();
 
-  const theme = { colors: { text: { tertiary: '#666' }, brand: { primary: '#345' }, background: { app: '#fff', screen: '#eee' }, feedback: { error: '#f00' } }, spacing: { lg: 16, xl: 24, md: 12 } };
+  const theme = {
+    colors: {
+      text: { tertiary: '#666' },
+      brand: { primary: '#345' },
+      background: { app: '#fff', screen: '#eee' },
+      feedback: { error: '#f00' },
+      surface: { default: '#fff', raised: '#fff' },
+    },
+    spacing: { lg: 16, xl: 24, md: 12 },
+    radius: { lg: 12 },
+    effects: { glass: { enabled: false } },
+  };
   const native = Object.fromEntries(['ActivityIndicator', 'View', 'Text', 'ScrollView', 'KeyboardAvoidingView', 'TouchableOpacity', 'Pressable'].map((name) => [name, name]));
   native.StyleSheet = { create: (styles) => styles };
   native.Alert = { alert() {} };
@@ -262,6 +275,7 @@ try {
   const uiTheme = { ThemedSurface: 'Surface', useTheme: () => theme, useThemedStyles: () => ({}) };
   shared.ConfiguredModelPicker = load('src/shared/ui/ConfiguredModelPicker.tsx', {
     'react-native': native, '@shared/theme': uiTheme, 'lucide-react-native': { Check: 'Check', ChevronRight: 'ChevronRight' },
+    './ModelPickerModal': { __esModule: true, default: 'ModelPickerModal' },
     './ModalSheet': { __esModule: true, default: function ModalSheet({ visible, children }) { return visible ? React.createElement('ModalSheet', null, children) : null; } },
   }).default;
   const TranslationPicker = load('src/features/integrations/presentation/TranslationModelPicker.tsx', {
@@ -276,7 +290,7 @@ try {
     '@shared/ui/useAutoSaveDraft': hooks,
     '@shared/ui/useAutoSaveFeedback': { useAutoSaveFeedback: () => ({ scrollRef: null, fieldLayout: () => () => {}, revealErrors() {}, blocked: false, setBlocked() {} }) },
     '@shared/ui/AutoSaveErrors': { AutoSaveErrors: 'AutoSaveErrors' },
-    './translationModelDraft': draftModule,
+    './translationModelDraft': draftModule, './ServiceConnectionPicker': { __esModule: true, default: 'ServicePicker' },
   }).default;
   const created = [];
   await renderer.act(async () => { screen = renderer.create(React.createElement(Form, { initialData: null, saving: false, onSave() {}, onCreate: async (data) => { created.push(data); }, onBack() {} })); });
@@ -285,6 +299,11 @@ try {
   const button = (title) => screen.root.findAllByType('Button').find((node) => node.props.title === title);
   assert.ok(fields().indexOf(input('API 地址')) < fields().indexOf(input('API Key')), '地址在密钥之前');
   assert.notEqual(input('API Key').props.secureTextEntry, true);
+  assert.equal(screen.root.findAllByType('ServicePicker').length, 1, 'AI 翻译允许选择通用服务');
+  const providerField = () => screen.root.findAllByType('DropdownField').find(node => node.props.label === '翻译方式');
+  await renderer.act(async () => providerField().props.onChange('tencentCloudTmt'));
+  assert.equal(screen.root.findAllByType('ServicePicker').length, 0, '腾讯云机器翻译不接入通用服务');
+  await renderer.act(async () => providerField().props.onChange('aiModel'));
   for (const [label, value] of [['配置名称', '测试资产'], ['API 地址', 'https://models.example/v1'], ['API Key', 'test-key'], ['模型名称', 'manual-model']]) {
     await renderer.act(async () => input(label).props.onChangeText(value));
   }
@@ -298,6 +317,41 @@ try {
   assert.equal(created[0].baseUrl, 'https://models.example/v1');
   await renderer.act(async () => screen.unmount());
 
+  const pickerNative = { ...native, Modal: 'Modal', TouchableWithoutFeedback: 'Backdrop',
+    Dimensions: { get: () => ({ height: 800, width: 400 }) },
+    Animated: { Value: class { constructor(value) { this.value = value; } }, View: 'AnimatedView' },
+    FlatList: function FlatList({ data, renderItem, ListHeaderComponent, ListEmptyComponent, ListFooterComponent }) {
+      return React.createElement('RenderedList', null, ListHeaderComponent,
+        data.length ? data.map(item => React.createElement('Row', { key: item.id }, renderItem({ item }))) : ListEmptyComponent,
+        ListFooterComponent);
+    },
+  };
+  const pickerTheme = { ...uiTheme, useTheme: () => ({ ...theme, components: { modalSheet: { backgroundColor: '#fff' } } }) };
+  const Sheet = load('src/shared/ui/ModalSheet.tsx', {
+    'react-native': pickerNative, '@shared/theme': pickerTheme,
+    'react-native-safe-area-context': { useSafeAreaInsets: () => ({ bottom: 0 }) },
+    './KeyboardAvoidingContainer': { __esModule: true, default: 'KeyboardContainer' },
+  });
+  const Picker = load('src/shared/ui/ModelPickerModal.tsx', {
+    'react-native': pickerNative, '@shared/theme': pickerTheme, 'lucide-react-native': { Check: 'Check' },
+    './ModalSheet': Sheet, './NavigationHeaderHelp': { __esModule: true, default: 'Help' },
+  }).default;
+  const picked = [];
+  await renderer.act(async () => { screen = renderer.create(React.createElement(Picker, {
+    visible: true, title: '选择服务配置', description: '说明', onClose() {},
+    models: [{ id: 'a', name: '服务 A' }, { id: 'b', name: '服务 B' }],
+    onSelect: id => picked.push(id), onClear: () => picked.push(null),
+  })); });
+  const title = screen.root.findAllByType('Text').find(node => node.props.children === '选择服务配置');
+  assert.equal(title.parent.findAllByType('Help').length, 1, '问号在弹窗标题旁');
+  const list = screen.root.findByType('RenderedList');
+  assert.equal(list.findAllByType('Help').length, 0, '列表正文没有游离的问号');
+  assert.deepEqual(list.findAllByType('Text').map(node => node.props.children), ['服务 A', '服务 B', '取消选择']);
+  await renderer.act(async () => list.findAllByType('Pressable')[1].props.onPress());
+  await renderer.act(async () => list.findAllByType('Pressable').at(-1).props.onPress());
+  assert.deepEqual(picked, ['b', null]);
+  await renderer.act(async () => screen.unmount());
+
   const capability = load('src/features/assistants/domain/AuxiliaryModel.ts');
   const Pool = load('src/features/assistants/presentation/auxiliaryModels/AuxiliaryModelPoolScreen.tsx', {
     'react-native': native, 'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
@@ -307,6 +361,7 @@ try {
     'react-native': native, '@shared/ui': shared,
     '@features/integrations': { TranslationModelPicker: TranslationPicker },
     '@features/speech': { SpeechRecognitionModelPicker: 'SpeechRecognitionModelPicker' },
+    './ModelServiceListScreen': { __esModule: true, default: 'Services' }, './ModelServiceEditScreen': { __esModule: true, default: 'ServiceEdit' },
     './AuxiliaryModelCenterScreen': { __esModule: true, default: 'Center' }, './AuxiliaryModelPoolScreen': { __esModule: true, default: Pool },
     './AuxiliaryModelEditScreen': { __esModule: true, default: 'Edit' }, './SpeechModelEditScreen': { __esModule: true, default: 'SpeechEdit' },
     './TranslationModelEditScreen': { __esModule: true, default: 'TranslationEdit' },
@@ -330,16 +385,16 @@ try {
   const navigationCount = navigated.length;
   await renderer.act(async () => openSelection().props.onPress());
   assert.equal(choose('管理模型配置'), undefined, '列表中的选择不再提供多余管理跳转');
-  await renderer.act(async () => choose(tencentAsset.name).props.onPress());
+  await renderer.act(async () => screen.root.findByType('ModelPickerModal').props.onSelect(tencentAsset.id));
   assert.equal(await translationSettingsRepository.getModelId(), tencentAsset.id);
   assert.equal(navigated.length, navigationCount, '切换翻译配置无需页面跳转');
   await translation.translateMessageText({ text: '你好' });
   assert.equal(tencentCalls.at(-1).credentials.secretKey, 'existing-key', '列表选择立即用于真实翻译调用');
   await renderer.act(async () => openSelection().props.onPress());
-  await renderer.act(async () => choose('取消选择').props.onPress());
+  await renderer.act(async () => screen.root.findByType('ModelPickerModal').props.onClear());
   assert.equal((await selection.getTranslationModelSettings()).status, 'unconfigured');
   await renderer.act(async () => openSelection().props.onPress());
-  await renderer.act(async () => choose(pool.props.models.find((entry) => entry.id === 'translation_ai').name).props.onPress());
+  await renderer.act(async () => screen.root.findByType('ModelPickerModal').props.onSelect('translation_ai'));
   assert.equal(await translationSettingsRepository.getModelId(), 'translation_ai');
   pool.props.onAddModel();
   await renderer.act(async () => screen.update(React.createElement(navigator, { ...navigationProps, route: navigated.at(-1) })));

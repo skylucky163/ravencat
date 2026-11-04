@@ -255,49 +255,6 @@ export class SQLiteMcpServerConfigRepository implements McpServerConfigRepositor
     return committed ? this.getById(input.id) : null;
   }
 
-  async updateProtocolDiagnostics(input: {
-    id: string;
-    lastNegotiatedProtocolVersion: string | null;
-    lastProtocolEra: string | null;
-    endpointClass: string;
-    nowIso: string;
-  }): Promise<McpServerConfig | null> {
-    const db = databaseCoordinator.openTaskExecutor({ name: 'mcpTools.updateProtocolDiagnostics', feature: 'mcpTools', priority: 'runtime' });
-    await db.runAsync(
-      `UPDATE mcp_servers
-       SET last_negotiated_protocol_version = ?,
-           last_protocol_family = ?,
-           endpoint_class = ?,
-           updated_at = ?
-       WHERE id = ?`,
-      [
-        input.lastNegotiatedProtocolVersion,
-        input.lastProtocolEra,
-        input.endpointClass,
-        input.nowIso,
-        input.id,
-      ]
-    );
-    return this.getById(input.id);
-  }
-
-  async clearProtocolStateAndSnapshot(input: {
-    id: string;
-    nowIso: string;
-  }): Promise<McpServerConfig | null> {
-    const db = databaseCoordinator.openTaskExecutor({ name: 'mcpTools.clearProtocolStateAndSnapshot', feature: 'mcpTools', priority: 'runtime' });
-    await db.runAsync(
-      `UPDATE mcp_servers
-       SET last_negotiated_protocol_version = NULL,
-           last_protocol_family = NULL,
-           tool_snapshot_json = '{}',
-           updated_at = ?
-       WHERE id = ?`,
-      [input.nowIso, input.id]
-    );
-    return this.getById(input.id);
-  }
-
   async invalidateAndUpdateEndpoint(input: {
     id: string;
     name: string;

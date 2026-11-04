@@ -1,4 +1,5 @@
 import { chatMutationModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
+import { SCHEMAS } from './helpers/sqlite-bootstrap-fixture.mjs';
 /**
  * 会话列表置顶的持久化行为测试（真实仓储 / 真实迁移 / 真实 SQL）。
  *
@@ -62,6 +63,8 @@ const assistantLifecycleStubUrl = transpileToModuleUrl(`
   export const removeConversationWallpaperInTransaction = undefined;
   export const initializeAssistantAuxiliaryModelsInTransaction = undefined;
   export const auxiliaryModelRepository = undefined;
+  export const bindModelService = undefined, readModelService = undefined;
+  export const bindModelServiceInTransaction = undefined, readModelServiceConnection = undefined, getModelServiceConnection = undefined;
 `);
 
 function loadRepository(relativePath, extraReplacements = []) {
@@ -70,6 +73,9 @@ function loadRepository(relativePath, extraReplacements = []) {
   }).outputText
     .replaceAll(`from '@platform/persistence'`, `from '${persistenceStubUrl}'`)
     .replaceAll(`from '@features/profile'`, `from '${assistantLifecycleStubUrl}'`)
+    .replaceAll(`from '@features/assistants'`, `from '${assistantLifecycleStubUrl}'`)
+    .replaceAll(`from './SQLiteModelServiceRepository'`, `from '${assistantLifecycleStubUrl}'`)
+    .replaceAll(`from '../domain/ModelService'`, `from '${assistantLifecycleStubUrl}'`)
     .replaceAll(`from '@features/media'`, `from '${mediaStubUrl}'`);
   source = source.replaceAll(`from '../../messages/infrastructure/ChatMessageMutationSql'`, `from '${chatMutationModuleUrl}'`);
   for (const [from, to] of extraReplacements) {
@@ -208,6 +214,7 @@ function createDatabase({ withPinnedAt = true } = {}) {
     );
   `);
   installChatTimelineSchema(db);
+  db.exec(SCHEMAS.assistantProfileCovers);
   return db;
 }
 

@@ -52,9 +52,6 @@ export function createStyles(theme: PresentationTheme) {
       padding: theme.spacing.sm,
       marginRight: -theme.spacing.sm,
     },
-    poolItemTitleDisabled: {
-      color: theme.colors.text.tertiary,
-    },
     editContentContainer: {
       paddingBottom: theme.spacing.xl,
     },

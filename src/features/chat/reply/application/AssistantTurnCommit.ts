@@ -27,7 +27,7 @@ import type {
 } from './ChatReplyTypes';
 
 export interface AssistantTurnCommitPort {
-  /** 为持久展示绑定本次交付上下文；正式消息提交仍由 T3 独占。 */
+  /** 为持久展示绑定本次交付上下文；媒体部分输出与 T3 共享该提交 owner。 */
   configureSegmentDelivery?: (params: Pick<PersistCompletedAssistantReplyParams, 'aiConfig' | 'runtimeContext' | 'callbacks'>) => void;
   /** canonical 展示快照接缝；旁路提交不拥有 ConversationTurn 展示记录。 */
   timelineSink?: import('../agent/ChatAgentTimeline').AgentTimelineTransientSink;
@@ -61,9 +61,13 @@ export interface AssistantTurnCommitPort {
   }>;
   /**
    * true = Legacy：流式/工具链的中间产物（streaming 草稿、前言）允许直接落库；
-   * false = canonical：任何 assistant 文本只经 T3 单事务最终落库，中间不落库。
+   * false = canonical：普通正文只经 T3 最终落库；媒体部分输出由 commitAgentOutput 裁决。
    */
   readonly persistsIntermediates: boolean;
+  /** 图片／表情可在工具完成后提交；重写明确返回 deferred，仍随整轮原子替换。 */
+  commitAgentOutput?: (
+    params: PersistCompletedAssistantReplyParams & { item: ConversationTurnCommitItem }
+  ) => Promise<{ outcome: 'committed' | 'fence_failed' | 'deferred'; messages: ChatMessage[] }>;
   /**
    * run 是否仍保有提交资格。fence 是事务内的最终裁决；这里只表达
    * “本策略已 settled（已提交或已 fence 失败）”，供错误回复落库门控使用。

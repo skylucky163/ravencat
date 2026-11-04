@@ -120,8 +120,8 @@ export type RavenCatNativeHealth = {
   floatingServiceRunning: boolean;
   /** Overlay FGS：owner 是 Floating Interaction，不代表 Companion 在运行。 */
   overlayForegroundServiceRunning: boolean;
-  /** 一次 wake 执行期临时建立的前台执行；空闲时为 false。 */
-  companionExecutionForegroundRunning: boolean;
+  /** 应用总开关的持续后台保障，独立于日程是否正在执行。 */
+  applicationBackgroundRunning: boolean;
   visibleLivenessIndicatorRunning: boolean;
   companionRuntimeRunning: boolean;
   companionSchedulerActive: boolean;
@@ -239,7 +239,6 @@ declare class RavenCatFloatingLayerModule extends NativeModule {
   renameBubbleSkin(payload: { id: string; name: string }): Promise<RavenCatBubbleSkin>;
   deleteBubbleSkin(id: string): Promise<void>;
   selectBubbleSkin(id: string): Promise<RavenCatBubbleSkin>;
-  resolveBubbleSkinAsset(storageKey: string): Promise<string | null>;
   getBubbleSkinBackupSource(): Promise<RavenCatBubbleSkinBackupSource>;
   restoreBubbleSkinBackupSettings(settingsJson: string): Promise<void>;
   validateBubbleSkinBackupSettings(settingsJson: string, rootUri: string): Promise<void>;
@@ -345,11 +344,6 @@ export function deleteBubbleSkin(id: string): Promise<void> {
 
 export function selectBubbleSkin(id: string): Promise<RavenCatBubbleSkin> {
   return RavenCatFloatingLayer.selectBubbleSkin(id);
-}
-
-/** 将 native-bubble-skin 的 backing-relative 文件名解析为 file:// localUri。 */
-export function resolveBubbleSkinAsset(storageKey: string): Promise<string | null> {
-  return RavenCatFloatingLayer.resolveBubbleSkinAsset(storageKey);
 }
 
 export function getBubbleSkinBackupSource(): Promise<RavenCatBubbleSkinBackupSource> {

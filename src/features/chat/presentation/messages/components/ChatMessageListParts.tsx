@@ -1,5 +1,6 @@
 /** 提供消息列表项、可触摸气泡及加载控件等列表子组件。 */
 
+import { getMessageSharedMoment, getMessageSharedRecord, parseMessageMetadata } from '../../../messages/domain/chatMessageMetadata';
 import React, { memo, useCallback, useMemo } from 'react';
 import {
   View,
@@ -22,10 +23,7 @@ import type {
   ChatAttachment,
   StickerMessageSnapshot,
 } from '@features/chat/messages/domain';
-import {
-  getMessageSharedRecord,
-  parseMessageMetadata,
-} from '../../../messages/domain/chatMessageMetadata';
+
 import {
   areChatMessagesEquivalent,
   areResolvedAIIdentitiesEquivalent,
@@ -59,6 +57,7 @@ interface MessageListItemProps {
   selectionDisabled?: boolean;
   onToggleSelection?: (key: string) => void;
   isVoiceTranscriptExpanded?: boolean;
+  onOpenAssistantProfile?: (aiId: string) => void;
   onMessageLongPress?: (message: ChatMessage, position: { x: number; y: number }) => void;
   onRetryMessage?: (messageId: number) => void;
   onHideTranslation?: (messageId: number) => void;
@@ -100,6 +99,7 @@ export const MessageListItem = memo(function MessageListItem({
   onToggleSelection,
   isVoiceTranscriptExpanded,
   onMessageLongPress,
+  onOpenAssistantProfile,
   onRetryMessage,
   onHideTranslation,
   onPreviewFile,
@@ -194,6 +194,7 @@ export const MessageListItem = memo(function MessageListItem({
           showAssistantName={showAssistantName}
           isSelected={isSelected}
           isVoiceTranscriptExpanded={isVoiceTranscriptExpanded}
+          onOpenAssistantProfile={selectionMode ? undefined : onOpenAssistantProfile}
           onMessageLongPress={onMessageLongPress}
           onRetryMessage={onRetryMessage}
           onHideTranslation={onHideTranslation}
@@ -270,6 +271,7 @@ interface TouchableMessageBubbleProps {
   showAssistantName?: boolean;
   isSelected?: boolean;
   isVoiceTranscriptExpanded?: boolean;
+  onOpenAssistantProfile?: (aiId: string) => void;
   onMessageLongPress?: (message: ChatMessage, position: { x: number; y: number }) => void;
   onRetryMessage?: (messageId: number) => void;
   onHideTranslation?: (messageId: number) => void;
@@ -316,6 +318,7 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
   isSelected,
   isVoiceTranscriptExpanded,
   onMessageLongPress,
+  onOpenAssistantProfile,
   onRetryMessage,
   onHideTranslation,
   onPreviewFile,
@@ -410,9 +413,11 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
     <View onLayout={layoutProbeHandler}>
       <MessageBubble
         sharedRecord={getMessageSharedRecord(msg)}
+        sharedMoment={getMessageSharedMoment(msg)}
         sharedComment={msg.text}
         text={voice ? msg.text : bubbleText}
         messageId={msg.id}
+        clientMessageId={msg.clientMessageId}
         isMe={msg.isMe}
         senderType={msg.senderType}
         tokensUsed={displayTokensUsed}
@@ -421,6 +426,7 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
         cachedTokens={parseMessageMetadata(msg)?.cachedTokens}
         replyToText={msg.replyToText}
         replyQuote={parseMessageMetadata(msg)?.replyQuote}
+        onOpenAssistantProfile={onOpenAssistantProfile}
         avatar={resolvedAIIdentity.avatar as string | null}
         userAvatar={userAvatar as string | null}
         aiId={resolvedAIIdentity.aiId}
@@ -523,6 +529,7 @@ function areMessageListItemEqual(
     prevProps.userAvatar === nextProps.userAvatar &&
     prevProps.userName === nextProps.userName &&
     prevProps.showAssistantName === nextProps.showAssistantName &&
+    prevProps.onOpenAssistantProfile === nextProps.onOpenAssistantProfile &&
     prevProps.onMessageLongPress === nextProps.onMessageLongPress &&
     prevProps.onRetryMessage === nextProps.onRetryMessage &&
     prevProps.onHideTranslation === nextProps.onHideTranslation &&
@@ -564,6 +571,7 @@ function areTouchableMessageBubbleEqual(
     prevProps.userAvatar === nextProps.userAvatar &&
     prevProps.userName === nextProps.userName &&
     prevProps.showAssistantName === nextProps.showAssistantName &&
+    prevProps.onOpenAssistantProfile === nextProps.onOpenAssistantProfile &&
     prevProps.onMessageLongPress === nextProps.onMessageLongPress &&
     prevProps.onRetryMessage === nextProps.onRetryMessage &&
     prevProps.onHideTranslation === nextProps.onHideTranslation &&

@@ -65,15 +65,6 @@ export class SQLiteMcpToolGrantRepository implements McpToolGrantRepository {
     }
     return grant;
   }
-
-  async deleteByServer(serverId: string): Promise<number> {
-    const db = databaseCoordinator.openTaskExecutor({ name: 'mcpTools.deleteByServer', feature: 'mcpTools', priority: 'runtime' });
-    const result = await db.runAsync(
-      'DELETE FROM mcp_tool_grants WHERE server_id = ?',
-      [serverId]
-    );
-    return result.changes;
-  }
 }
 
 export const sqliteMcpToolGrantRepository = new SQLiteMcpToolGrantRepository();

@@ -320,8 +320,7 @@ function createResetHarness({
       },
       '@platform/ai': {
         aiHttpDiagnostics: {
-          setEnabled: async (enabled) => {
-            assert.equal(enabled, false, '恢复出厂必须关闭 HTTP 捕获并清除记录');
+          reset: async () => {
             record('httpDiagnostics');
             if (httpDiagnosticsFailure) {
               throw httpDiagnosticsFailure;
@@ -330,6 +329,7 @@ function createResetHarness({
         },
       },
       '@platform/device': {
+        setBackgroundRuntimeEnabled: async enabled => { assert.equal(enabled, false); record('backgroundRuntime'); },
         withMediaFileLifetime: loadTypeScriptModuleWithMocks('src/platform/device/MediaFileLifetime.ts', {}).withMediaFileLifetime,
         clearDeviceObserverDataForFactoryReset: async () => record('deviceObserver'),
         clearNativeNotificationDataForFactoryReset: async () => record('notification'),
@@ -387,6 +387,7 @@ function createResetHarness({
   await runReset();
 
   const quiesce = calls.indexOf('deviceControlQuiesce');
+  assert.ok(calls.includes('backgroundRuntime'), '恢复出厂必须关闭独立后台总开关');
   const clearDb = calls.indexOf('clearDB');
   const cleanupLegacy = calls.indexOf('cleanupLegacyDatabases');
   const authorityStart = calls.indexOf('hostAuthority:start');
@@ -406,7 +407,7 @@ function createResetHarness({
   assert.ok(calls.indexOf('voiceRecordingCache') < clearDb, '原生录音 cache 必须先于 clearDB');
   assert.ok(calls.indexOf('media') > clearDb, 'MediaAsset 私有 backing 必须在数据库清空后删除');
   assert.ok(calls.indexOf('speechCache') > clearDb, '语音 cache 必须在数据库清空后删除');
-  assert.ok(calls.indexOf('httpDiagnostics') > clearDb, '恢复出厂必须关闭 HTTP 诊断并清除缓存');
+  assert.ok(calls.indexOf('httpDiagnostics') > clearDb, '恢复出厂必须重置 HTTP 诊断开关并清除记录');
 }
 
 {
@@ -463,13 +464,13 @@ function createResetHarness({
   assert.equal(
     calls.includes('httpDiagnostics'),
     true,
-    'AsyncStorage.clear 失败不得跳过 HTTP 诊断关闭及缓存清理',
+    'AsyncStorage.clear 失败不得跳过 HTTP 诊断重置及记录清理',
   );
   assert.equal(calls.includes('deviceControlResume'), true, '失败后仍必须释放 command gate');
 }
 
 {
-  const httpDiagnosticsError = new Error('HTTP diagnostics cache deletion failed');
+  const httpDiagnosticsError = new Error('HTTP diagnostics record deletion failed');
   const { calls, resetApplicationData: runReset } = createResetHarness({
     httpDiagnosticsFailure: httpDiagnosticsError,
   });

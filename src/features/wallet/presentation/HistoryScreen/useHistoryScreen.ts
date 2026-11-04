@@ -1,25 +1,18 @@
 /**
- * @fileoverview HistoryScreen 状态逻辑 Hook
+ * @fileoverview HistoryScreen 状态逻辑
+ *
+ * 范围窗口只向后追加：每页只查询尚未加载的范围；首屏不足一屏时由 CardList 继续要下一页。
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { getLedgerRangeSummary } from '../../composition';
 import {
-  getWeekDays,
-  getMonday,
-  getMonthWeeks,
-  getYearMonths,
+  buildHistoryRanges,
   getTimeRangeKey,
-  addDays,
-  addMonths,
-  addYears,
+  previousHistoryCursor,
 } from '../utils/timeUtils';
-import type {
-  ViewType,
-  TimeRange,
-  SummaryData,
-} from './types';
+import type { ViewType, TimeRange, SummaryData } from '../historyTypes';
 
 interface UseHistoryScreenOptions {
   initialView: ViewType;
@@ -33,158 +26,157 @@ export function useHistoryScreen({
   onSelectTimeRange,
 }: UseHistoryScreenOptions) {
   const [currentView, setCurrentView] = useState<ViewType>(initialView);
-  const [currentDate, setCurrentDate] = useState<Date>(initialDate);
-  const [loading, setLoading] = useState(false);
+  const [timeRanges, setTimeRanges] = useState<TimeRange[]>(() =>
+    buildHistoryRanges(initialView, initialDate)
+  );
   const [summaries, setSummaries] = useState<Map<string, SummaryData>>(new Map());
-  
-  // 根据视图计算时间范围列表
-  const timeRanges = useMemo(() => {
-    switch (currentView) {
-      case 'week': {
-        const ranges: TimeRange[] = [];
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+  const [loading, setLoading] = useState(false);
 
-        const target = new Date(currentDate);
-        target.setHours(0, 0, 0, 0);
+  // 窗口游标、已展开范围、单飞标记和换代标记都要同步读取，不能等下一次渲染。
+  const rangesRef = useRef(timeRanges);
+  const viewRef = useRef(initialView);
+  const cursorRef = useRef(initialDate);
+  const rangeKeysRef = useRef(new Set(timeRanges.map(getTimeRangeKey)));
+  const pendingRef = useRef(false);
+  const focusedRef = useRef(false);
+  const refreshNeededRef = useRef(true);
+  const exhaustedRef = useRef(false);
+  const autoFillStoppedRef = useRef(false);
+  const epochRef = useRef(0);
 
-        let cursor = new Date(today);
-        while (getMonday(cursor).getTime() >= getMonday(target).getTime()) {
-          ranges.push(...getWeekDays(cursor));
-          cursor = addDays(getMonday(cursor), -1);
-          cursor.setHours(0, 0, 0, 0);
-        }
-
-        return ranges;
-      }
-      case 'month': {
-        const ranges: TimeRange[] = [];
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const target = new Date(currentDate);
-        target.setHours(0, 0, 0, 0);
-
-        let cursor = new Date(today.getFullYear(), today.getMonth(), 1);
-        const targetMonthStart = new Date(target.getFullYear(), target.getMonth(), 1);
-
-        while (cursor.getTime() >= targetMonthStart.getTime()) {
-          ranges.push(...getMonthWeeks(cursor.getFullYear(), cursor.getMonth() + 1));
-          cursor = addMonths(cursor, -1);
-          cursor = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-        }
-
-        return ranges;
-      }
-      case 'year':
-        return getYearMonths(currentDate.getFullYear());
-      default:
-        return [];
-    }
-  }, [currentView, currentDate]);
-
-  // 加载数据
-  const loadData = useCallback(async () => {
+  /** 只查询传入范围并按 key 合并；换代后的响应直接丢弃，不能覆盖新视图。 */
+  const loadRanges = useCallback(async (ranges: TimeRange[], refresh = false) => {
+    const epoch = epochRef.current;
+    pendingRef.current = true;
     setLoading(true);
     try {
-      const newDataArray = [];
-      for (const range of timeRanges) {
-          const data = await getLedgerRangeSummary(
-            range.startDate,
-            range.endDate
-          );
-          newDataArray.push({
-            key: getTimeRangeKey(range),
-            value: {
-              timeRange: range,
-              ...data,
-            },
-          });
-      }
-      
-      setSummaries(new Map(newDataArray.map(({ key, value }) => [key, value])));
+      const entries = await Promise.all(
+        ranges.map(async (range) => {
+          const summary = await getLedgerRangeSummary(range.startDate, range.endDate);
+          return [getTimeRangeKey(range), { timeRange: range, ...summary }] as const;
+        })
+      );
+      if (epoch !== epochRef.current) return false;
+      if (refresh) refreshNeededRef.current = false;
+      setSummaries((previous) => new Map([...previous, ...entries]));
+      return true;
+    } catch (error) {
+      if (epoch !== epochRef.current) return false;
+      // 当前查询失败后暂停自动补齐；显式触底仍可重试，旧视图的失败不影响新视图。
+      autoFillStoppedRef.current = true;
+      console.error('[WalletHistory] Failed to load ranges:', error);
+      return false;
     } finally {
-      setLoading(false);
+      if (epoch === epochRef.current) {
+        pendingRef.current = false;
+        setLoading(false);
+      }
     }
-  }, [timeRanges]);
-
-  // 从详情编辑或 AI 聊天返回后重新查询，不能继续使用旧统计缓存。
-  useFocusEffect(useCallback(() => {
-    void loadData();
-  }, [loadData]));
-
-  // 切换视图
-  const handleViewChange = useCallback((view: ViewType) => {
-    setCurrentView(view);
-    setCurrentDate(new Date());
   }, []);
 
-  // 加载更多（上一周/月/年）
+  /** 回到指定视图的第一页，并换上新的换代标记。 */
+  const resetToView = useCallback(
+    (view: ViewType) => {
+      epochRef.current += 1;
+      pendingRef.current = false;
+      exhaustedRef.current = false;
+      autoFillStoppedRef.current = false;
+      refreshNeededRef.current = true;
+      viewRef.current = view;
+
+      const cursor = new Date();
+      cursorRef.current = cursor;
+      const ranges = buildHistoryRanges(view, cursor);
+      rangeKeysRef.current = new Set(ranges.map(getTimeRangeKey));
+      rangesRef.current = ranges;
+
+      setTimeRanges(ranges);
+      setSummaries(new Map());
+      void loadRanges(ranges, true);
+    },
+    [loadRanges]
+  );
+
+  /** 追加历史一页：游标前进一个周期，只请求尚未加载的范围。 */
+  const appendPage = useCallback(async () => {
+    if (!focusedRef.current || pendingRef.current || exhaustedRef.current) return;
+    if (refreshNeededRef.current) {
+      await loadRanges(rangesRef.current, true);
+      return;
+    }
+
+    const epoch = epochRef.current;
+    const nextCursor = previousHistoryCursor(viewRef.current, cursorRef.current);
+    const fresh = buildHistoryRanges(viewRef.current, nextCursor).filter(
+      (range) => !rangeKeysRef.current.has(getTimeRangeKey(range))
+    );
+    if (fresh.length === 0) {
+      // 到达该视图能表达的边界；继续请求只会得到同一批范围。
+      exhaustedRef.current = true;
+      return;
+    }
+
+    if (!(await loadRanges(fresh))) return;
+    if (epoch !== epochRef.current) return;
+
+    for (const range of fresh) rangeKeysRef.current.add(getTimeRangeKey(range));
+    cursorRef.current = nextCursor;
+    rangesRef.current = [...rangesRef.current, ...fresh];
+    setTimeRanges(rangesRef.current);
+  }, [loadRanges]);
+
+  /** 重新获得焦点时刷新已展示范围；不改变已加载的窗口。 */
+  // 从详情编辑或 AI 聊天返回后重新查询，不能继续使用旧统计缓存。
+  useFocusEffect(useCallback(() => {
+    focusedRef.current = true;
+    refreshNeededRef.current = true;
+    autoFillStoppedRef.current = false;
+    void loadRanges(rangesRef.current, true);
+    // 焦点拥有查询接纳与响应资格：离开或卸载即撤销，返回时不等待旧请求。
+    return () => {
+      focusedRef.current = false;
+      epochRef.current += 1;
+      pendingRef.current = false;
+    };
+  }, [loadRanges]));
+
+  const handleViewChange = useCallback(
+    (view: ViewType) => {
+      setCurrentView(view);
+      resetToView(view);
+    },
+    [resetToView]
+  );
+
   const handleLoadMore = useCallback(() => {
-    let newDate = new Date(currentDate);
-    switch (currentView) {
-      case 'week':
-        newDate = addDays(newDate, -7);
-        break;
-      case 'month':
-        newDate = addMonths(newDate, -1);
-        break;
-      case 'year':
-        newDate = addYears(newDate, -1);
-        break;
-    }
-    setCurrentDate(newDate);
-  }, [currentView, currentDate]);
+    autoFillStoppedRef.current = false;
+    void appendPage();
+  }, [appendPage]);
 
-  // 加载更新（下一周/月/年）
-  const handleLoadNewer = useCallback(() => {
-    let newDate = new Date(currentDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    switch (currentView) {
-      case 'week':
-        newDate = addDays(newDate, 7);
-        break;
-      case 'month':
-        newDate = addMonths(newDate, 1);
-        break;
-      case 'year':
-        newDate = addYears(newDate, 1);
-        break;
-    }
+  // 首屏内容不足一屏时由列表继续要下一页，直到填满或到达边界。
+  const handleContentShort = useCallback(() => {
+    if (autoFillStoppedRef.current) return;
+    void appendPage();
+  }, [appendPage]);
 
-    newDate.setHours(0, 0, 0, 0);
-    
-    // 不允许超过今天
-    if (newDate <= today) {
-      setCurrentDate(newDate);
-    }
-  }, [currentView, currentDate]);
-
-  // 选择卡片
-  const handleSelectCard = useCallback((timeRange: TimeRange) => {
-    const summary = summaries.get(getTimeRangeKey(timeRange));
-    if (summary) {
-      onSelectTimeRange(timeRange, summary);
-    }
-  }, [summaries, onSelectTimeRange]);
-
-  // 获取卡片数据
-  const getCardData = useCallback((range: TimeRange) => {
-    return summaries.get(getTimeRangeKey(range));
-  }, [summaries]);
+  const handleSelectCard = useCallback(
+    (timeRange: TimeRange) => {
+      const summary = summaries.get(getTimeRangeKey(timeRange));
+      if (summary) {
+        onSelectTimeRange(timeRange, summary);
+      }
+    },
+    [summaries, onSelectTimeRange]
+  );
 
   return {
     currentView,
-    currentDate,
     timeRanges,
     loading,
     summaries,
     handleViewChange,
     handleLoadMore,
-    handleLoadNewer,
+    handleContentShort,
     handleSelectCard,
-    getCardData,
   };
 }

@@ -1,7 +1,7 @@
 /** 定义消息气泡及其主题变体的基础布局样式。 */
 
 import { Dimensions, StyleSheet } from 'react-native';
-import { isMoonKimiTheme, isPaperNoteTheme } from '@shared/theme';
+import { isMoonKimiTheme } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
 import { createMessageTextStyles } from './textStyles';
 import { createPaperNoteMessageStyles } from './paperNoteStyles';
@@ -12,7 +12,6 @@ export const USER_TEXT_COLLAPSE_THRESHOLD = 500;
 
 export function createMessageBubbleStyles(theme: PresentationTheme) {
   const isMoonKimi = isMoonKimiTheme(theme);
-  const isPaperNote = isPaperNoteTheme(theme);
 
   const styles = StyleSheet.create({
     container: {
@@ -103,13 +102,13 @@ export function createMessageBubbleStyles(theme: PresentationTheme) {
       flexShrink: 1,
       minWidth: 0,
     },
-    wideMarkdownContainer: {
+    fullWidthContainer: {
       width: '100%',
     },
-    wideMarkdownBubbleWrapper: {
+    fullWidthBubbleWrapper: {
       flex: 1,
     },
-    wideMarkdownBubble: {
+    fullWidthBubble: {
       width: '100%',
     },
     moonKimiUserBubbleWrapper: {
@@ -149,6 +148,11 @@ export function createMessageBubbleStyles(theme: PresentationTheme) {
       borderRadius: 0,
       backgroundColor: 'transparent',
       maxWidth: 220,
+    },
+    // 分享卡片自己持有内容留白；玻璃层只负责材质，不再叠加正文气泡的内边距。
+    sharedCardGlassSurface: {
+      paddingVertical: 0,
+      paddingHorizontal: 0,
     },
     attachmentsContainer: {
       alignSelf: 'flex-start',
@@ -246,26 +250,6 @@ export function createMessageBubbleStyles(theme: PresentationTheme) {
     toolStatusText: {
       fontSize: 11,
       textAlign: 'left',
-    },
-    replyContainer: {
-      marginTop: 6,
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-      borderRadius: theme.radius.sm,
-      maxWidth: 260,
-    },
-    myReplyContainer: {
-      alignSelf: isPaperNote ? 'flex-start' : 'flex-end',
-      backgroundColor: theme.colors.chat.quote,
-    },
-    aiReplyContainer: {
-      alignSelf: 'flex-start',
-      backgroundColor: theme.colors.chat.quote,
-    },
-    replyText: {
-      fontSize: 13,
-      lineHeight: 18,
-      color: theme.colors.text.secondary,
     },
     reasoningHeader: {
       flexDirection: 'row',

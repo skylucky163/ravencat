@@ -11,6 +11,7 @@ export function getMaxTokensInputValue(value: number | null): string {
   return value === null ? UNLIMITED_MAX_TOKENS : String(value);
 }
 export interface ModelSettingsDraft {
+  serviceConfigId: string;
   apiBaseUrl: string;
   apiKey: string;
   selectedModel: string;
@@ -22,6 +23,7 @@ export interface ModelSettingsDraft {
 }
 export function getModelSettingsDraft(ai: AIProfile): ModelSettingsDraft {
   return {
+    serviceConfigId: ai.serviceConfigId ?? '',
     apiBaseUrl: ai.apiBaseUrl ?? '', apiKey: ai.apiKey ?? '', selectedModel: ai.model,
     tempInput: ai.temperature === null ? '' : String(ai.temperature),
     topPInput: ai.topP === null ? '' : String(ai.topP), maxTokens: getMaxTokensInputValue(ai.maxTokens),
@@ -47,6 +49,8 @@ export function parseModelSettingsDraft(draft: ModelSettingsDraft, changed: (key
         ? { value: null, error: null } : readDraftInteger(draft.maxTokens, 'Max Tokens');
       if (parsed.error) { errors[key] = parsed.error; continue; }
       patch.maxTokens = parsed.value;
+    } else if (key === 'serviceConfigId') {
+      patch.serviceConfigId = draft.serviceConfigId || null;
     } else if (key === 'selectedModel') {
       patch.model = draft[key].trim();
     } else if (key === 'apiBaseUrl' || key === 'apiKey') {

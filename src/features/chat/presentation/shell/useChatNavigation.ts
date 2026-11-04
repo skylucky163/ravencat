@@ -47,8 +47,6 @@ export function useChatNavigation() {
     handleCloseMenu,
     handleBackToMenu,
     openProtocol: () => openSubScreen('protocol'),
-    openModelSettings: () => openSubScreen('modelSettings'),
-    openChatSettings: () => openSubScreen('chatSettings'),
     openFilePreview,
     closeFilePreview,
   };

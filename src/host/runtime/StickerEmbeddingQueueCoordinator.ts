@@ -5,6 +5,9 @@
  */
 
 import { InteractionManager } from 'react-native';
+import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
+import { subscribeAuxiliaryModelsChanged } from '@features/assistants';
+import { syncStickerEmbeddingModel } from '@features/stickers/composition';
 import {
   generateStickerEmbeddingBatch,
   STICKER_EMBEDDING_BATCH_SIZE,
@@ -17,6 +20,30 @@ let configured = false;
 let scheduled: ScheduledInteraction | null = null;
 let running: Promise<void> | null = null;
 let activeAbortController: AbortController | null = null;
+const maintenanceControllers = new Set<AbortController>();
+let active = false;
+let refreshingModel = 0;
+let modelRefresh: Promise<void> = Promise.resolve();
+
+/** 模型选择和整批发布共享维护边界；取消自动批次后等待它退出。 */
+export function updateStickerEmbeddingModel<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  refreshingModel++;
+  activeAbortController?.abort();
+  maintenanceControllers.forEach(value => value.abort());
+  scheduled?.cancel(); scheduled = null;
+  const controller = new AbortController();
+  maintenanceControllers.add(controller);
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
+  const result = modelRefresh.then(async () => {
+    if (running) await running;
+    throwIfAbortSignalAborted(controller.signal);
+    return operation(controller.signal);
+  });
+  modelRefresh = result.then(() => {}, () => {});
+  return result.finally(() => { maintenanceControllers.delete(controller); signal?.removeEventListener('abort', abort); refreshingModel--; requestStickerEmbeddingRun(); });
+}
 function settleRunning(task: Promise<number>): void {
   running = task.then(
     (embeddedCount) => {
@@ -36,11 +63,12 @@ async function runOneEmbeddingBatch(): Promise<number> {
   const abortController = new AbortController();
   activeAbortController = abortController;
   try {
-    const { embeddedCount } = await generateStickerEmbeddingBatch({
+    const { embeddedCount, failedCount = 0 } = await generateStickerEmbeddingBatch({
       batchSize: STICKER_EMBEDDING_BATCH_SIZE,
       signal: abortController.signal,
     });
-    return embeddedCount;
+    // 已保存的失败项不会再次领取；继续处理队列里的其他表情。
+    return embeddedCount + failedCount;
   } finally {
     if (activeAbortController === abortController) activeAbortController = null;
   }
@@ -50,10 +78,13 @@ export function configureStickerEmbeddingQueue(): void {
   if (configured) return;
   configured = true;
   subscribeStickerEmbeddingPending(requestStickerEmbeddingRun);
+  subscribeAuxiliaryModelsChanged(() => {
+    void updateStickerEmbeddingModel(syncStickerEmbeddingModel).catch(error => console.error('[Sticker] 向量模型刷新失败', error));
+  });
 }
 
 export function requestStickerEmbeddingRun(): void {
-  if (!configured || scheduled || running) return;
+  if (!configured || !active || refreshingModel || scheduled || running) return;
   scheduled = InteractionManager.runAfterInteractions(() => {
     scheduled = null;
     settleRunning(runOneEmbeddingBatch());
@@ -61,11 +92,13 @@ export function requestStickerEmbeddingRun(): void {
 }
 
 /** App 退后台 / 失去前台时中止当前批次；已 upsert 的向量是完整事实，无需回滚。 */
-export function setStickerEmbeddingForegroundActive(active: boolean): void {
-  if (!active) {
+export function setStickerEmbeddingForegroundActive(value: boolean): void {
+  active = value;
+  if (!value) {
     scheduled?.cancel();
     scheduled = null;
     activeAbortController?.abort();
+    maintenanceControllers.forEach(value => value.abort());
   }
 }
 
@@ -73,4 +106,5 @@ export function setStickerEmbeddingForegroundActive(active: boolean): void {
 export async function stopStickerEmbeddingQueueForReset(): Promise<void> {
   setStickerEmbeddingForegroundActive(false);
   if (running) await running;
+  await modelRefresh;
 }

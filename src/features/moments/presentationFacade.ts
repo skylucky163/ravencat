@@ -31,6 +31,15 @@ import {
   unlikeMomentAsUser,
 } from './application/UserMomentCommands';
 import type { MomentAudienceCandidate } from './presentation/MomentAudienceDraft';
+import { createMomentShareSnapshot } from './application/ShareMoment';
+
+export function createUserMomentShare(momentId: string) {
+  return createMomentShareSnapshot(momentRepository, momentId);
+}
+
+export function createAgentMomentShare(momentId: string, agentId: string) {
+  return createMomentShareSnapshot(momentRepository, momentId, agentId);
+}
 
 /** 读模型中的 actor：稳定身份 + 解析出的当前展示身份。 */
 export interface MomentRecordActor {
@@ -66,6 +75,7 @@ export interface MomentRecordMedia {
 
 export interface MomentRecord extends MomentRecordActor {
   id: string;
+  assistantId: string | null;
   content: string;
   /** 用户手填的显示地点；没有地点时是 null，UI 不占空间也不制造伪位置。 */
   locationLabel: string | null;
@@ -91,6 +101,15 @@ export async function listMomentRecords(
     loadMomentActorDirectory(profile, 'user'),
   ]);
 
+  return projectMomentRecords(moments, directory);
+}
+
+export async function getMomentRecord(momentId: string): Promise<MomentRecord | null> {
+  const [moment, directory] = await Promise.all([momentRepository.getMomentDetailForUser(momentId), loadMomentActorDirectory(undefined, 'user')]);
+  return moment ? projectMomentRecords([moment], directory)[0] : null;
+}
+
+function projectMomentRecords(moments: import('./domain/MomentRepository').MomentTimelineEntry[], directory: import('./application/MomentActorResolver').MomentActorDirectory): MomentRecord[] {
   const records: MomentRecord[] = [];
   for (const moment of moments) {
     const { comments, likes, media } = moment;
@@ -115,6 +134,7 @@ export async function listMomentRecords(
 
     records.push({
       id: moment.id,
+      assistantId: momentActor.assistantId,
       actorType: momentActor.actorType,
       actorId: momentActor.actorId,
       userName: momentActor.displayName,

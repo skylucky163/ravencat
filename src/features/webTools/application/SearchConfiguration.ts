@@ -17,7 +17,7 @@ export async function readSearchConfiguration() {
   // 密钥仅供用户配置页回填；模型执行的 observation 不使用这个编辑视图。
   const sources = await Promise.all(settings.sources.map(async source => {
     const apiKey = source.credentialRef === null ? null : await runtime.credentials.read(source.credentialRef);
-    return { engine: source.engine, enabled: source.enabled,
+    return { engine: source.engine,
       configured: !SEARCH_SOURCES.find(item => item.engine === source.engine)!.needsKey || apiKey !== null,
       apiKey: apiKey ?? '' };
   }));

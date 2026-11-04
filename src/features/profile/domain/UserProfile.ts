@@ -30,11 +30,9 @@ export interface UpdateUserProfileInput {
   other?: string;
   signature?: string;
   avatar?: string | null;
-  /** 提交 canonical 头像时由 owner 同时清空 legacy avatar。 */
-  avatarMediaAssetId?: string | null;
 }
 
-interface UserProfileRow {
+export interface UserProfileRow {
   id: string;
   name: string;
   gender: string;
@@ -55,21 +53,9 @@ function normalizeName(name?: string | null): string {
   return trimmed || DEFAULT_SELF_USER_NAME;
 }
 
-function normalizeAvatar(avatar?: string | null): string | null {
-  if (avatar === null || avatar === undefined) return null;
-  const trimmed = String(avatar).trim();
-  return trimmed || null;
-}
-
-function normalizeAvatarMediaAssetId(assetId?: string | null): string | null {
-  if (assetId === null || assetId === undefined) return null;
-  const trimmed = String(assetId).trim();
-  return trimmed || null;
-}
-
-function normalizeMomentsCover(momentsCover?: string | null): string | null {
-  if (momentsCover === null || momentsCover === undefined) return null;
-  const trimmed = String(momentsCover).trim();
+function normalizeNullableString(value?: string | null): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
   return trimmed || null;
 }
 
@@ -83,10 +69,10 @@ export function createUserProfile(data: Partial<UserProfile> = {}): UserProfile 
     region: data.region ?? '',
     other: data.other ?? '',
     signature: data.signature ?? '',
-    avatar: normalizeAvatar(data.avatar),
-    avatarMediaAssetId: normalizeAvatarMediaAssetId(data.avatarMediaAssetId),
-    momentsCover: normalizeMomentsCover(data.momentsCover),
-    momentsCoverMediaAssetId: normalizeAvatarMediaAssetId(data.momentsCoverMediaAssetId),
+    avatar: normalizeNullableString(data.avatar),
+    avatarMediaAssetId: normalizeNullableString(data.avatarMediaAssetId),
+    momentsCover: normalizeNullableString(data.momentsCover),
+    momentsCoverMediaAssetId: normalizeNullableString(data.momentsCoverMediaAssetId),
     updatedAt: data.updatedAt || new Date().toISOString(),
   };
 }
@@ -102,6 +88,9 @@ export function createDefaultUserProfile(now = new Date().toISOString()): UserPr
   });
 }
 
+/** 展示占位资料复用业务默认值，固定时间戳使其不表达真实资料更新时间。 */
+export const DEFAULT_USER_PROFILE = createDefaultUserProfile(new Date(0).toISOString());
+
 export function createUserProfileFromRow(row: UserProfileRow | null | undefined): UserProfile | null {
   if (!row) return null;
 
@@ -114,10 +103,10 @@ export function createUserProfileFromRow(row: UserProfileRow | null | undefined)
     region: row.region,
     other: row.other,
     signature: row.signature,
-    avatar: row.avatar || null,
-    avatarMediaAssetId: row.avatar_media_asset_id || null,
-    momentsCover: row.moments_cover || null,
-    momentsCoverMediaAssetId: row.moments_cover_media_asset_id || null,
+    avatar: row.avatar,
+    avatarMediaAssetId: row.avatar_media_asset_id,
+    momentsCover: row.moments_cover,
+    momentsCoverMediaAssetId: row.moments_cover_media_asset_id,
     updatedAt: row.updated_at,
   });
 }

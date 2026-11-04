@@ -3,16 +3,6 @@ import type { WalletRecord } from '../domain/WalletRecord';
 import { getRecordsSummary } from '../domain/WalletRecord';
 import type { ILedgerRepository } from '../domain/LedgerRepository';
 
-export interface LedgerAIReplyPayload {
-  aiId: string;
-  agentId: string;
-  aiName: string;
-  aiAvatar: string | null;
-  sessionId: string;
-  message: string;
-  newRecords: WalletRecord[];
-}
-
 export interface TriggerLedgerAIReplyParams {
   aiProfile: AIProfile;
   newRecords: WalletRecord[];
@@ -20,7 +10,6 @@ export interface TriggerLedgerAIReplyParams {
 
 export interface TriggerLedgerAIReplyResult {
   success: boolean;
-  payload: LedgerAIReplyPayload | null;
   error: string | null;
 }
 
@@ -53,17 +42,17 @@ export async function triggerLedgerAIReply(
   const { aiProfile, newRecords } = params;
 
   if (newRecords.length === 0) {
-    return { success: false, payload: null, error: '缺少新记账记录' };
+    return { success: false, error: '缺少新记账记录' };
   }
 
   if (!aiProfile.apiKey || !aiProfile.model) {
-    return { success: false, payload: null, error: '记账 AI 缺少模型或 API Key 配置' };
+    return { success: false, error: '记账 AI 缺少模型或 API Key 配置' };
   }
 
   await deps.hostRepository.cleanupExpiredBlocks();
   const blockedState = await deps.hostRepository.isAIBlocked(aiProfile.id);
   if (aiProfile.isBlocked || blockedState.isBlocked) {
-    return { success: false, payload: null, error: '记账 AI 当前已被拉黑，已跳过自动回复' };
+    return { success: false, error: '记账 AI 当前已被拉黑，已跳过自动回复' };
   }
 
   const triggerData = await buildLedgerTriggerData(newRecords, deps.ledgerRepository);
@@ -72,7 +61,6 @@ export async function triggerLedgerAIReply(
   if (chatReply.error || !chatReply.sessionId) {
     return {
       success: false,
-      payload: null,
       error: chatReply.error || '无法为记账 AI 准备会话',
     };
   }
@@ -80,22 +68,12 @@ export async function triggerLedgerAIReply(
   if (!chatReply.text.trim()) {
     return {
       success: false,
-      payload: null,
       error: '记账 AI 未生成可用回复',
     };
   }
 
   return {
     success: true,
-    payload: {
-      aiId: aiProfile.id,
-      agentId: aiProfile.agentId,
-      aiName: aiProfile.name,
-      aiAvatar: aiProfile.avatar ?? null,
-      sessionId: chatReply.sessionId,
-      message: chatReply.text,
-      newRecords,
-    },
     error: null,
   };
 }
@@ -133,7 +111,7 @@ async function buildLedgerTriggerData(
     '',
     '【今日较早记录｜低优先级参考】',
     earlierRecords.length > 0
-      ? `${getRecordsSummary(earlierRecords)}\n${formatCompactRecords(earlierRecords)}`
+      ? getRecordsSummary(earlierRecords)
       : '今天更早的记录暂无，或无需参考。',
   ];
 
@@ -146,16 +124,6 @@ function formatDetailedRecords(records: WalletRecord[]): string {
       const typeLabel = record.type === 'expense' ? '支出' : '收入';
       const detail = record.detail ? `（${record.detail}）` : '';
       return `${index + 1}. ${typeLabel} ${record.category}${detail} ¥${record.amount.toFixed(2)}`;
-    })
-    .join('\n');
-}
-
-function formatCompactRecords(records: WalletRecord[]): string {
-  return records
-    .slice(0, 6)
-    .map((record) => {
-      const detail = record.detail ? `（${record.detail}）` : '';
-      return `- ${record.category}${detail} ¥${record.amount.toFixed(2)}`;
     })
     .join('\n');
 }

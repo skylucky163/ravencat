@@ -2,7 +2,7 @@ import { showAppDialog } from '@shared/ui';
 import { useCallback, useRef, useState } from 'react';
 
 import { PERSISTENT_IMAGE_CATEGORY, usePersistentAvatarDraft } from '@platform/device/DeviceMediaService';
-import { updateCurrentUserAvatar, updateCurrentUserAvatarFromDraft } from '../composition';
+import { updateCurrentUserAvatarFromDraft, updateCurrentUserProfile } from '../composition';
 import type { UserProfile } from '../domain/UserProfile';
 
 /** 头像仍由媒体草稿 owner 提交，返回先等本次选择与引用事务完成。 */
@@ -15,7 +15,7 @@ export function useProfileAvatar(profile: UserProfile) {
     category: PERSISTENT_IMAGE_CATEGORY.userAvatar, entityId: profile.id, committedUri: profile.avatar,
   });
   const save = useCallback(async () => {
-    await commitAvatar((uri, draft) => draft ? updateCurrentUserAvatarFromDraft(draft) : updateCurrentUserAvatar(uri),
+    await commitAvatar((uri, draft) => draft ? updateCurrentUserAvatarFromDraft(draft) : updateCurrentUserProfile({ avatar: uri }),
       (next) => next.avatar);
     dirty.current = false;
     setError(null);

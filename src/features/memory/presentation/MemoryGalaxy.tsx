@@ -9,7 +9,7 @@ import Animated, {
 import { useTheme, useThemedStyles } from '@shared/theme';
 import type { MemoryManagementSnapshot } from '../application/MemoryQueries';
 import { createMemoryGalaxyStyles } from './memoryGalaxyStyles';
-import { NEAR_STAR_LAYERS, type GalaxyStar } from './galaxyStarField';
+import { NEAR_STAR_LAYERS, type GalaxyStar } from '@shared/ui/space/starField';
 import MemoryPlanet, { type PlanetTexture } from './MemoryPlanet';
 
 const SPACES_PER_PAGE = 6;

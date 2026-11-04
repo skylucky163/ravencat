@@ -1,8 +1,8 @@
 /** 小程序 Tab。 */
 import { type Href, useRouter } from 'expo-router';
-import { MiniProgramsTab } from '@features/miniPrograms';
+import { MiniProgramsTab, type MiniProgramId } from '@features/miniPrograms';
 
-const MINI_PROGRAM_ROUTES: Record<string, Href> = {
+const MINI_PROGRAM_ROUTES: Record<MiniProgramId, Href> = {
   wallet: '/wallet',
   auxiliaryModels: '/auxiliary-models',
   aiRequestDiagnostics: '/ai-request-diagnostics' as Href,
@@ -15,19 +15,14 @@ const MINI_PROGRAM_ROUTES: Record<string, Href> = {
   ravenCatSystemAccess: '/raven-cat/system-access' as Href,
   phoneTools: '/phone-tools' as Href,
   stickerSystem: '/sticker-system' as Href,
-  appearance: '/appearance',
+  themePicker: '/appearance',
 };
 
 export default function MiniProgramsRoute() {
   const router = useRouter();
   return (
     <MiniProgramsTab
-      onOpenApp={(appId) => {
-        const route = MINI_PROGRAM_ROUTES[appId];
-        if (route) {
-          router.push(route);
-        }
-      }}
+      onOpenApp={(appId) => router.push(MINI_PROGRAM_ROUTES[appId])}
     />
   );
 }

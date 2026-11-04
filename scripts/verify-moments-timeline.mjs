@@ -541,14 +541,14 @@ for (const label of ['same-a', 'same-b', 'same-c']) {
   sameStampIds.push((await createUserMomentAt(sameStampDb, sameStampRepository, label, ts_(10))).id);
 }
 {
-  const rows = await sameStampRepository.listMomentsForUser({ limit: 10 });
+  const rows = await sameStampRepository.listMomentTimelineForUser({ limit: 10 });
   assert.equal(rows.length, 3);
   assert.deepEqual(
     rows.map((row) => row.id),
     [...sameStampIds].sort().reverse(),
     'created_at 完全相同时必须按 id DESC 稳定排序',
   );
-  const again = await sameStampRepository.listMomentsForUser({ limit: 10 });
+  const again = await sameStampRepository.listMomentTimelineForUser({ limit: 10 });
   assert.deepEqual(
     again.map((row) => row.id),
     rows.map((row) => row.id),
@@ -573,16 +573,16 @@ const ids = {
   E: (await createUserMomentAt(keysetDb, keysetRepository, 'E', ts_(10))).id,
 };
 
-const page1 = await keysetRepository.listMomentsForUser({ limit: 2 });
+const page1 = await keysetRepository.listMomentTimelineForUser({ limit: 2 });
 assert.deepEqual(page1.map((row) => row.content), ['A', 'B'], 'page1 必须是最新两条');
 const cursorB = { createdAt: page1[1].createdAt, id: page1[1].id };
 
-const page2 = await keysetRepository.listMomentsForUser({ limit: 2, cursor: cursorB });
+const page2 = await keysetRepository.listMomentTimelineForUser({ limit: 2, cursor: cursorB });
 assert.deepEqual(page2.map((row) => row.content), ['C', 'D'], 'page2 必须严格从 cursor 之后继续');
 
 // 5.3 page1 之后在顶部插入新 Moment：page2 不得重复 B，也不得跳过 C。
 await createUserMomentAt(keysetDb, keysetRepository, 'NEW', ts_(60));
-const page2AfterInsert = await keysetRepository.listMomentsForUser({ limit: 2, cursor: cursorB });
+const page2AfterInsert = await keysetRepository.listMomentTimelineForUser({ limit: 2, cursor: cursorB });
 assert.deepEqual(
   page2AfterInsert.map((row) => row.content),
   ['C', 'D'],
@@ -603,7 +603,7 @@ assert.equal(
   0,
   'cursor 行必须真的被删除，本用例才有意义',
 );
-const page2AfterDelete = await keysetRepository.listMomentsForUser({ limit: 2, cursor: cursorB });
+const page2AfterDelete = await keysetRepository.listMomentTimelineForUser({ limit: 2, cursor: cursorB });
 assert.deepEqual(
   page2AfterDelete.map((row) => row.content),
   ['C', 'D'],
@@ -615,7 +615,7 @@ assert.deepEqual(
   const collected = [];
   let cursor = null;
   for (let guard = 0; guard < 10; guard += 1) {
-    const page = await keysetRepository.listMomentsForUser({ limit: 2, cursor });
+    const page = await keysetRepository.listMomentTimelineForUser({ limit: 2, cursor });
     if (page.length === 0) break;
     collected.push(...page.map((row) => row.id));
     cursor = { createdAt: page[page.length - 1].createdAt, id: page[page.length - 1].id };
@@ -684,6 +684,8 @@ await createUserMomentAt(aclDb, aclRepository, '仅乙 2', ts_(40), { mode: 'sel
   assert.ok(record, 'AI authored Moment 必须出现在用户 Timeline');
   assert.equal(record.actorType, 'ai');
   assert.equal(record.actorId, 'agent-b', '展示身份必须用不可变 agentId');
+  assert.equal(record.assistantId, 'ai-b', '主页入口必须使用对应资料 ID，而非 agentId');
+  assert.equal(userTimeline.find((item) => item.actorType === 'user').assistantId, null, '用户头像没有 AI 主页');
   assert.equal(record.userName, 'AI乙', 'Timeline 用当前名称解析，而不是发布时快照');
 
   // 改名后 identity 不漂移，名称跟随当前 Assistant。
@@ -693,6 +695,7 @@ await createUserMomentAt(aclDb, aclRepository, '仅乙 2', ts_(40), { mode: 'sel
     .find((item) => item.id === aiMoment.id);
   assert.equal(renamed.userName, 'AI乙（新名）', 'AI 改名后 Timeline 必须使用新名称');
   assert.equal(renamed.actorId, 'agent-b', '改名不得改变稳定身份');
+  assert.equal(renamed.assistantId, 'ai-b', '改名不得改变主页目标');
   identity.assistants = identity.assistants.map((assistant) =>
     assistant.agentId === 'agent-b' ? { ...assistant, name: 'AI乙' } : assistant);
 
@@ -702,6 +705,13 @@ await createUserMomentAt(aclDb, aclRepository, '仅乙 2', ts_(40), { mode: 'sel
     /只能删除自己发布的时刻/,
     '用户不得删除 AI authored Moment',
   );
+
+  const assistants = identity.assistants;
+  identity.assistants = assistants.filter((assistant) => assistant.id !== 'ai-b');
+  const historical = await facadeModule.getMomentRecord(aiMoment.id);
+  assert.equal(historical.assistantId, null, 'AI 删除后历史时刻不再提供主页入口');
+  assert.equal(historical.userName, 'AI乙（发布时名称）', '历史时刻仍保留作者名称快照');
+  identity.assistants = assistants;
 }
 
 // ── 8. audience selector 纯投影 ────────────────────────────────────────
@@ -1273,4 +1283,33 @@ currentExecutor = previousExecutor;
   db.close();
 }
 
-console.log('Moments V2 M6 地点 / audience / keyset Timeline / UI 契约验证通过。');
+// AI 个人朋友圈在 SQL 分页前按稳定作者筛选；AI audience 不限制用户查看。
+{
+  const db = createMomentDb();
+  currentExecutor = createExecutor(db);
+  const repo = new repositoryModule.SQLiteMomentRepository();
+  for (let index = 0; index < 12; index += 1) {
+    const authorId = index % 3 === 0 ? 'agent-b' : 'agent-c';
+    const moment = await repo.createMoment({
+      id: `profile-${index.toString().padStart(2, '0')}`, authorType: 'ai', authorId,
+      authorNameSnapshot: '旧名称', content: `动态 ${index}`, locationLabel: null,
+      audience: { mode: 'selected', viewerAgentIds: [] }, deliveryRecipientAgentIds: [],
+    });
+    db.prepare('UPDATE moments SET created_at = ? WHERE id = ?').run(ts_(index + 1), moment.id);
+  }
+  const author = { actorType: 'ai', actorId: 'agent-b' };
+  const first = await facadeModule.listMomentRecords(identity.profile, { limit: 2, author });
+  assert.deepEqual(first.map(record => record.id), ['profile-09', 'profile-06']);
+  assert.ok(first.every(record => record.actorType === 'ai' && record.actorId === 'agent-b'));
+  const last = first.at(-1);
+  const cursor = { createdAt: last.createdAt, id: last.id };
+  db.prepare('DELETE FROM moments WHERE id = ?').run(last.id);
+  const second = await facadeModule.listMomentRecords(identity.profile, { limit: 2, author, cursor });
+  assert.deepEqual(second.map(record => record.id), ['profile-03', 'profile-00'], '作者筛选不漏页，删除游标行仍可翻页');
+  assert.deepEqual(await repo.listMomentTimelineForUser({
+    limit: 2, author: { actorType: 'ai', actorId: 'unknown-agent' },
+  }), []);
+  currentExecutor = previousExecutor;
+  db.close();
+}
+console.log('Moments V2 M6 地点 / audience / keyset Timeline / AI 个人朋友圈 / UI 契约验证通过。');

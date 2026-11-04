@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS memory_passive_disabled (
 `;
 
 export const MEMORY_V3_SCHEMA = `
+CREATE TABLE IF NOT EXISTS memory_embedding_index_control (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  revision INTEGER NOT NULL DEFAULT 0,
+  build_id TEXT
+);
+INSERT OR IGNORE INTO memory_embedding_index_control (id) VALUES (1);
 CREATE TABLE IF NOT EXISTS memory_v3_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   version INTEGER NOT NULL,
@@ -67,6 +73,8 @@ CREATE TABLE IF NOT EXISTS memory_item_embeddings (
   model_name TEXT,
   status TEXT NOT NULL CHECK (status IN ('not_requested','pending','retry_wait','ready','stale','failed')),
   vector_json TEXT,
+  vector_model_fingerprint TEXT,
+  vector_content_revision INTEGER,
   dimension INTEGER,
   attempts INTEGER NOT NULL DEFAULT 0,
   retry_at TEXT,
@@ -162,4 +170,14 @@ export async function migrateMemorySummary(db: DatabaseWriteExecutor): Promise<v
     await db.execAsync('ROLLBACK;');
     throw error;
   }
+}
+
+/** 旧任务状态不能证明保留向量的来源，只迁入原本已就绪向量的可确认版本。 */
+export async function migrateMemoryEmbeddingVectorSnapshot(db: DatabaseWriteExecutor): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info('memory_item_embeddings')");
+  if (columns.some(column => column.name === 'vector_model_fingerprint')) return;
+  await db.execAsync(`ALTER TABLE memory_item_embeddings ADD COLUMN vector_model_fingerprint TEXT;
+    ALTER TABLE memory_item_embeddings ADD COLUMN vector_content_revision INTEGER;
+    UPDATE memory_item_embeddings SET vector_model_fingerprint = model_fingerprint,
+      vector_content_revision = content_revision WHERE status = 'ready';`);
 }

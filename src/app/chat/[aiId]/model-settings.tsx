@@ -1,15 +1,8 @@
-/** 单聊模型设置路由。 */
-import { Redirect, type Href, useLocalSearchParams, useRouter } from 'expo-router';
-import { ChatModelSettingsRouteScreen } from '@features/chat';
+/** 旧设置地址在过渡期只做替换跳转，实际页面由 AI 个人主页承载。 */
+import { Redirect, type Href, useLocalSearchParams } from 'expo-router';
 
-export default function ChatModelSettingsRoute() {
-  const router = useRouter();
+export default function LegacyAssistantSettingsRoute() {
   const params = useLocalSearchParams<{ aiId?: string | string[] }>();
   const aiId = Array.isArray(params.aiId) ? params.aiId[0] : params.aiId;
-  return aiId ? (
-    <ChatModelSettingsRouteScreen
-      aiId={aiId}
-      onManageModels={(kind) => router.push(`/auxiliary-models/capabilities/${kind}` as Href)}
-    />
-  ) : <Redirect href={'/conversations' as Href} />;
+  return <Redirect href={(aiId ? `/assistants/${encodeURIComponent(aiId)}/model-settings` : '/conversations') as Href} />;
 }

@@ -1,4 +1,5 @@
 /** 用户与显式工具可维护已有摘要，自动总结只能消费固定批次并追加。 */
+import { buildSharedMomentText } from '../../messages/domain/SharedMoment';
 import { randomUUID } from 'expo-crypto';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { emitChatSummaryChanged, getChatSummaryRuntime } from './ChatSummaryRuntime';
@@ -8,6 +9,9 @@ import { getChatConversationRuntimeDependencies } from '../../conversation/appli
 import type { DatabaseTransactionExecutor } from '@platform/persistence';
 
 /** Host在资产变更事务中调用；正文、进度和配置引用保持不变。 */
+export function invalidateChatSummaryServiceReferencesInTransaction(transaction: DatabaseTransactionExecutor, serviceConfigId: string): Promise<void> {
+  return getChatSummaryRuntime().repository.invalidateServiceReferencesInTransaction(transaction, serviceConfigId);
+}
 export function invalidateChatSummaryModelReferencesInTransaction(transaction: DatabaseTransactionExecutor, modelConfigId: string): Promise<void> {
   return getChatSummaryRuntime().repository.invalidateModelReferencesInTransaction(transaction, modelConfigId);
 }
@@ -122,17 +126,17 @@ export async function processChatSummary(conversationId: string, signal: AbortSi
 }
 async function processQueuedChatSummary(conversationId: string, signal: AbortSignal): Promise<boolean> {
   const runtime = getChatSummaryRuntime();
-  const batchSize = await runtime.getBatchSize(conversationId);
-  if (batchSize === null) return false;
+  const batchSettings = await runtime.getBatchSettings(conversationId);
+  if (batchSettings === null) return false;
   // 已有一级达到新阈值时先处理二级；某一层失败不阻止另一层读取自己的可处理范围。
   const existingSecondary = await processSecondaryChatSummary(conversationId, signal);
   if (signal.aborted) return false;
   if (existingSecondary) return true;
-  const primary = await processPrimaryChatSummary(conversationId, batchSize, signal);
+  const primary = await processPrimaryChatSummary(conversationId, batchSettings, signal);
   const secondary = primary ? await processSecondaryChatSummary(conversationId, signal) : false;
   return primary || secondary;
 }
-async function processPrimaryChatSummary(conversationId: string, batchSize: number, signal: AbortSignal): Promise<boolean> {
+async function processPrimaryChatSummary(conversationId: string, { batchSize, recentWindowLimit }: { batchSize: number; recentWindowLimit: number }, signal: AbortSignal): Promise<boolean> {
   const runtime = getChatSummaryRuntime();
   throwIfAbortSignalAborted(signal);
   const now = new Date();
@@ -140,7 +144,7 @@ async function processPrimaryChatSummary(conversationId: string, batchSize: numb
   const initialLeaseMs = initialSettings.requestTimeoutSeconds * 1000 + 60_000;
   const expiresAt = new Date(now.getTime() + initialLeaseMs).toISOString();
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const claim = await runtime.repository.claim(conversationId, batchSize, randomUUID(), now.toISOString(), expiresAt, timeZone);
+  const claim = await runtime.repository.claim(conversationId, batchSize, randomUUID(), now.toISOString(), expiresAt, timeZone, recentWindowLimit);
   if (!claim) return false;
   // 请求选择与generation必须来自领取事务的同一快照，不能沿用领取前的旧设置。
   const settings = claim.requestSettings;
@@ -154,7 +158,7 @@ async function processPrimaryChatSummary(conversationId: string, batchSize: numb
       (diagnostics) => runtime.repository.recordInvocation(claim, diagnostics, new Date().toISOString()), settings);
     throwIfAbortSignalAborted(signal);
     const appended = await runtime.repository.appendClaim(claim,
-      [{ id: randomUUID(), content, messages: claim.messages }], new Date().toISOString());
+      content === null ? [] : [{ id: randomUUID(), content, messages: claim.messages }], new Date().toISOString());
     // 领取被 settings/clear 递增 generation 撤销时 failTask 同样不落账（状态已易主）；租约过期等
     // 状态仍引用本 claim 的失效必须记账，否则任务被静默放回 waiting 并用同范围无限重试。
     if (!appended) throw new ChatSummaryGenerationError({ kind: 'commit_lost',
@@ -201,7 +205,7 @@ export function buildChatSummaryModelInput(input: ChatSummaryModelInput, current
     timestamp: message.timestamp, localDateTime: new Date(message.timestamp).toLocaleString('sv-SE', { timeZone: input.timeZone }),
     source: message.source, callId: message.callId, speaker: message.speaker,
     ...(message.isVoiceMessage ? { isVoiceMessage: true } : {}),
-    content: message.sharedRecord ? buildSharedChatRecordText(message.sharedRecord, message.sharedComment!, currentAgentId) : message.content,
+    content: message.sharedMoment ? buildSharedMomentText(message.sharedMoment, currentAgentId) : message.sharedRecord ? buildSharedChatRecordText(message.sharedRecord, message.sharedComment!, currentAgentId) : message.content,
     ...(message.actor ? { actor: message.actor } : {}),
   })) });
 }

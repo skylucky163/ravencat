@@ -38,11 +38,13 @@ let configured = false;
 export function configureStickerRuntime(
   recognize: (sticker: Sticker, signal: AbortSignal) => Promise<StickerAnnotationMetadata>,
   assertCurrent: (transaction: DatabaseTransactionExecutor, context: AgentToolExecutionContext) => Promise<void>,
+  withEmbeddingMaintenance: import('./application/StickerRuntime').StickerRuntimeDependencies['withEmbeddingMaintenance'],
 ): void {
   if (configured) return;
   configured = true;
   configureStickersRuntime({
     repository: stickerRepository,
+    withEmbeddingMaintenance,
     aiProcessing: { repository: new SQLiteAIStickerProcessingRepository(stickerDatabase), executionId: createRandomUUID(), recognize, assertCurrent },
     media: {
       createMediaAssetWithReference,
@@ -79,8 +81,6 @@ export function configureStickerRuntime(
 
 export {
   configureStickersRuntime,
-  configureStickerRuntimeDependencies,
-  getStickerRuntimeDependencies,
   getStickersRuntimeDependencies,
 } from './application/StickerRuntime';
 export type {
@@ -89,6 +89,6 @@ export type {
   StickerMediaGateway,
   StickerRuntimeDependencies,
 } from './application/StickerRuntime';
-export { SQLiteStickerRepository } from './infrastructure/SQLiteStickerRepository';
 export { emitStickerAnnotationPending } from './application/StickerAnnotationPendingSignal';
 export { emitStickerEmbeddingPending } from './application/StickerEmbeddingPendingSignal';
+export { syncStickerEmbeddingModel } from './application/StickerSystemModels';

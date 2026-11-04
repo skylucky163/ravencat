@@ -14,15 +14,11 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
-import android.os.PowerManager
+import expo.modules.backgroundruntime.ApplicationExecutionHost
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.graphics.drawable.IconCompat
 import androidx.core.telecom.*
-import com.facebook.react.bridge.Arguments
-import com.facebook.react.jstasks.HeadlessJsTaskConfig
-import com.facebook.react.jstasks.HeadlessJsTaskContext
-import com.facebook.react.jstasks.HeadlessJsTaskEventListener
 import expo.modules.androidoverlayruntime.OverlayLaunchIntentFactory
 import expo.modules.androidoverlayruntime.OverlayInteractionExclusion
 import expo.modules.callringtone.CallRingtonePlayback
@@ -30,7 +26,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 
 /** 一次通话的有界执行期，任务完成即释放；不随产品开关常驻，不自重启。 */
-class CallExecutionService : Service(), HeadlessJsTaskEventListener {
+class CallExecutionService : Service() {
   internal lateinit var callId: String
   internal lateinit var returnUri: Uri
   internal var name = ""
@@ -73,9 +69,7 @@ class CallExecutionService : Service(), HeadlessJsTaskEventListener {
   private var finishTask: Deferred<Unit>? = null
   private var terminalTask: Job? = null
   private var terminalCommand: Deferred<Unit>? = null
-  private var executionTaskId: Int? = null
-  private var taskContext: HeadlessJsTaskContext? = null
-  private var wakeLock: PowerManager.WakeLock? = null
+  private var mediaAttached = false
   private var cameraRevision = 0
   private val handler = Handler(Looper.getMainLooper())
 
@@ -120,17 +114,10 @@ class CallExecutionService : Service(), HeadlessJsTaskEventListener {
         }
       }
       overlay.setAppVisible(CallExecutionRegistry.appVisible)
-      // 不借用其他 Headless service 的静态锁；本通执行期独立持有并在 onDestroy 释放。
-      wakeLock = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(
-        PowerManager.PARTIAL_WAKE_LOCK, "RavenCat:CallExecution",
-      ).apply { acquire() }
-      // 通话只从可见的 React 入口准入；明确持有返回的任务身份。
-      // 全局 Headless listener 也会收到 Companion 等任务完成，不能据此结束电话。
-      val context = HeadlessJsTaskContext.getInstance(checkNotNull(CallExecutionRegistry.executionContext))
-      taskContext = context
-      context.addTaskEventListener(this)
-      executionTaskId = context.startTask(HeadlessJsTaskConfig("RavenCatCallExecutionTask",
-        Arguments.createMap().apply { putString("callId", callId) }, 0, true))
+      // 媒体延续同一个应用执行宿主；总开关关闭也不能提前结束正在进行的通话。
+      ApplicationExecutionHost.attachMedia(this, callId)
+      mediaAttached = true
+      check(ApplicationExecutionHost.post(this, "call", mapOf("callId" to callId), 0L))
     } catch (failure: Exception) {
       CallExecutionRegistry.ready.completeExceptionally(failure)
       finish()
@@ -139,14 +126,6 @@ class CallExecutionService : Service(), HeadlessJsTaskEventListener {
   }
 
   override fun onBind(intent: Intent?): IBinder? = null
-  override fun onHeadlessJsTaskStart(taskId: Int) = Unit
-
-  override fun onHeadlessJsTaskFinish(taskId: Int) {
-    if (taskId != executionTaskId) return
-    finish()
-    // finish 持有 Telecom 释放直到完成后 stopSelf。
-  }
-
   internal suspend fun activate() {
     CallRingtonePlayback.stop(callId)
     var stage = "注册系统通话"
@@ -368,9 +347,7 @@ class CallExecutionService : Service(), HeadlessJsTaskEventListener {
         }
       }
     } else scope.cancel()
-    taskContext?.removeTaskEventListener(this)
-    wakeLock?.release()
-    wakeLock = null
+    if (mediaAttached) ApplicationExecutionHost.detachMedia(callId)
     super.onDestroy()
   }
 

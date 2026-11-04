@@ -44,6 +44,9 @@ export const createStickerSystemStyles = (theme: PresentationTheme) =>
       color: theme.colors.text.secondary,
       fontWeight: '600',
     },
+    editorScroll: {
+      flexShrink: 1,
+    },
     actionRow: {
       flexDirection: 'row',
       gap: 12,
@@ -100,7 +103,30 @@ export const createStickerSystemStyles = (theme: PresentationTheme) =>
       marginLeft: 'auto',
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: 4,
+    },
+    // 每个操作独占 44dp 命中区；相邻按钮不能再靠 hitSlop 扩边，否则命中区互相重叠，
+    // 点击会落到后渲染的邻居（删除是不可逆操作，尤其不能误触）。
+    // 与表情处理进度页保持同一缩略尺寸，两处扫图时尺寸一致。
+    thumbnail: {
+      width: 56,
+      height: 56,
+      borderRadius: theme.radius.sm,
+      backgroundColor: theme.colors.surface.muted,
+    },
+    rowIconButton: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    // 编辑弹窗的原图预览：56px 缩略图不足以确认画面，进详情才能看清。
+    preview: {
+      width: '100%',
+      height: 180,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.surface.muted,
+      marginBottom: theme.spacing.md,
     },
     rowValue: {
       fontSize: 13,

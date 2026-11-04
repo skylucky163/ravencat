@@ -150,6 +150,14 @@ assert.deepEqual(failedDetail.errors, [{ id: nativeFailure.id, createdAt: native
 assert.deepEqual(detail.errors, []);
 
 // 真机回归：143 已初始化通话录音，但后补的截图表尚未创建；重新启动必须正式升级。
+// 同时还原当时尚未引入的服务连接结构，避免把当前 schema 仅改版本号当成旧库。
+function restore143ModelSchema() {
+  for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) {
+    db.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id`);
+  }
+  db.exec('DROP TABLE model_service_configs; DROP TABLE model_service_settings;');
+}
+restore143ModelSchema();
 db.exec('DROP TABLE call_history_images; DROP TABLE call_history_preferences; PRAGMA user_version=143');
 assert.deepEqual((await mediaRepo.listBackupAssets(executor)).map(asset => asset.id).sort(), [...audioIds].sort(), '仅录音的 143 旧备份可预检');
 await bootstrapSqlite(executor);
@@ -203,6 +211,7 @@ assert.equal(await history.getCallHistorySnapshotSaving('b'), false);
 await capture();
 const photo = (await calls.listHistoryImages('newest'))[0];
 assert.ok(photo);
+restore143ModelSchema();
 db.exec('PRAGMA user_version=143');
 assert.ok((await mediaRepo.listBackupAssets(executor)).some(asset => asset.id === photo.mediaAssetId), '含截图的 143 旧备份仍包含图片引用');
 await bootstrapSqlite(executor);
@@ -253,6 +262,7 @@ assert.equal(sourceStops, 1);
 assert.equal(removed, 3);
 
 // 已发布库升级只加新记录表，不伪造旧音频，也不覆盖现有文字事实。
+restore143ModelSchema();
 db.exec('DROP TABLE call_history_images; DROP TABLE call_history_preferences; DROP TABLE call_history_entries; DROP TABLE call_history; PRAGMA user_version=142');
 assert.equal((await mediaRepo.listBackupAssets(executor)).length, 0, '旧备份预检不查询尚不存在的录音表');
 await bootstrapSqlite(executor);

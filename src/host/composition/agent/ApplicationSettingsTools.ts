@@ -5,7 +5,8 @@ import { DEFAULT_MOMENTS_COVER_SOURCE } from '@features/moments';
 import { getGroupAvatarForAssistant } from '@features/chat';
 import {
   ApplicationSettingsAccessError, assertApplicationSettingsAccessInTransaction,
-  changeAssistantAvatarFromMediaAsset, changeAssistantPublicName, listAIAssistantSummaries,
+  changeAssistantAvatarFromMediaAsset, changeAssistantSpaceCoverFromMediaAsset, changeAssistantPublicName, listAIAssistantSummaries,
+  DEFAULT_ASSISTANT_SPACE_COVER_SOURCE, getAssistantSpaceCoverImageSelection,
 } from '@features/assistants';
 import {
   changeCurrentUserAvatarFromMediaAsset, changeCurrentUserMomentsCoverFromMediaAsset,
@@ -214,6 +215,29 @@ const setAIName = tool<TargetInput & { name: string }>('set_ai_name', `修改 AI
     return success({ agentId: target.agentId, name, message: '公开名称已保存；用户若设置了私有昵称，其界面仍可能显示昵称。' });
   });
 
+const getOwnSpaceCover = tool<Record<string, never>>('get_own_space_cover',
+  '获取并查看自己的 AI 个人空间封面，个人主页与自己的朋友圈顶部共用这张图片，无需参数。自定义封面返回媒体 ID；未设置时查看默认星空图片，默认图片没有媒体 ID。沿用当前 AI 的视觉能力。', emptyParameters,
+  async (_input, context) => {
+    const selection = await getAssistantSpaceCoverImageSelection(context.task.assistantId);
+    if (selection === null) throw new SettingTargetUnavailableError('当前 AI 已不存在。');
+    if (selection.mediaAssetId !== null) {
+      return showSelection({ ...selection, legacyUri: null }, '自己的 AI 个人空间封面（主页与朋友圈共用）', 'space_cover', context);
+    }
+    const bundled = await Asset.fromModule(DEFAULT_ASSISTANT_SPACE_COVER_SOURCE).downloadAsync();
+    return showSelection({ mediaAssetId: null, legacyUri: bundled.localUri! }, '自己的 AI 个人空间默认封面（主页与朋友圈共用）', 'default_space_cover', context);
+  });
+
+const setOwnSpaceCover = tool<{ media_asset_id: string }>('set_own_space_cover',
+  '更换自己的 AI 个人空间封面，同时更新个人主页与自己的朋友圈顶部，不修改用户的朋友圈封面。只需传入消息、下载或图片工具提供的 media_asset_id；系统自动居中裁剪为 2:1，不拉伸、不修改原图。可自主使用，无需逐次确认；不确定图片内容时先看图。',
+  { type: 'object', properties: { media_asset_id: { type: 'string', minLength: 1, maxLength: 120, description: '已有图片的媒体 ID。' } },
+    required: ['media_asset_id'], additionalProperties: false },
+  async (input, context) => {
+    // 唯一目标来自可信执行上下文；主理身份也不扩大此工具的修改范围。
+    const result = await changeAssistantSpaceCoverFromMediaAsset(context.task.assistantId, input.media_asset_id,
+      context.abortSignal, tx => assertImageToolRunCurrent(tx, context));
+    return success(result);
+  });
+
 /** 产品元数据与工具实现一起交给唯一注册表；不维护另一份运行权限目录。 */
 export const applicationSettingsTools = [
   { tool: getUserAvatar, owner: 'profile', hostOnly: false, mutating: false },
@@ -223,7 +247,9 @@ export const applicationSettingsTools = [
   { tool: getCallBackground, owner: 'calls', hostOnly: false, mutating: false },
   { tool: getGlobalBackground, owner: 'profile', hostOnly: true, mutating: false },
   { tool: getMomentsCover, owner: 'profile', hostOnly: false, mutating: false },
+  { tool: getOwnSpaceCover, owner: 'assistants', hostOnly: false, mutating: false },
   { tool: setAIAvatar, owner: 'assistants', hostOnly: false, mutating: true },
+  { tool: setOwnSpaceCover, owner: 'assistants', hostOnly: false, mutating: true },
   { tool: setChatBackground, owner: 'profile', hostOnly: false, mutating: true },
   { tool: setCallBackground, owner: 'calls', hostOnly: false, mutating: true },
   { tool: setUserAvatar, owner: 'profile', hostOnly: true, mutating: true },

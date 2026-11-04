@@ -2,7 +2,6 @@
 export const MEDIA_ASSET_STORAGE_BACKEND = {
   persistentMedia: 'persistent-media',
   persistentImage: 'persistent-image',
-  nativeBubbleSkin: 'native-bubble-skin',
 } as const;
 
 export type MediaAssetStorageBackend =
@@ -73,7 +72,6 @@ export interface MediaAssetBackingWriter extends MediaAssetBackingResolver {
 
 export interface MediaAssetBackingRegistryInput {
   writers: readonly MediaAssetBackingWriter[];
-  resolvers?: readonly MediaAssetBackingResolver[];
 }
 
 /** registry 是 storageBackend 唯一解释者；重复标识属于装配错误。 */
@@ -85,9 +83,6 @@ export class MediaAssetBackingRegistry {
     for (const writer of input.writers) {
       this.addResolver(writer);
       this.writers.set(writer.storageBackend, writer);
-    }
-    for (const resolver of input.resolvers ?? []) {
-      this.addResolver(resolver);
     }
   }
 

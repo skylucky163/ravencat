@@ -6,7 +6,7 @@
 长列表显式传入 `nativeGlass={false}`，输入框与卡片内部的小控件使用主题的轻量染色，
 避免逐项模糊或白色底层堆叠。同一玻璃表面里的嵌套卡片不再重复开启原生效果。
 `ModalSheet`、全局提示和问号说明气泡统一使用弹窗材质；普通主题保持自己的表面颜色。
-表单窗口的键盘避让交给 `ModalSheet` 的 `avoidKeyboard`，Feature 不重复拥有窗口监听。
+`ModalSheet` 与主窗口表单共用统一的键盘边界容器，Feature 不重复监听键盘或添加避让留白。
 
 ## 组件列表
 
@@ -28,7 +28,7 @@
 | `KeyboardAvoidingContainer` | 当前原生窗口内的统一键盘避让容器 |
 | `ListItem` | 通用列表项 |
 | `ModalSheet` | 底部弹窗 |
-| `ModelPickerModal` | 模型选择弹窗 |
+| `ModelPickerModal` | 模型、用途配置和服务共用的选择弹窗；支持忙碌、重读、列表底部取消选择和标题旁问号说明，统一不带管理跳转 |
 | `NavigationHeader` | 通用页面导航头，可在标题后显示主题主色问号并打开锚定悬浮说明 |
 | `Toggle` | 统一的二元开关，包含读屏状态及原生动画 |
 | `ToggleField` | 带标题和说明的开关字段，支持页面注入布局、字体、编号和自定义内容，内部使用 `Toggle` |
@@ -54,11 +54,14 @@
 普通文本不根据 label、placeholder 或字段名推断密码模式。需要遮蔽的字段显式设置
 `secureTextEntry`；这与窗口避让、自动换行是不同职责，不通过修改密码标志处理布局问题。
 
-表单页在当前窗口内容外包一层 `KeyboardAvoidingContainer`；它测量容器在窗口中的实际位置，
-只为与键盘重叠的部分增加 padding，不把局部布局坐标与键盘屏幕坐标直接相减。
-窗口已被原生缩小时不重复避让；隐藏后清零，旧测量不能恢复留白。原生 View 的 ref 接入/脱离定义测量有效期：脱离后忽略键盘事件，并立即失效尚未返回的测量，不依赖 React effect 稍后的清理顺序。`ModalSheet avoidKeyboard`
-已经包含这个容器，内容不能再次包一层。独立 `Modal` 必须在自己的窗口内部包裹容器，
+主窗口表单页及部分独立弹窗在当前窗口内容外包一层 `KeyboardAvoidingContainer`。容器用自身窗口原点与键盘顶边计算可用高度，
+直接把底边限制在键盘顶部，不从原生窗口底边追加键盘 padding，因此原生窗口是否同时缩放不会造成二次避让。
+隐藏键盘后恢复原始布局，迟到的测量不能恢复旧状态。原生 View 的 ref 接入/脱离定义测量有效期：脱离后忽略键盘事件，并立即失效尚未返回的测量，不依赖 React effect 稍后的清理顺序。
 关闭但仍挂载的弹窗传 `enabled={visible}`，避免监听其他窗口的输入。
+
+`ModalSheet` 也复用这个容器，并传 `fillsNativeWindow`：它已经铺满独立原生窗口，直接使用屏幕键盘顶边，
+不再读取会被系统平移和 edge-to-edge 坐标问题污染的 `measureInWindow.y`。长表单由 Feature 在弹窗内提供可收缩的 `ScrollView`，
+需要始终可见的操作按钮放在滚动区外；原生滚动容器负责把获得焦点的输入框滚入可见区域，不在调用点增加延时或另一套焦点测量。
 
 需要打开即编辑的 `ModalSheet` 在 `onOpened` 中通过输入 ref 请求焦点。回调等待原生窗口
 显示和入场动画完成；不要在仍被平移到屏幕外的输入上使用 `autoFocus`，也不要用 timer 猜测就绪时间。
@@ -108,13 +111,17 @@ showAppDialog({
 `npm run verify:ui-toggle` 验证异步保存、取消确认、禁用、外部状态更新及五个主题的可见性。
 
 `Slider` 为受控组件，调用方保证 `min < max`、`step > 0` 且 `value` 为范围内的合法数值，
-通过 `onValueChange` 更新当前值，`onSlidingComplete` 决定提交时机。轨道在原生层接管手势，
+可用 `upperLimit` 在固定刻度中约束实际终点，调用方保证 `min <= value <= upperLimit <= max`；调整约束不会改变刻度比例。
+通过 `onValueChange` 更新当前值，`onSlidingComplete` 决定提交时机。横向拖动明确激活后才改值，纵向滑动让位父滚动；轻点轨道仍可跳转。
 快速松手采样最终坐标，系统中断保留最后有效值；禁用时不接受调整。
 `SliderField` 在拖动期间只展示本地预览，松手通过 `onSetValue` 通知表单；手动输入及错误原样交给表单，
 不解析、保存或回填业务草稿。使用这两个组件的页面需位于已有的 `GestureHandlerRootView` 内。
-`npm run verify:ui-slider` 验证手势中断、快速松手、小数步长和已有页面的接入行为。
+`npm run verify:ui-slider` 验证手势中断、快速松手、小数步长和已有页面的接入行为；`node --no-warnings scripts/verify-slider-gestures.mjs` 验证纵向让位、激活与取消的手势契约。
 
 1. 创建 `.tsx` 文件
 2. 默认导出组件
 3. 在此目录 `index.ts` 中添加导出
 4. 更新本 README
+## 分享窗口
+
+`ShareSheet` 提供选择对象、内容预览、附言和确认发送的公共交互。调用者传入目标展示数据与预览节点，持有内容、加载、错误和发送状态，并负责真实提交。指定固定目标时关闭目标切换。窗口统一处理键盘避让，不读取 Feature 目录或持有业务导航。

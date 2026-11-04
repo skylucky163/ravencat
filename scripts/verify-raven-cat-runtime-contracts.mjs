@@ -313,30 +313,6 @@ assert.equal(floatingEnabled, false);
 assert.equal(floatingRunning, false);
 assert.equal(floatingStartCalls, 2);
 
-const floatingHeadlessTask = loadTypeScriptModuleWithMocks(
-  'src/features/floatingLayer/application/FloatingMessageHeadlessTask.ts',
-  {
-    './FloatingLayerRuntimeDependencies': {
-      getFloatingLayerRuntimeDependencies: () => ({
-        executeFloatingMessage: async (data) => {
-          globalThis.__floatingHeadlessForwardedData = data;
-        },
-      }),
-    },
-  },
-);
-const floatingHeadlessData = {
-  action: 'message',
-  text: '宿主转发测试',
-  correlationId: 'floating-headless-forward',
-};
-await floatingHeadlessTask.runFloatingMessageHeadlessTask(floatingHeadlessData);
-assert.equal(
-  globalThis.__floatingHeadlessForwardedData,
-  floatingHeadlessData,
-  'Floating Layer Headless 宿主必须把原始任务数据交给 Host 注入的执行 command',
-);
-delete globalThis.__floatingHeadlessForwardedData;
 assert.equal(floatingStopCalls, 1);
 
 // 主理 AI 关系由 assistants 持有；首次开启前 RavenCat 尚未绑定 hostAIId，
@@ -615,7 +591,7 @@ const companionExecutionCancellation = loadTypeScriptModuleWithMocks(
   {},
 );
 const companionWakeHeadlessTask = loadTypeScriptModuleWithMocks(
-  'src/features/companion/application/CompanionWakeHeadlessTask.ts',
+  'src/features/companion/application/ExecuteCompanionWake.ts',
   {
     './CompanionExecutionCancellation': companionExecutionCancellation,
     './CompanionRuntimeDependencies': {
@@ -653,7 +629,7 @@ const companionWakeHeadlessTask = loadTypeScriptModuleWithMocks(
 
   },
 );
-await companionWakeHeadlessTask.runCompanionWakeHeadlessTask({
+await companionWakeHeadlessTask.runCompanionWake({
   eventId: 'formal-wake',
   triggerKind: 'ai_schedule',
   source: 'work-manager',
@@ -680,10 +656,6 @@ assert.doesNotMatch(
   /addSendMessageListener|addCaptureScreenRequestListener/,
   '悬浮消息不得重新依赖 React 页面事件监听器'
 );
-
-const appEntrySource = read('index.js');
-assert.match(appEntrySource, /registerHeadlessTask\('RavenCatFloatingMessageTask'/);
-assert.match(appEntrySource, /configureCompanionHeadlessRuntime\(\)/);
 
 const callRuntimeSource = read(
   'src/features/calls/application/runtime/ProcessCallAIReply.ts'
@@ -744,7 +716,7 @@ assert.doesNotMatch(
 );
 
 for (const relativePath of [
-  'src/features/companion/application/CompanionWakeHeadlessTask.ts',
+  'src/features/companion/application/ExecuteCompanionWake.ts',
   'src/features/companion/application/ExecuteFloatingMessage.ts',
 ]) {
   const source = read(relativePath);
@@ -771,15 +743,11 @@ const floatingServiceSource = read(
 const floatingOverlayRuntimeSource = read(
   'modules/ravencat-floating-layer/android/src/main/java/expo/modules/ravencatfloatinglayer/runtime/RavenCatOverlayRuntime.kt'
 );
-const floatingMessageDispatcherSource = read(
-  'modules/ravencat-floating-layer/android/src/main/java/expo/modules/ravencatfloatinglayer/runtime/RavenCatFloatingMessageDispatcher.kt'
-);
 assert.match(
   floatingOverlayRuntimeSource,
   /fun showBubble\(\): Boolean = controller\?\.showBubble\(\) == true/,
   '原生 Service 已运行时必须能幂等补回丢失的悬浮球视图',
 );
-assert.match(floatingMessageDispatcherSource, /RavenCatFloatingMessageHeadlessTaskService\.start/);
 assert.match(floatingServiceSource, /FOREGROUND_SERVICE_TYPE_SPECIAL_USE/);
 assert.doesNotMatch(
   floatingServiceSource,
@@ -1196,7 +1164,9 @@ const floatingMessageExecutorModule = loadTypeScriptModuleWithMocks(
   },
 );
 
-await floatingMessageExecutorModule.executeFloatingMessage({
+const executeFloating = data => floatingMessageExecutorModule.executeFloatingMessage(data, { signal: new AbortController().signal, executionDeadlineAt: performance.now() + 60_000 });
+
+await executeFloating({
   action: 'message',
   text: '你好',
   correlationId: 'floating-correlation',
@@ -1212,7 +1182,7 @@ for (const failure of [
 ]) {
   floatingTargetFailure = failure;
   const correlationId = `floating-target-${failure.reason}`;
-  await floatingMessageExecutorModule.executeFloatingMessage({
+  await executeFloating({
     action: 'message', text: '你好', correlationId,
   });
   assert.deepEqual(floatingReplyPreviews.at(-1), {
@@ -1225,12 +1195,12 @@ for (const failure of [
 assert.equal(floatingSendCalls.length, sendCountBeforeTargetFailures, '目标不可用不得提交消息或调用 AI');
 
 // 发送前接管的截图在目标不可用时仍须释放，不能进入附件持久化。
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'screen', correlationId: 'floating-screen-without-host',
 });
 const releaseCountBeforeMissingHost = floatingReleasedCaptures.length;
 floatingTargetFailure = { reason: 'host_ai_unavailable', error: '请先设置主理 AI 后再继续。' };
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'message', text: '', correlationId: 'floating-image-without-host',
   screenshotCorrelationId: 'floating-screen-without-host',
 });
@@ -1240,7 +1210,7 @@ floatingTargetFailure = null;
 floatingReleasedCaptures.length = 0;
 
 floatingSendOutcome = 'failure_before_commit';
-await assert.rejects(floatingMessageExecutorModule.executeFloatingMessage({
+await assert.rejects(executeFloating({
   action: 'message',
   text: '失败回复',
   correlationId: 'floating-failed-correlation',
@@ -1249,13 +1219,13 @@ await assert.rejects(floatingMessageExecutorModule.executeFloatingMessage({
 // 截图只暂存；用户显式发送时才持久化附件并调用 Chat。
 floatingSendOutcome = 'success';
 const sendCountBeforeCapture = floatingSendCalls.length;
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'screen', correlationId: 'floating-staged-image',
 });
 assert.equal(floatingSendCalls.length, sendCountBeforeCapture, '截图不得发送消息或调用 AI');
 assert.equal(floatingPersistCount, 0, '截图暂存期间不得持久化到聊天附件目录');
 assert.equal(floatingReleasedCaptures.length, 0, '待发送截图必须保留');
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'message', text: '', correlationId: 'floating-image-only-send',
   screenshotCorrelationId: 'floating-staged-image',
 });
@@ -1264,10 +1234,10 @@ assert.equal(floatingSendCalls.at(-1).attachments.length, 1);
 assert.equal(floatingPersistCount, 1);
 assert.equal(floatingDeletedAttachments.length, 1, '发送后释放准备文件');
 
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'screen', correlationId: 'floating-staged-text-image',
 });
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'message', text: '  帮我看看这个按钮  ', correlationId: 'floating-text-image-send',
   screenshotCorrelationId: 'floating-staged-text-image',
 });
@@ -1275,11 +1245,11 @@ assert.equal(floatingSendCalls.at(-1).text, '帮我看看这个按钮');
 assert.equal(floatingSendCalls.at(-1).attachments.length, 1);
 
 const sendCountBeforeDiscard = floatingSendCalls.length;
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'screen', correlationId: 'floating-staged-discard',
 });
 const releaseCountBeforeDiscard = floatingReleasedCaptures.length;
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'discard_screen', correlationId: 'floating-discard',
   screenshotCorrelationId: 'floating-staged-discard',
 });
@@ -1288,7 +1258,7 @@ assert.equal(floatingSendCalls.length, sendCountBeforeDiscard, '移除截图不�
 
 floatingCaptureAccepted = false;
 const releaseCountBeforeExpiredCapture = floatingReleasedCaptures.length;
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'screen', correlationId: 'floating-expired-capture',
 });
 assert.equal(floatingReleasedCaptures.length, releaseCountBeforeExpiredCapture + 1, '超时或关闭窗口后的迟到截图必须释放');
@@ -1296,18 +1266,18 @@ assert.equal(floatingSendCalls.length, sendCountBeforeDiscard);
 floatingCaptureAccepted = true;
 
 floatingCaptureError = new Error('模拟截图失败');
-await assert.rejects(floatingMessageExecutorModule.executeFloatingMessage({
+await assert.rejects(executeFloating({
   action: 'screen', correlationId: 'floating-capture-failed',
 }), /模拟截图失败/);
 assert.equal(floatingSendCalls.length, sendCountBeforeDiscard, '截图失败不得发送消息');
 floatingCaptureError = null;
 
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'screen', correlationId: 'floating-staged-bootstrap-failure',
 });
 const releaseCountBeforeBootstrapFailure = floatingReleasedCaptures.length;
 floatingDeps.initializeDatabase = async () => { throw new Error('模拟数据库初始化失败'); };
-await assert.rejects(floatingMessageExecutorModule.executeFloatingMessage({
+await assert.rejects(executeFloating({
   action: 'message', text: '', correlationId: 'floating-bootstrap-failure-send',
   screenshotCorrelationId: 'floating-staged-bootstrap-failure',
 }), /模拟数据库初始化失败/);
@@ -1316,20 +1286,20 @@ floatingDeps.initializeDatabase = async () => {};
 
 const deletedBeforeFailures = floatingDeletedAttachments.length;
 floatingSendOutcome = 'failure_before_commit';
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'screen', correlationId: 'floating-screen-before-commit',
 });
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'message', text: '提交前失败', correlationId: 'floating-send-before-commit',
   screenshotCorrelationId: 'floating-screen-before-commit',
 }).catch(() => undefined);
 assert.equal(floatingDeletedAttachments.length, deletedBeforeFailures + 1, '未提交的截图附件应清理');
 
 floatingSendOutcome = 'failure_after_commit';
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'screen', correlationId: 'floating-screen-after-commit',
 });
-await floatingMessageExecutorModule.executeFloatingMessage({
+await executeFloating({
   action: 'message', text: '提交后失败', correlationId: 'floating-send-after-commit',
   screenshotCorrelationId: 'floating-screen-after-commit',
 }).catch(() => undefined);
@@ -1389,6 +1359,8 @@ const assistantRepositoryModule = loadTypeScriptModuleWithMocks(
     '@features/profile': {},
     './SQLiteAuxiliaryModelDefaults': {},
     './SQLiteAuxiliaryModelRepository': {},
+    './SQLiteModelServiceRepository': {},
+    '../domain/ModelService': {},
     '@features/media': {
       resolveMediaAssetReferenceUri: async ({ mediaAssetId, legacyUri }) =>
         mediaAssetId ? `asset://${mediaAssetId}` : legacyUri,

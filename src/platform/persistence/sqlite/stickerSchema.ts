@@ -1,4 +1,5 @@
 /** Sticker 业务表的建表与索引语句，供数据库初始化和后续 migration 复用。 */
+import type { DatabaseWriteExecutor } from '../runtime';
 
 /** Sticker 分组只保存库内的组织关系，不携带媒体文件状态。 */
 export const STICKER_GROUPS_SCHEMA = `
@@ -38,6 +39,7 @@ export const STICKERS_SCHEMA = `
     annotation_error TEXT,
     annotation_claim_id TEXT,
     annotation_claimed_at TEXT,
+    annotation_requested INTEGER NOT NULL DEFAULT 0 CHECK (annotation_requested IN (0, 1)),
     semantic_revision INTEGER NOT NULL DEFAULT 1 CHECK (semantic_revision >= 1),
     created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0),
     updated_at TEXT NOT NULL CHECK (length(trim(updated_at)) > 0),
@@ -82,6 +84,18 @@ export const AI_STICKER_TASKS_SCHEMA = `
   );
 `;
 
+/** 失败按模型指纹和语义版本归属；自动队列不能将失败项当作普通缺失项重试。 */
+export const STICKER_EMBEDDING_FAILURES_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS sticker_embedding_failures (
+    sticker_id TEXT PRIMARY KEY NOT NULL REFERENCES stickers(id) ON DELETE CASCADE,
+    model_config_id TEXT NOT NULL,
+    model_config_updated_at TEXT NOT NULL,
+    semantic_revision INTEGER NOT NULL,
+    error TEXT NOT NULL CHECK (length(trim(error)) > 0),
+    updated_at TEXT NOT NULL
+  );
+`;
+
 export const STICKER_GROUPS_ORDER_INDEX = `
   CREATE INDEX IF NOT EXISTS idx_sticker_groups_order
     ON sticker_groups(sort_order, name, id);
@@ -112,6 +126,7 @@ export const STICKER_SYSTEM_CONFIG_SCHEMA = `
     id TEXT PRIMARY KEY NOT NULL CHECK (id = 'global'),
     recognition_model_config_id TEXT,
     embedding_model_config_id TEXT,
+    automatic_recognition_enabled INTEGER NOT NULL DEFAULT 0 CHECK (automatic_recognition_enabled IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -123,6 +138,16 @@ export const STICKER_SYSTEM_CONFIG_SCHEMA = `
  * 收藏规模为数百到低几千张，第一版直接用 vector_json 全量扫描做余弦。
  */
 export const STICKER_EMBEDDINGS_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS sticker_embedding_index_control (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    revision INTEGER NOT NULL DEFAULT 0,
+    build_id TEXT,
+    selected_model_id TEXT,
+    selected_model_updated_at TEXT,
+    published_model_id TEXT,
+    published_model_updated_at TEXT
+  );
+  INSERT OR IGNORE INTO sticker_embedding_index_control (id) VALUES (1);
   CREATE TABLE IF NOT EXISTS sticker_embeddings (
     sticker_id TEXT NOT NULL,
     model_config_id TEXT NOT NULL,
@@ -143,6 +168,43 @@ export const STICKER_EMBEDDINGS_MODEL_INDEX = `
 `;
 
 /**
+ * 160 曾只更新 CREATE TABLE，已存在的控制表不会因此获得模型列。
+ * 结构修复仅在版本迁移内执行，Repository 继续信任初始化后的 schema。
+ */
+export async function migrateStickerEmbeddingIndexControl(db: DatabaseWriteExecutor): Promise<void> {
+  const columns = new Set((await db.getAllAsync<{ name: string }>(
+    'PRAGMA table_info(sticker_embedding_index_control)',
+  )).map(column => column.name));
+  const missingSelection = !columns.has('selected_model_id') || !columns.has('selected_model_updated_at');
+  for (const column of ['selected_model_id', 'selected_model_updated_at', 'published_model_id', 'published_model_updated_at']) {
+    if (!columns.has(column)) await db.execAsync(`ALTER TABLE sticker_embedding_index_control ADD COLUMN ${column} TEXT;`);
+  }
+  if (missingSelection) {
+    // 补回当前选择并撤销旧执行资格，不推断发布资格、不触碰已有向量。
+    await db.execAsync(`UPDATE sticker_embedding_index_control SET
+      revision = revision + 1, build_id = NULL,
+      selected_model_id = (SELECT embedding_model_config_id FROM sticker_system_config WHERE id = 'global'),
+      selected_model_updated_at = (SELECT m.updated_at FROM auxiliary_model_configs m
+        JOIN sticker_system_config c ON c.embedding_model_config_id = m.id WHERE c.id = 'global')
+      WHERE id = 1;`);
+  }
+}
+
+/** 默认关闭自动请求；旧库中已有人工语义的待识别项不再允许模型覆盖。 */
+export async function migrateStickerRecognitionPolicy(db: DatabaseWriteExecutor): Promise<void> {
+  for (const [table, column] of [['stickers', 'annotation_requested'], ['sticker_system_config', 'automatic_recognition_enabled']]) {
+    const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+    if (!columns.some(item => item.name === column)) {
+      await db.execAsync(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0 CHECK (${column} IN (0, 1));`);
+    }
+  }
+  await db.execAsync(`UPDATE stickers SET annotation_status = CASE WHEN length(trim(COALESCE(description, ''))) > 0 THEN 'ready' ELSE 'manual_required' END,
+    annotation_error = NULL, annotation_claim_id = NULL, annotation_claimed_at = NULL
+    WHERE owner_assistant_id IS NULL AND annotation_status IN ('pending', 'processing')
+      AND (length(trim(COALESCE(description, ''))) > 0 OR tags_json <> '[]' OR emotion IS NOT NULL OR semantic_revision > 1);`);
+}
+
+/**
  * 便于调用方一次执行本 Feature 的全部 SQL。各单项常量仍单独导出，方便 migration
  * 在已有库上按阶段复用而不必复制字符串。
  */
@@ -160,5 +222,6 @@ export const STICKER_SCHEMA = [
 export const STICKER_V2_SCHEMA = [
   STICKER_SYSTEM_CONFIG_SCHEMA,
   STICKER_EMBEDDINGS_SCHEMA,
+  STICKER_EMBEDDING_FAILURES_SCHEMA,
   STICKER_EMBEDDINGS_MODEL_INDEX,
 ].join('\n');

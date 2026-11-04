@@ -22,10 +22,8 @@ const directory = 'src/features/assistants/presentation/';
 const core = load('src/shared/ui/AutoSaveDraftEditor.ts');
 const numbers = load('src/shared/ui/draftValidation.ts');
 const prompt = {
-  ...load('src/shared/prompt/auxiliaryPromptMetadata.ts'),
   DEFAULT_GROUP_CONTEXT_PRIMARY_LIMIT: 40, DEFAULT_GROUP_CONTEXT_SECONDARY_LIMIT: 5,
   DEFAULT_PRIVATE_CONTEXT_PRIMARY_LIMIT: 30, DEFAULT_PRIVATE_CONTEXT_SECONDARY_LIMIT: 10,
-  getDefaultAuxiliaryTaskPrompt: () => '内置任务说明',
 };
 const models = load(`${directory}management/AIModelSettings/modelSettingsHelpers.ts`, {
   '@shared/ui/draftValidation': numbers, '@shared/prompt': prompt,
@@ -247,9 +245,9 @@ try {
       enabled: true, metadataJson: JSON.stringify({ provider: 'minimaxT2aV2', voiceId: 'voice', speed: 1 }) });
     const writes = [];
     const form = editor(async (patch) => { writes.push(patch); }, draft, (data, keys) => speechDraft.parseSpeechModelDraft('tts', data, keys));
-    form.change({ apiKey: '', name: 'new-name', enabled: false, speed: '3' });
+    form.change({ apiKey: '', name: 'new-name', speed: '3' });
     assert.equal(await form.flush(), false);
-    assert.deepEqual(writes, [{ name: 'new-name', enabled: false, apiKey: null }]);
+    assert.deepEqual(writes, [{ name: 'new-name', apiKey: null }]);
     assert.equal(form.getSnapshot().draft.speed, '3');
     form.change({ speed: '1.2' });
     assert.equal(await form.flush(), true);
@@ -266,11 +264,12 @@ try {
     await form.restore();
   }
   {
-    const draft = auxiliary.getAuxiliaryModelDraft('ocr', { name: 'ocr', baseUrl: 'https://example.invalid', apiKey: 'key', model: 'vision',
+    const draft = auxiliary.getAuxiliaryModelDraft({ name: 'ocr', baseUrl: 'https://example.invalid', apiKey: 'key', model: 'vision',
       enabled: true, metadataJson: '{"providerOption":true,"taskPromptOverride":"旧说明"}' });
-    const result = auxiliary.parseAuxiliaryModelDraft('ocr', { ...draft, taskPrompt: '新说明' }, ['taskPrompt']);
-    assert.deepEqual(JSON.parse(result.patch.metadataJson), { providerOption: true, taskPromptOverride: '新说明' });
-    const fresh = editor(async () => { assert.fail('创建前不应持久化'); }, auxiliary.getAuxiliaryModelDraft('embedding', null),
+    const result = auxiliary.parseAuxiliaryModelDraft('ocr', { ...draft, model: 'vision-2' }, ['model']);
+    assert.equal(result.patch.model, 'vision-2');
+    assert.equal(Object.hasOwn(result.patch, 'metadataJson'), false, '任务说明已归提示词中心，模型配置不再改写 metadata');
+    const fresh = editor(async () => { assert.fail('创建前不应持久化'); }, auxiliary.getAuxiliaryModelDraft(null),
       (data, keys) => auxiliary.parseAuxiliaryModelDraft('embedding', data, keys));
     assert.equal(fresh.validateAll(), null); assert.ok(fresh.getSnapshot().errors.name);
   }
@@ -287,7 +286,7 @@ try {
         Keyboard: { dismiss() {} } },
       'react-native-safe-area-context': { SafeAreaView: 'SafeArea' },
       '@features/speech': { ...speechCatalog, SpeechConfigurationTest: 'SpeechTest' },
-      '@shared/ui': { KeyboardAvoidingContainer: 'KeyboardContainer', Button: 'Button', DropdownField: 'Dropdown', InputField: 'Input', ToggleField: 'Toggle' },
+      '@shared/ui': { KeyboardAvoidingContainer: 'KeyboardContainer', Button: 'Button', DropdownField: 'Dropdown', InputField: 'Input', ToggleField: 'Toggle', ModelPickerModal: 'ModelPicker', ListItem: 'ListItem' },
       '@shared/ui/NavigationHeader': { default: 'Header' },
       '@shared/theme': { useTheme: () => ({ colors: { background: { app: '#fff' }, feedback: { error: '#e00' }, text: { secondary: '#555' } }, spacing: { md: 12, lg: 16, xl: 24 } }) },
       '@shared/ui/useAutoSaveDraft': {
@@ -298,7 +297,7 @@ try {
         useAutoSaveNavigation: () => ({}),
       },
       '@shared/ui/useAutoSaveFeedback': { useAutoSaveFeedback: () => ({ fieldLayout: () => () => {} }) },
-      '@shared/ui/AutoSaveErrors': { AutoSaveErrors: 'Errors' }, './speechModelDraft': speechDraft,
+      '@shared/ui/AutoSaveErrors': { AutoSaveErrors: 'Errors' }, './speechModelDraft': speechDraft, './ServiceConnectionPicker': { default: 'ServicePicker' },
     });
     const nodes = (tree) => tree && typeof tree === 'object' ? [tree, ...(tree.children ?? []).flat(Infinity).flatMap(nodes)] : [];
     const render = (provider, model) => nodes(SpeechPage({ kind: 'tts', modelId: 'voice',
@@ -311,8 +310,8 @@ try {
     assert.deepEqual(writes, [], '手输模型名不能逐字保存');
     manual.props.onBlur(); await tick();
     assert.equal(writes.at(-1).model, 'custom-model-v2');
-    const dropdown = render('openai', 'tts-1').find((node) => node.type === 'Dropdown' && node.props.label === '模型');
-    dropdown.props.onChange('tts-1-hd'); await tick();
+    const picker = render('openai', 'tts-1').find((node) => node.type === 'ModelPicker');
+    picker.props.onSelect('tts-1-hd'); await tick();
     assert.equal(writes.at(-1).model, 'tts-1-hd');
   }
   // 页面接线行为：后台提交、系统返回拦截、成功后返回、新建不自动保存。
@@ -656,6 +655,8 @@ try {
   let summaryRuntime;
   const summaryComposition = load('src/host/composition/configureChatSummaryRuntime.ts', {
     '@features/assistants': { aiAssistantRepository: { getById: async () => summaryAssistant } },
+    './chatSummaryRepository': { chatSummaryRepository: {} },
+    '@features/prompting': { resolveChatSummaryPromptOverride: async () => undefined },
     '@features/profile': { userProfileRepository: {} },
     '@features/protocol': { protocolRepository: {} },
     '@features/chat': { getChatSummarySettings: async () => ({ modelConfigId: null }) },

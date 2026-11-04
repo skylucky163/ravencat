@@ -1,7 +1,7 @@
 export const CAPABILITY_META = {
-  general: {
-    label: '通用辅助模型',
-    description: '管理可复用的连接与模型参数，创建角色或管理员时可复制填入，各自独立修改',
+  summary: {
+    label: '摘要模型',
+    description: '用于单聊与群聊的两级摘要，各会话分别选择实际使用的配置',
     icon: 'options-outline',
     iconColor: '#5C6BC0',
   },

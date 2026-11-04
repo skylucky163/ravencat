@@ -1,3 +1,4 @@
+import { bindModelServiceInTransaction, readModelServiceConnection, getModelServiceConnection } from '@features/assistants';
 import { removeConversationWallpaperInTransaction } from '@features/profile';
 /** 通过 databaseCoordinator 实现群聊及群发言计划、任务的 SQLite 仓储适配器。 */
 import { databaseCoordinator } from '@platform/persistence';
@@ -61,6 +62,7 @@ interface GroupChatMemberRow {
 }
 
 interface GroupChatAdminConfigRow {
+  service_config_id: string | null;
   group_id: string;
   name: string;
   model: string;
@@ -225,7 +227,7 @@ export class GroupChatRepository implements IGroupChatRepository {
         [groupId]
       );
 
-      return row ? this.mapAdminRowToEntity(row) : null;
+      return row ? this.mapAdminRowToEntity(row, database) : null;
     } catch (error) {
       console.error('[GroupChatRepository] Failed to get admin config:', error);
       return null;
@@ -291,6 +293,9 @@ export class GroupChatRepository implements IGroupChatRepository {
       ]
     );
 
+    const serviceId = await bindModelServiceInTransaction(transaction, getModelServiceConnection(input.adminConfig.apiBaseUrl ?? '', input.adminConfig.apiKey), input.adminConfig.serviceConfigId);
+    if (serviceId) await transaction.runAsync('UPDATE group_chat_admin_configs SET service_config_id = ?, api_base_url = NULL, api_key = NULL WHERE group_id = ?', [serviceId, input.group.id]);
+
     for (const member of input.members) {
       await transaction.runAsync(
         `INSERT INTO group_chat_members
@@ -315,28 +320,37 @@ export class GroupChatRepository implements IGroupChatRepository {
     input: UpdateGroupChatAdminConfigInput
   ): Promise<GroupChatAdminConfig | null> {
     const columns: Record<keyof UpdateGroupChatAdminConfigInput, string> = {
-      model: 'model', apiKey: 'api_key', apiBaseUrl: 'api_base_url', systemPrompt: 'system_prompt',
+      serviceConfigId: 'service_config_id', model: 'model', apiKey: 'api_key', apiBaseUrl: 'api_base_url', systemPrompt: 'system_prompt',
       temperature: 'temperature', topP: 'top_p', maxTokens: 'max_tokens', contextMessageCount: 'context_message_count',
     };
     const fields: string[] = [];
     const values: (string | number | null)[] = [];
     for (const key of Object.keys(input) as (keyof UpdateGroupChatAdminConfigInput)[]) {
       const value = input[key];
-      if (value === undefined) continue;
+      if (value === undefined || key === 'apiBaseUrl' || key === 'apiKey' || key === 'serviceConfigId') continue;
       fields.push(`${columns[key]} = ?`);
       values.push(value);
     }
-    if (fields.length === 0) throw new Error('管理员配置更新必须包含修改字段');
+    if (fields.length === 0 && input.apiBaseUrl === undefined && input.apiKey === undefined && input.serviceConfigId === undefined) throw new Error('管理员配置更新必须包含修改字段');
     fields.push('updated_at = ?');
     values.push(new Date().toISOString(), groupId);
     const database = databaseCoordinator.openTaskExecutor({ name: 'chat.updateAdminConfig', feature: 'chat', priority: 'interactive' });
     // 增量写入与确认共享事务，不把等待期间读取的旧配置重新写回。
     return database.withExclusiveTransactionAsync(async (transaction) => {
+      if (input.apiBaseUrl !== undefined || input.apiKey !== undefined || input.serviceConfigId !== undefined) {
+        const current = await transaction.getFirstAsync<GroupChatAdminConfigRow>('SELECT * FROM group_chat_admin_configs WHERE group_id = ?', [groupId]);
+        if (!current) return null;
+        const previous = current.service_config_id ? await readModelServiceConnection(transaction, current.service_config_id) : null;
+        const baseUrl = input.apiBaseUrl !== undefined ? input.apiBaseUrl ?? '' : previous ? previous.baseUrl : current.api_base_url ?? '';
+        const apiKey = input.apiKey !== undefined ? input.apiKey : previous ? previous.apiKey : current.api_key;
+        const serviceId = await bindModelServiceInTransaction(transaction, getModelServiceConnection(baseUrl, apiKey), input.serviceConfigId);
+        await transaction.runAsync('UPDATE group_chat_admin_configs SET service_config_id = ?, api_base_url = ?, api_key = ? WHERE group_id = ?', [serviceId, serviceId ? null : baseUrl, serviceId ? null : apiKey, groupId]);
+      }
       const result = await transaction.runAsync(`UPDATE group_chat_admin_configs SET ${fields.join(', ')} WHERE group_id = ?`, values);
       if (result.changes === 0) return null;
       const row = await transaction.getFirstAsync<GroupChatAdminConfigRow>('SELECT * FROM group_chat_admin_configs WHERE group_id = ?', [groupId]);
       if (!row) throw new Error(`已更新的管理员配置不存在：${groupId}`);
-      return this.mapAdminRowToEntity(row);
+      return this.mapAdminRowToEntity(row, transaction);
     });
   }
 
@@ -1390,13 +1404,15 @@ export class GroupChatRepository implements IGroupChatRepository {
     }
   }
 
-  private mapAdminRowToEntity(row: GroupChatAdminConfigRow): GroupChatAdminConfig {
+  private async mapAdminRowToEntity(row: GroupChatAdminConfigRow, db: import('@platform/persistence').DatabaseReadExecutor): Promise<GroupChatAdminConfig> {
+    const service = row.service_config_id ? await readModelServiceConnection(db, row.service_config_id) : null;
     return {
       groupId: row.group_id,
       name: row.name,
       model: row.model,
-      apiKey: row.api_key,
-      apiBaseUrl: row.api_base_url,
+      serviceConfigId: row.service_config_id,
+      apiKey: service ? service.apiKey : row.api_key,
+      apiBaseUrl: service ? service.baseUrl : row.api_base_url,
       systemPrompt: row.system_prompt,
       temperature: row.temperature,
       topP: row.top_p,

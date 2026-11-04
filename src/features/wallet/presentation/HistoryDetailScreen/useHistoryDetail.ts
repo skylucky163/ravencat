@@ -6,7 +6,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { getLedgerRangeSummary, getWalletCategories } from '../../composition';
 import { DEFAULT_WALLET_CATEGORIES, type WalletCategories } from '../../domain/WalletRecord';
-import type { TimeRange, SummaryData, CategoryGroupData } from './types';
+import type { TimeRange, SummaryData, CategoryGroupData } from '../historyTypes';
 
 interface UseHistoryDetailOptions {
   timeRange: TimeRange;

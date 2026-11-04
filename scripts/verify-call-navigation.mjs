@@ -126,7 +126,7 @@ const hostModule = load('src/host/KimiPhoneHost.tsx', {
   '@features/profile': {},
   '@platform/persistence': { initDatabase: done },
   '@features/assistants': { aiAssistantRepository: { listIds: async () => [] } },
-  '@platform/device': { initializeNotifications: done, consumePendingNotificationResponses: async () => [], addNotificationResponseListener: () => ({ remove: noop }), getMessageArrivalSnapshot: async () => arrival },
+  '@platform/device': { initializeNotifications: done, reconcileBackgroundRuntime: done, consumePendingNotificationResponses: async () => [], addNotificationResponseListener: () => ({ remove: noop }), getMessageArrivalSnapshot: async () => arrival },
   '@features/calls': {
     CallRuntimeProvider: passThrough,
     getActiveCall: () => deferActiveQuery ? new Promise((resolve) => { resolveActiveQuery = resolve; }) : Promise.resolve(null),
@@ -139,6 +139,7 @@ const hostModule = load('src/host/KimiPhoneHost.tsx', {
   '@features/wallet/composition': { stopLedgerAIReplyQueueForReset: noop, resumeLedgerAIReplyQueueAfterReset: noop },
   './composition/configureHostRuntime': { configureHostRuntime: noop },
   './shell/ApplicationUpdateProvider': { ApplicationUpdateProvider: passThrough },
+  './navigation/MomentSharingBoundary': passThrough,
   './composition/completePendingBackupRestore': { completePendingBackupRestore: done },
   './composition/migrateLegacyAvatarReferences': {},
   './media/LegacyMediaMigrationReporting': {},

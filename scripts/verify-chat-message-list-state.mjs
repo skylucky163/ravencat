@@ -624,9 +624,18 @@ function userMessage(id = 20) {
     () => metadata,
   );
   let theme = loadModule('src/shared/theme/themes/moonKimi.ts').moonKimiTheme;
+  const mediaResolution = loadModule(
+    'src/features/chat/presentation/messages/components/chatMediaResolutionCache.ts',
+    () => React,
+  );
+  const historyReads = [];
+  const chatEvents = loadModule('src/features/chat/messages/events/ChatEvents.ts');
   const boundaries = {
-    '../../../reply/application/ChatTurnPresentationRuntime': { reloadTurnDisplayHistory: async () => {}, retainTurnDisplayHistory: () => () => {} },
-    '../../../messages/events/ChatEvents': { setChatEventBus: () => () => {} },
+    '../../../reply/application/ChatTurnPresentationRuntime': {
+      reloadTurnDisplayHistory: async (sessionId, messages) => { historyReads.push({ sessionId, messages }); },
+      retainTurnDisplayHistory: () => () => {},
+    },
+    '../../../messages/events/ChatEvents': chatEvents,
     '@platform/device': selection,
     react: React,
     'react-native': { View: 'View', Text: 'Text', Pressable: 'Pressable' },
@@ -635,8 +644,11 @@ function userMessage(id = 20) {
     '@shopify/flash-list': { FlashList },
     '@features/chat/messages/domain': { ...metadata, buildSessionPreviewTextFromMessage: (msg) => msg.text },
     '@shared/utils/timeFormat': { formatMessageTime: () => '12:00' },
-    './ChatMessageListParts': { MessageListItem: 'MessageListItem' },
+    './ChatMessageListParts': { MessageListItem: (props) => React.createElement('MessageListItem', {
+      ...props, mediaCache: React.useContext(mediaResolution.ChatMediaResolutionCacheContext),
+    }) },
     './reasoningExpansionState': { ReasoningExpansionContext: React.createContext(null) },
+    './chatMediaResolutionCache': mediaResolution,
     '../../../messages/domain/ChatMessageSelection': { getChatSelectionKey: (msg) => String(msg.id) },
     './chatMessageRenderUtils': renderUtils,
     '../MessageBubble/layoutProbe': { createLayoutProbeCellRenderer: () => undefined },
@@ -679,11 +691,25 @@ function userMessage(id = 20) {
   let props = { sessionId: 's1', messages, hasMore: false, isLoadingMore: false, onPreviewFile: () => {}, onDismissInputSurface: () => { dismisses++; } };
   let renderer;
   act(() => { renderer = create(React.createElement(List, props)); });
+  const initialHistoryReads = historyReads.length;
+  act(() => {
+    chatEvents.emitChatMessagesUpdated('s1');
+    chatEvents.emitChatMessagesReloadRequested('s1');
+    chatEvents.emitChatMessagesPatched({ sessionId: 's1', updatedMessageIds: [602] });
+    chatEvents.emitChatMessagesDeleted('s1', [602]);
+    chatEvents.emitChatRegenerationChanged('s1');
+    chatEvents.emitChatGroupSpeechPlanChanged('s1');
+    chatEvents.emitChatTypingStatusChanged('s1', true);
+    chatEvents.emitChatTurnExecutionChanged('s1');
+  });
+  assert.equal(historyReads.length, initialHistoryReads, '聊天事件先由时间线消费，列表不能提前重复查询展示历史');
   const nativeScroller = renderer.root.findByType('NativeScroller');
   assert.equal(nativeScroller.props.nativeScrollViewComponent, 'ScrollView', '聊天滚动必须使用 Fabric ScrollView 的坐标契约');
   assert.equal(nativeScroller.props.textSelectionEnabled, true, '文字选择策略只由专用滚动适配显式启用');
   const list = () => renderer.root.findByType('FlashList');
   const messageData = () => Array.from(list().props.data).filter(item => 'msg' in item);
+  const mediaCache = () => renderer.root.findAllByType('MessageListItem')[0].props.mediaCache;
+  mediaCache().stickers.set('seen-sticker', 'file:///seen-sticker');
   let measuredContentHeight = 1200;
   const commit = (height, afterLayout = () => {}) => {
     act(() => {
@@ -707,6 +733,7 @@ function userMessage(id = 20) {
   update({ messages: [messages[0], usageMessage], aiAssistant: { id: 'ai', showTokenUsage: true } });
   assert.equal(scrollContainerMounts, 1, '消息或设置更新不能重建滚动容器');
   assert.equal(scrollContainerUnmounts, 0, '消息或设置更新保留正在使用的原生滚动视图');
+  assert.equal(mediaCache().stickers.get('seen-sticker'), 'file:///seen-sticker', '消息和设置更新保留已解析媒体地址');
   assert.equal(messageData().at(-1).displayTokensUsed, 120, '开启选择后实际列表提供用量提示');
   update({ aiAssistant: { id: 'ai', showTokenUsage: false } });
   assert.equal(messageData().at(-1).displayTokensUsed, 0, '关闭选择后实际列表隐藏所有用量提示');
@@ -725,7 +752,10 @@ function userMessage(id = 20) {
   commit(1350);
   assert.equal(scrolls, 0, '展示变化不能冒充新消息');
   messages = [...messages, message({ id: 603, text: '流式正文' })];
+  const beforeNewMessageReads = historyReads.length;
   update({ messages }); commit(1450);
+  assert.ok(historyReads.length > beforeNewMessageReads, '新消息读回后仍会更新展示历史窗口');
+  assert.deepEqual(historyReads.at(-1), { sessionId: 's1', messages });
   assert.equal(scrolls, 1, '尾部新消息在布局完成后跟随');
   messages = [...messages.slice(0, -1), message({ id: 603, text: '流式正文继续增长' })];
   update({ messages }); commit(1550);
@@ -858,6 +888,7 @@ function userMessage(id = 20) {
   assert.equal(scrollContainerUnmounts, 0, '列表更新不能卸载滚动视图和已测量的消息');
   act(() => list().props.onLayout({ nativeEvent: { layout: { height: 500 } } }));
   update({ sessionId: 's2' });
+  assert.equal(mediaCache().stickers.get('seen-sticker'), undefined, '新会话不继承旧会话媒体地址缓存');
   commit(2700);
   assert.equal(scrolls, 7, '旧会话待执行的贴底不能滚动新会话');
   assert.equal(scrollContainerMounts, 2, '切换会话才重新建立列表滚动容器');

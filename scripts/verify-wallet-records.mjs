@@ -1,4 +1,4 @@
-/** 验证账单工具、真实 SQLite 写入和用户编辑行为，不读取用户数据库。 */
+/** 验证账单与快捷记账工具、真实 SQLite 写入和用户编辑行为，不读取用户数据库。 */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,14 +19,16 @@ CREATE TABLE ledger_quick_actions (
   amount REAL NOT NULL, sort_order INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 )`);
 const executor = {
+  execAsync: async (sql) => db.exec(sql),
   runAsync: async (sql, params = []) => db.prepare(sql).run(...params),
   getFirstAsync: async (sql, params = []) => db.prepare(sql).get(...params) ?? null,
   getAllAsync: async (sql, params = []) => db.prepare(sql).all(...params),
 };
+const fixture = createCoordinatedSqliteFixture(executor);
 const dialogs = [];
 const theme = { spacing: { lg: 16 }, colors: { text: { tertiary: '#888' }, brand: { primary: '#333' } } };
 const mocks = {
-  '@platform/persistence': { databaseCoordinator: { openTaskExecutor: () => executor } },
+  '@platform/persistence': { databaseCoordinator: fixture.databaseCoordinator },
   '@shared/ui': { ModalSheet: 'ModalSheet', showAppDialog: (options) => dialogs.push(options) },
   '@shared/theme': { useTheme: () => theme, useThemedStyles: () => ({}) },
   'react-native': Object.fromEntries(['View', 'Text', 'TextInput', 'TouchableOpacity', 'ScrollView'].map((name) => [name, name])),
@@ -58,8 +60,13 @@ const wallet = 'src/features/wallet/';
 const { SQLiteLedgerRepository } = load(`${wallet}infrastructure/SQLiteLedgerRepository.ts`);
 const repository = new SQLiteLedgerRepository();
 const { AddLedgerRecordTool: add, UpdateLedgerRecordTool: update, DeleteLedgerRecordTool: remove } = load(`${wallet}aiTools/LedgerRecordTools.ts`);
+const {
+  CreateLedgerQuickActionTool: createQuick,
+  UpdateLedgerQuickActionTool: updateQuick,
+  DeleteLedgerQuickActionTool: deleteQuick,
+  UseLedgerQuickActionTool: useQuick,
+} = load(`${wallet}aiTools/LedgerQuickActionTools.ts`);
 const { GetLedgerContextTool: query } = load(`${wallet}aiTools/GetLedgerContextTool.ts`);
-const { SearchLedgerTool: search } = load(`${wallet}aiTools/SearchLedgerTool.ts`);
 const { LegacyAgentToolAdapter } = load('src/host/composition/agent/LegacyAgentToolAdapter.ts');
 const { matchesAgentToolInputSchema } = load('src/shared/aiTools/AgentToolInputSchema.ts');
 const { getWalletRecordDate, createWalletRecord, DEFAULT_WALLET_CATEGORIES } = load(`${wallet}domain/WalletRecord.ts`);
@@ -74,14 +81,9 @@ const brokenLedger = { getRecords: () => brokenFixture.databaseCoordinator.read(
 const oldErrorLog = console.error, walletErrors = [];
 console.error = (...args) => walletErrors.push(args);
 try {
-  for (const [tool, input, message] of [
-    [search, { keyword: '测试' }, '账本搜索失败，请稍后再试。'],
-    [query, { mode: 'recent' }, '账本查询失败，请稍后再试。'],
-  ]) {
-    const result = await tool.execute(input, { repositories: { ledger: brokenLedger } });
-    assert.deepEqual(result, { success: false, error: message });
-  }
-  assert.equal(walletErrors.length, 2);
+  const result = await query.execute({ mode: 'recent' }, { repositories: { ledger: brokenLedger } });
+  assert.deepEqual(result, { success: false, error: '账本查询失败，请稍后再试。' });
+  assert.equal(walletErrors.length, 1);
   assert.ok(walletErrors.every(([, error]) => error instanceof databaseErrors.CoordinatedDatabaseError));
 } finally { console.error = oldErrorLog; }
 function adapter(tool) {
@@ -96,7 +98,8 @@ async function invoke(tool, input) {
 const { AgentToolRegistry } = load('src/platform/agentRuntime/AgentToolRegistry.ts');
 const { registerToolPackagesForHostRun } = load('src/host/composition/agent/ToolPackageExposure.ts');
 const registry = new AgentToolRegistry();
-const bindings = [add, update, remove, query, search].map((tool) => {
+const walletTools = [add, update, remove, query, createQuick, updateQuick, deleteQuick, useQuick];
+const bindings = walletTools.map((tool) => {
   const adapted = adapter(tool);
   registry.register(adapted);
   return { packageId: 'wallet', tool: adapted };
@@ -106,7 +109,7 @@ const exposure = registerToolPackagesForHostRun({
 });
 assert.deepEqual(exposure.visibleToolNames(), []);
 await registry.get('open_tool_package').execute({ package_id: 'wallet' }, {});
-assert.deepEqual(new Set(exposure.visibleToolNames()), new Set([add.name, update.name, remove.name, query.name, search.name]));
+assert.deepEqual(new Set(exposure.visibleToolNames()), new Set(walletTools.map((tool) => tool.name)));
 const lunch = { type: 'expense', category: '餐饮', amount: 25, detail: '午餐牛肉面', recordDate: '2026-10-09' };
 const added = await invoke(add, lunch);
 assert.equal(added.status, 'success');
@@ -114,8 +117,8 @@ const record = added.data.record;
 assert.ok(added.modelContent.includes(record.id), '模型必须能拿到新增账单 ID');
 assert.equal((await repository.getRecords()).length, 1);
 
-for (const [tool, input] of [[query, { mode: 'recent' }], [query, { mode: 'keyword', keyword: '牛肉面' }], [search, { keyword: '牛肉面' }]]) {
-  const result = await invoke(tool, input);
+for (const input of [{ mode: 'recent' }, { mode: 'keyword', keyword: '牛肉面' }]) {
+  const result = await invoke(query, input);
   assert.ok(result.modelContent.includes(record.id), '适配后的模型 observation 必须包含真实 ID');
 }
 const edited = await invoke(update, { recordId: record.id, amount: 28, detail: '' });
@@ -137,6 +140,25 @@ assert.equal((await invoke(remove, { recordId: record.id })).status, 'error');
 assert.equal((await invoke(update, { recordId: record.id, amount: 50 })).status, 'error');
 assert.equal(await repository.deleteRecord('missing'), false);
 assert.equal(await repository.updateRecord('missing', { amount: 1 }), false);
+
+for (const [id, recordDate] of [['range-old', '2026-08-15'], ['range-middle', '2026-09-15'], ['range-new', '2026-10-15']]) {
+  await repository.insertRecord({ ...lunch, id, recordDate });
+}
+const ranged = await invoke(query, { mode: 'keyword', keyword: '餐饮',
+  startDate: '2026-09-01', endDate: '2026-09-30', limit: 1 });
+assert.equal(ranged.data.records.length, 1);
+assert.equal(ranged.data.records[0].id, 'range-middle');
+assert.equal(ranged.data.stats.count, 1, '数量限制只裁剪返回记录，不改变命中统计');
+assert.ok(ranged.modelContent.includes('范围：2026-09-01 至 2026-09-30'));
+const capped = await invoke(query, { mode: 'keyword', keyword: '餐饮', limit: 2 });
+assert.deepEqual(capped.data.records.map(item => item.id), ['range-new', 'range-middle']);
+assert.equal(capped.data.stats.count, 3);
+for (const input of [
+  { mode: 'keyword', keyword: '餐饮', startDate: '2026-02-30' },
+  { mode: 'keyword', keyword: '餐饮', limit: 0 },
+  { mode: 'keyword', keyword: '餐饮', limit: 51 },
+]) assert.equal(matchesAgentToolInputSchema(input, adapter(query).descriptor.inputSchema), false);
+for (const id of ['range-old', 'range-middle', 'range-new']) await repository.deleteRecord(id);
 
 // 模型边界拒绝非法金额、日期、空分类、空修改和未声明字段。
 for (const invalid of [
@@ -173,12 +195,146 @@ const applied = await applyQuickActionAndReply({ quickActionId: quickForReply.id
   repository, queueAIReply: async () => { throw new Error('队列不可用'); },
 });
 assert.equal(applied.success, true);
+assert.equal(applied.record.detail, '地铁');
+assert.equal((await repository.getRecords({ ids: [applied.record.id] }))[0].detail, '地铁');
+assert.equal((await repository.getQuickActions()).find((item) => item.id === quickForReply.id).detail, '');
 assert.equal(applied.queuedAIReply, false);
 assert.equal(callbackError, '队列不可用');
 assert.ok((await repository.getRecords()).some((item) => item.id === applied.record.id), '排队失败不能撤销已写入账单');
 assert.equal((await applyQuickActionAndReply({ quickActionId: 'missing' }, {}, { repository, queueAIReply: async () => ({ queued: true }) })).success, false);
 await repository.deleteRecord(applied.record.id);
 await repository.deleteQuickAction(quickForReply.id);
+
+// 快捷工具只管理模板；使用时才新增账单，修改或删除模板不回写已有账单。
+const beforeQuickRecords = (await repository.getRecords()).length;
+const templateInput = { name: '早餐', type: 'expense', category: '餐饮', amount: 12, detail: '豆浆包子', sortOrder: 3 };
+const createdQuick = await invoke(createQuick, templateInput);
+assert.equal(createdQuick.status, 'success');
+const template = createdQuick.data.quickAction;
+assert.ok(createdQuick.modelContent.includes(template.id));
+assert.equal((await repository.getRecords()).length, beforeQuickRecords);
+assert.deepEqual((await invoke(query, { mode: 'quickActions' })).data.quickActions, [template]);
+for (const keyword of ['早餐', '餐饮', '豆浆']) {
+  const found = await invoke(query, { mode: 'quickActions', keyword, type: 'expense', category: '餐饮', timeDescription: '去年' });
+  assert.deepEqual(found.data.quickActions, [template]);
+  assert.ok(found.modelContent.includes(template.id), '查询必须给模型返回真实模板 ID');
+}
+assert.deepEqual((await invoke(query, { mode: 'quickActions', type: 'income' })).data.quickActions, []);
+assert.deepEqual((await invoke(query, { mode: 'quickActions', category: '交通' })).data.quickActions, []);
+assert.deepEqual((await invoke(query, { mode: 'quickActions', keyword: '不存在' })).data.quickActions, []);
+const usedQuick = await invoke(useQuick, { quickActionId: template.id, recordDate: '2026-10-02' });
+assert.equal(usedQuick.status, 'success');
+const templateRecord = usedQuick.data.record;
+assert.notEqual(templateRecord.id, template.id);
+assert.ok(usedQuick.modelContent.includes(templateRecord.id));
+assert.equal(templateRecord.recordDate, '2026-10-02');
+assert.equal(templateRecord.amount, 12);
+assert.equal(templateRecord.detail, '豆浆包子');
+assert.equal(templateRecord.category, '餐饮');
+assert.equal(templateRecord.type, 'expense');
+assert.equal((await repository.getRecords()).length, beforeQuickRecords + 1);
+assert.equal((await invoke(updateQuick, { quickActionId: template.id, name: '早饭', amount: 15, detail: '', sortOrder: 0 })).status, 'success');
+const partialTemplate = (await repository.getQuickActions())[0];
+assert.equal(partialTemplate.name, '早饭');
+assert.equal(partialTemplate.amount, 15);
+assert.equal(partialTemplate.detail, '');
+assert.equal(partialTemplate.sortOrder, 0);
+assert.equal(partialTemplate.id, template.id);
+assert.equal(partialTemplate.createdAt, template.createdAt);
+assert.equal(partialTemplate.type, template.type);
+assert.equal(partialTemplate.category, template.category);
+assert.deepEqual((await repository.getRecords()).find((item) => item.id === templateRecord.id), templateRecord);
+assert.equal((await invoke(updateQuick, { quickActionId: template.id, type: 'income', category: '退款' })).status, 'success');
+const reusedQuick = await invoke(useQuick, { quickActionId: template.id });
+assert.equal(reusedQuick.status, 'success');
+assert.equal(reusedQuick.data.record.recordDate, getWalletRecordDate());
+assert.equal(reusedQuick.data.record.type, 'income');
+assert.equal(reusedQuick.data.record.category, '退款');
+assert.equal(reusedQuick.data.record.amount, 15);
+assert.equal(reusedQuick.data.record.detail, '早饭');
+assert.notEqual(reusedQuick.data.record.id, templateRecord.id);
+const noReply = await applyQuickActionAndReply({ quickActionId: template.id }, {}, { repository });
+assert.equal(noReply.success, true);
+assert.equal(noReply.record.detail, '早饭');
+assert.equal(noReply.queuedAIReply, false);
+assert.equal(queued, 1, 'AI 使用快捷记账不应安排额外自动回复');
+assert.equal((await invoke(deleteQuick, { quickActionId: template.id })).status, 'success');
+assert.deepEqual((await repository.getRecords()).find((item) => item.id === templateRecord.id), templateRecord);
+assert.equal((await invoke(deleteQuick, { quickActionId: template.id })).status, 'error');
+assert.equal((await invoke(updateQuick, { quickActionId: template.id, amount: 20 })).status, 'error');
+const missingQuick = await invoke(useQuick, { quickActionId: template.id });
+assert.equal(missingQuick.status, 'error');
+assert.ok(missingQuick.modelContent.includes('快捷记账不存在'));
+assert.equal((await repository.getRecords()).length, beforeQuickRecords + 3);
+assert.equal(await repository.deleteQuickAction('missing'), false);
+assert.equal(await repository.updateQuickAction('missing', { amount: 1 }), false);
+for (const item of [templateRecord, reusedQuick.data.record, noReply.record]) await repository.deleteRecord(item.id);
+
+// 金额、名称、空修改、模板 ID、日期和内部字段都在模型 schema 边界拦截。
+for (const invalid of [
+  { ...templateInput, amount: 0 }, { ...templateInput, amount: -1 }, { ...templateInput, amount: Infinity },
+  { ...templateInput, amount: '12' }, { ...templateInput, name: ' ' }, { ...templateInput, category: ' ' },
+  { ...templateInput, type: 'transfer' }, { ...templateInput, sortOrder: -1 }, { ...templateInput, sortOrder: 0.5 },
+  { ...templateInput, id: 'invented' }, { ...templateInput, recordDate: '2026-10-02' },
+  { name: '缺少金额', type: 'expense', category: '餐饮' },
+]) assert.equal(matchesAgentToolInputSchema(invalid, adapter(createQuick).descriptor.inputSchema), false);
+for (const invalid of [{ quickActionId: 'id' }, { quickActionId: 'id', amount: 0 }, { quickActionId: 'id', createdAt: 'invented' }]) {
+  assert.equal(matchesAgentToolInputSchema(invalid, adapter(updateQuick).descriptor.inputSchema), false);
+}
+for (const tool of [deleteQuick, useQuick]) {
+  assert.equal(matchesAgentToolInputSchema({ quickActionId: ' ' }, adapter(tool).descriptor.inputSchema), false);
+}
+assert.equal(matchesAgentToolInputSchema({ quickActionId: 'id', recordDate: '2026-02-30' }, adapter(useQuick).descriptor.inputSchema), false);
+for (const [tool, args] of [
+  [createQuick, templateInput], [updateQuick, { quickActionId: 'id', amount: 20 }],
+  [deleteQuick, { quickActionId: 'id' }], [useQuick, { quickActionId: 'id' }],
+]) {
+  await assert.rejects(() => tool.execute(args, { ...context, abortSignal: controller.signal }));
+  assert.equal((await tool.execute(args, { repositories: { ledger: null } })).success, false);
+}
+
+// 同一毫秒创建多个模板仍有独立 ID，并按排序字段展示。
+const originalNow = Date.now;
+let simultaneous;
+try {
+  Date.now = () => 1793404800000;
+  simultaneous = await Promise.all([1, 0].map((sortOrder) => invoke(createQuick, { ...templateInput, sortOrder })));
+} finally { Date.now = originalNow; }
+assert.ok(simultaneous.every((result) => result.status === 'success'));
+assert.equal(new Set(simultaneous.map((result) => result.data.quickAction.id)).size, 2);
+assert.deepEqual((await repository.getQuickActions()).map((action) => action.sortOrder), [0, 1]);
+for (const result of simultaneous) await repository.deleteQuickAction(result.data.quickAction.id);
+
+// 默认创建排到末尾：删除产生空缺后仍追加，并发创建不拿到相同的默认排位。
+const appendInput = { name: '默认末尾', type: 'expense', category: '餐饮', amount: 10 };
+const firstAppend = await invoke(createQuick, appendInput);
+assert.equal(firstAppend.data.quickAction.sortOrder, 0);
+await repository.deleteQuickAction(firstAppend.data.quickAction.id);
+const tiedTemplates = await Promise.all(['quick-z', 'quick-a'].map((id) => repository.insertQuickAction({
+  ...templateInput, id, sortOrder: 6, createdAt: '2026-10-01T00:00:00.000Z',
+})));
+const deletedMiddle = await repository.insertQuickAction({ ...templateInput, sortOrder: 4 });
+await repository.deleteQuickAction(deletedMiddle.id);
+const appendedTemplates = await Promise.all(Array.from({ length: 3 }, () => invoke(createQuick, appendInput)));
+assert.ok(appendedTemplates.every((result) => result.status === 'success'));
+assert.deepEqual(appendedTemplates.map((result) => result.data.quickAction.sortOrder).sort((a, b) => a - b), [7, 8, 9]);
+const sortedTemplates = await repository.getQuickActions();
+assert.deepEqual(sortedTemplates.slice(0, 2).map((action) => action.id), ['quick-a', 'quick-z']);
+assert.deepEqual(sortedTemplates.map((action) => action.sortOrder), [6, 6, 7, 8, 9]);
+assert.deepEqual(sortedTemplates.slice(0, 2), [...tiedTemplates].sort((a, b) => a.id.localeCompare(b.id)), '新增不能重编号旧模板');
+for (const action of sortedTemplates) await repository.deleteQuickAction(action.id);
+
+// 记账使用与编辑、删除共享协调器事务；账单只能保存一个完整的模板快照。
+const atomicTemplate = await repository.insertQuickAction(templateInput);
+const [atomicRecord] = await Promise.all([
+  repository.useQuickAction(atomicTemplate.id),
+  repository.updateQuickAction(atomicTemplate.id, { category: '购物', amount: 30 }),
+  repository.deleteQuickAction(atomicTemplate.id),
+]);
+assert.equal(atomicRecord.category, '餐饮');
+assert.equal(atomicRecord.amount, 12);
+assert.equal((await repository.getQuickActions()).length, 0);
+await repository.deleteRecord(atomicRecord.id);
 
 // 分类查询包含预设、历史自定义和仅在快捷记账中使用的分类，并按收支类型去重。
 assert.deepEqual(await repository.getCategories('income'), DEFAULT_WALLET_CATEGORIES.income);
@@ -299,6 +455,7 @@ assert.equal(quickDraft, undefined);
 await act(async () => { quickCategoryInput().props.onChangeText('  健身  '); });
 await act(async () => { buttonWithText('添加').props.onPress(); });
 assert.equal(quickDraft.category, '健身');
+assert.equal(quickDraft.sortOrder, undefined, '表单不根据可见条数分配排序号');
 const customQuick = await repository.insertQuickAction(quickDraft);
 assert.ok((await repository.getCategories('expense')).includes('健身'));
 await repository.deleteQuickAction(customQuick.id);
@@ -349,7 +506,24 @@ assert.equal(selected.id, 'history-5');
 await act(async () => { renderer.unmount(); });
 
 // 初始详情快照不能阻止修改后重新读取真实统计。
-mocks['@react-navigation/native'] = { useFocusEffect: (callback) => React.useEffect(callback, [callback]) };
+// 焦点回调登记下来，后面用它模拟“从详情编辑返回”。
+const focusCallbacks = [];
+const blurCallbacks = [];
+mocks['@react-navigation/native'] = {
+  useFocusEffect: (callback) => React.useEffect(() => {
+    let cleanup;
+    const focus = () => { cleanup = callback(); };
+    const blur = () => { cleanup?.(); cleanup = undefined; };
+    focusCallbacks.push(focus);
+    blurCallbacks.push(blur);
+    focus();
+    return () => {
+      blur();
+      focusCallbacks.splice(focusCallbacks.indexOf(focus), 1);
+      blurCallbacks.splice(blurCallbacks.indexOf(blur), 1);
+    };
+  }, [callback]),
+};
 mocks['../../composition'] = {
   getLedgerRangeSummary: (start, end) => repository.getRangeSummary(start, end),
   getWalletCategories: () => getWalletCategories(presentationDeps),
@@ -372,5 +546,237 @@ await act(async () => { await history.reload(); });
 assert.equal(history.summary.totalExpense, 0);
 assert.deepEqual(history.summary.records, []);
 await act(async () => { renderer.unmount(); });
+
+// 历史列表分页：首屏补齐、正常触底、重复触发、空库停止、旧请求迟到、编辑返回刷新。
+// 真实 FlatList 在测试环境不渲染行；这里用同名宿主元素加 renderItem 结果，保留尺寸与触底回调。
+mocks['react-native'].FlatList = function FlatListMock(props) {
+  return React.createElement(
+    'FlatList',
+    props,
+    props.data.map((item, index) => React.createElement(React.Fragment, { key: `${index}` }, props.renderItem({ item, index }))),
+  );
+};
+mocks['react-native'].ActivityIndicator = 'ActivityIndicator';
+mocks['react-native'].BackHandler = { addEventListener: () => ({ remove: () => {} }) };
+mocks['react-native-safe-area-context'] = { SafeAreaView: 'SafeAreaView' };
+mocks['@shared/ui/NavigationHeader'] = { __esModule: true, default: 'NavigationHeader' };
+mocks['@shared/theme'].ThemedSurface = 'ThemedSurface';
+
+const rangeQueries = [];
+let rangeGate = null;
+const historyRecords = new Map();
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+mocks['../../composition'] = {
+  getLedgerRangeSummary: async (start, end) => {
+    rangeQueries.push(`${start}_${end}`);
+    if (rangeGate) await rangeGate.promise;
+    const records = historyRecords.get(`${start}_${end}`) || [];
+    const totalExpense = records.filter((item) => item.type === 'expense').reduce((sum, item) => sum + item.amount, 0);
+    const totalIncome = records.filter((item) => item.type === 'income').reduce((sum, item) => sum + item.amount, 0);
+    return { totalExpense, totalIncome, balance: totalIncome - totalExpense, categoryStats: [], records };
+  },
+  getWalletCategories: () => getWalletCategories(presentationDeps),
+};
+
+const dayKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const todayDate = new Date();
+todayDate.setHours(0, 0, 0, 0);
+const weekStart = new Date(todayDate);
+weekStart.setDate(todayDate.getDate() - ((todayDate.getDay() + 6) % 7));
+const firstWeekKeys = [];
+for (const cursor = new Date(todayDate); cursor >= weekStart; cursor.setDate(cursor.getDate() - 1)) {
+  firstWeekKeys.push(`${dayKey(cursor)}_${dayKey(cursor)}`);
+}
+const flatListOf = () => renderer.root.findAllByType('FlatList')[0];
+const renderedTexts = () => renderer.root
+  .findAllByType('Text')
+  .map((node) => [node.props.children].flat(Infinity).join(''));
+const mountHistory = async (props) => {
+  const HistoryScreen = load(`${wallet}presentation/HistoryScreen/index.tsx`).default;
+  await act(async () => {
+    renderer = create(React.createElement(HistoryScreen, { onBack: () => {}, onSelectTimeRange: () => {}, ...props }));
+  });
+  // 首屏查询是焦点副作用发起的，等它落地后再断言渲染结果。
+  await act(async () => {});
+};
+// 模拟真实布局：先量内容再量视口，之后内容高度随卡片数量增长，直到不再请求新范围。
+const pumpLayout = async (viewport, cardHeight = 100) => {
+  await act(async () => {
+    flatListOf().props.onContentSizeChange(0, flatListOf().props.data.length * cardHeight);
+  });
+  await act(async () => { flatListOf().props.onLayout({ nativeEvent: { layout: { height: viewport } } }); });
+  for (let step = 0; step < 40; step += 1) {
+    const before = rangeQueries.length;
+    const cards = flatListOf().props.data.length;
+    await act(async () => { flatListOf().props.onContentSizeChange(0, cards * cardHeight); });
+    if (rangeQueries.length === before) return { stopped: true, cards, queries: rangeQueries.length };
+  }
+  return { stopped: false, cards: flatListOf().props.data.length, queries: rangeQueries.length };
+};
+
+// 首屏不足一屏时自动追加，只查新增范围，重复触底不重复追加。
+await mountHistory({ initialView: 'week' });
+assert.deepEqual([...rangeQueries], firstWeekKeys, '首屏先查当前周');
+const filled = await pumpLayout(1200);
+assert.equal(filled.stopped, true, '填满视口后停止自动追加');
+assert.ok(filled.cards * 100 >= 1200, '自动补齐后内容不再短于视口');
+assert.equal(new Set(rangeQueries).size, rangeQueries.length, '自动补齐不重复查询同一范围');
+const afterFill = rangeQueries.length;
+
+// 内容已满时，接近底部即追加一页；同一次拖动只追加一次。
+await act(async () => { flatListOf().props.onContentSizeChange(0, filled.cards * 100); });
+await act(async () => { flatListOf().props.onLayout({ nativeEvent: { layout: { height: 200 } } }); });
+const beforeEndReached = rangeQueries.length;
+await act(async () => { flatListOf().props.onScrollBeginDrag(); flatListOf().props.onEndReached(); });
+assert.equal(rangeQueries.length, beforeEndReached + 7, '触底追加下一周');
+await act(async () => { flatListOf().props.onEndReached(); });
+assert.equal(rangeQueries.length, beforeEndReached + 7, '没有新的拖动不重复追加');
+await act(async () => { flatListOf().props.onScrollBeginDrag(); flatListOf().props.onEndReached(); });
+assert.equal(rangeQueries.length, beforeEndReached + 14, '再次拖动才追加');
+
+// 同一时刻只有一个请求：请求未完成前的重复触发被丢弃。
+const gate = deferred();
+rangeGate = gate;
+await act(async () => { flatListOf().props.onScrollBeginDrag(); flatListOf().props.onEndReached(); });
+await act(async () => { flatListOf().props.onScrollBeginDrag(); flatListOf().props.onEndReached(); });
+gate.resolve();
+rangeGate = null;
+await act(async () => {});
+assert.equal(rangeQueries.length, afterFill + 21, '进行中的请求不因重复触底变成两页');
+assert.equal(new Set(rangeQueries).size, rangeQueries.length, '触底追加也不重复查询');
+await act(async () => { renderer.unmount(); });
+
+// 空库时自动补齐可以停止，不会无限查询。
+rangeQueries.length = 0;
+historyRecords.clear();
+await mountHistory({ initialView: 'week' });
+const emptyFill = await pumpLayout(900);
+assert.equal(emptyFill.stopped, true, '空库自动补齐必须停止');
+assert.ok(emptyFill.queries < 40, `空库补齐次数有界：${emptyFill.queries}`);
+await act(async () => { renderer.unmount(); });
+
+// 切换视图后迟到的旧响应不能覆盖新页面。
+rangeQueries.length = 0;
+const staleRecords = createWalletRecord({ ...lunch, id: 'stale', amount: 999 });
+historyRecords.set(firstWeekKeys[0], [staleRecords]);
+await mountHistory({ initialView: 'week' });
+await act(async () => { flatListOf().props.onContentSizeChange(0, firstWeekKeys.length * 100); });
+await act(async () => { flatListOf().props.onLayout({ nativeEvent: { layout: { height: 200 } } }); });
+const switchGate = deferred();
+rangeGate = switchGate;
+await act(async () => { flatListOf().props.onScrollBeginDrag(); flatListOf().props.onEndReached(); });
+rangeGate = null;
+await act(async () => {
+  const yearTab = renderer.root.findAllByType('TouchableOpacity').find(
+    (node) => node.findAllByType('Text').some((text) => text.props.children === '年'),
+  );
+  yearTab.props.onPress();
+});
+switchGate.resolve();
+await act(async () => {});
+const yearData = flatListOf().props.data;
+assert.equal(yearData.length, new Date().getMonth() + 1, '迟到响应没有把旧分页写进新视图');
+assert.ok(yearData.every((item) => typeof item.monthName === 'string'), '切换后展示年视图的月卡');
+assert.equal(renderedTexts().includes('-¥999.00'), false, '旧视图统计没有覆盖新视图');
+await act(async () => { renderer.unmount(); });
+
+// 从详情编辑返回时刷新已展示范围，不重新查询更早的范围。
+rangeQueries.length = 0;
+historyRecords.set(firstWeekKeys[0], [createWalletRecord({ ...lunch, id: 'edited', amount: 25 })]);
+await mountHistory({ initialView: 'week' });
+await act(async () => { flatListOf().props.onContentSizeChange(0, firstWeekKeys.length * 100); });
+await act(async () => { flatListOf().props.onLayout({ nativeEvent: { layout: { height: 200 } } }); });
+assert.deepEqual([...rangeQueries], firstWeekKeys);
+assert.ok(renderedTexts().includes('-¥25.00'));
+await act(async () => { for (const callback of [...blurCallbacks]) callback(); });
+historyRecords.set(firstWeekKeys[0], [createWalletRecord({ ...lunch, id: 'edited', amount: 40 })]);
+rangeQueries.length = 0;
+await act(async () => { for (const callback of [...focusCallbacks]) await callback(); });
+await act(async () => {});
+assert.deepEqual([...rangeQueries], firstWeekKeys, '只刷新已展示范围');
+assert.ok(renderedTexts().includes('-¥40.00'), '返回后使用最新统计');
+assert.equal(renderedTexts().includes('-¥25.00'), false, '旧统计不残留');
+await act(async () => { renderer.unmount(); });
+
+// 详情返回不能被离开前尚未结束的分页查询挡住，也不能接纳那页迟到的结果。
+rangeQueries.length = 0;
+historyRecords.set(firstWeekKeys[0], [createWalletRecord({ ...lunch, id: 'edited', amount: 25 })]);
+await mountHistory({ initialView: 'week' });
+const backgroundPage = deferred();
+rangeGate = backgroundPage;
+await act(async () => { flatListOf().props.onScrollBeginDrag(); flatListOf().props.onEndReached(); });
+await act(async () => { for (const callback of [...blurCallbacks]) callback(); });
+historyRecords.set(firstWeekKeys[0], [createWalletRecord({ ...lunch, id: 'edited', amount: 40 })]);
+rangeGate = null;
+const beforeReturn = rangeQueries.length;
+await act(async () => { for (const callback of [...focusCallbacks]) callback(); });
+assert.deepEqual(rangeQueries.slice(beforeReturn), firstWeekKeys, '返回立即刷新已展示范围，不等待旧分页');
+assert.ok(renderedTexts().includes('-¥40.00'), '旧查询未结束也能展示编辑后的统计');
+backgroundPage.resolve();
+await act(async () => {});
+assert.equal(flatListOf().props.data.length, firstWeekKeys.length, '离开前未完成的分页不能在返回后追加');
+await act(async () => { renderer.unmount(); });
+
+// 视口测量可能先于内容测量；尚不知道内容高度时不能把默认零当成首屏不足。
+rangeQueries.length = 0;
+await mountHistory({ initialView: 'year' });
+const beforeContentMeasure = rangeQueries.length;
+await act(async () => { flatListOf().props.onLayout({ nativeEvent: { layout: { height: 50 } } }); });
+assert.equal(rangeQueries.length, beforeContentMeasure, '内容尚未测量时不提前请求下一页');
+await act(async () => { flatListOf().props.onContentSizeChange(0, flatListOf().props.data.length * 100); });
+assert.equal(rangeQueries.length, beforeContentMeasure, '首屏已满不额外查询');
+await act(async () => { renderer.unmount(); });
+
+const historyReadErrors = [];
+const originalConsoleError = console.error;
+console.error = (...args) => {
+  if (args.some((value) => value instanceof Error)) historyReadErrors.push(args);
+};
+try {
+  // 首次读取失败时停住自动补齐；用户再触底先重试当前范围，不能跳过它去读更早的一页。
+  rangeQueries.length = 0;
+  historyRecords.clear();
+  const initialFailure = deferred();
+  rangeGate = initialFailure;
+  await mountHistory({ initialView: 'week' });
+  await act(async () => { initialFailure.reject(new Error('汇总读取失败')); });
+  rangeGate = null;
+  await pumpLayout(1200);
+  assert.deepEqual(rangeQueries, firstWeekKeys, '读取失败后不继续自动向前查询');
+  await act(async () => { flatListOf().props.onScrollBeginDrag(); flatListOf().props.onEndReached(); });
+  assert.deepEqual(rangeQueries, [...firstWeekKeys, ...firstWeekKeys], '显式重试补齐首批汇总，不跳过失败范围');
+  assert.equal(historyReadErrors.length, 1);
+  await act(async () => { renderer.unmount(); });
+
+  // 切换视图后旧请求的失败也必须失效，不能把新视图的自动补齐关掉。
+  rangeQueries.length = 0;
+  await mountHistory({ initialView: 'week' });
+  const staleFailure = deferred();
+  rangeGate = staleFailure;
+  await act(async () => { flatListOf().props.onScrollBeginDrag(); flatListOf().props.onEndReached(); });
+  rangeGate = null;
+  await act(async () => {
+    const yearTab = renderer.root.findAllByType('TouchableOpacity').find(
+      (node) => node.findAllByType('Text').some((text) => text.props.children === '年'),
+    );
+    yearTab.props.onPress();
+  });
+  await act(async () => { staleFailure.reject(new Error('旧视图读取失败')); });
+  const initialMonths = flatListOf().props.data.length;
+  const yearFill = await pumpLayout((initialMonths + 1) * 100);
+  assert.equal(yearFill.stopped, true);
+  assert.equal(yearFill.cards, initialMonths + 1, '旧请求失败后新视图仍能补齐视口');
+  assert.equal(historyReadErrors.length, 1, '撤销的旧查询不再产生当前页面错误');
+  await act(async () => { renderer.unmount(); });
+} finally {
+  console.error = originalConsoleError;
+  rangeGate = null;
+}
+
 db.close();
-console.log('Wallet 账单新增、ID observation、编辑、删除、统计、自定义分类查询与表单行为验证通过');
+console.log('Wallet 账单与快捷记账增改删用、ID observation、并发提交、统计、自定义分类、表单与历史分页行为验证通过');

@@ -202,6 +202,27 @@ export async function changeAssistantAvatarFromMediaAsset(assistantId: string, m
   return result;
 }
 
+/** 只读取 AI 个人空间封面身份，不加载模型配置或凭据；null 表示角色不存在。 */
+export function getAssistantSpaceCoverImageSelection(assistantId: string) {
+  return aiAssistantRepository.getProfileCoverReference(assistantId);
+}
+
+/** 主页与朋友圈共用 Assistants 的空间封面事实，媒体处理与提交资格沿用图片设置契约。 */
+export async function changeAssistantSpaceCoverFromMediaAsset(assistantId: string, mediaAssetId: string, signal: AbortSignal, guard: (transaction: DatabaseTransactionExecutor) => Promise<void>) {
+  const expected = await aiAssistantRepository.getProfileCoverReference(assistantId);
+  if (!expected) throw new SettingChangeConflictError('AI 已被删除，本次个人空间封面修改未保存。');
+  const result = await commitCroppedImageSelection({ mediaAssetId, aspect: [2, 1], signal }, async (tx, assetId) => {
+    await guard(tx);
+    // 此命令只设置图片；媒体入口在非空输入时保证回调得到已准备好的资产 ID。
+    const changed = await aiAssistantRepository.tryCommitProfileCoverInTransaction(tx, assistantId, expected.mediaAssetId, assetId!);
+    if (!changed) throw new SettingChangeConflictError('个人空间封面在处理期间已被修改或角色已删除，本次操作未覆盖新设置。');
+  });
+  await releaseMediaAssetCandidates([expected.mediaAssetId]);
+  const assistant = await aiAssistantRepository.getById(assistantId);
+  if (assistant) emitAIAssistantUpdated(assistant);
+  return result;
+}
+
 /** 改公开名称不修改用户私有昵称，也不改写历史正文或身份键。 */
 export async function changeAssistantPublicName(assistantId: string, name: string, guard: (transaction: DatabaseTransactionExecutor) => Promise<void>): Promise<void> {
   const expected = await aiAssistantRepository.getById(assistantId);
@@ -221,6 +242,14 @@ const aiAssistantUpdatedListeners = new Set<AIAssistantUpdatedListener>();
 function emitAIAssistantUpdated(assistant: AIProfile): void {
   for (const listener of aiAssistantUpdatedListeners) {
     listener(assistant);
+  }
+}
+
+/** 服务更新已提交后刷新角色投影，事件不携带额外连接真值。 */
+export async function notifyAssistantServiceConnectionsChanged(serviceConfigId: string): Promise<void> {
+  for (const id of await aiAssistantRepository.listServiceAssistantIds(serviceConfigId)) {
+    const assistant = await aiAssistantRepository.getById(id);
+    if (assistant) emitAIAssistantUpdated(assistant);
   }
 }
 

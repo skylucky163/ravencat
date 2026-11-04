@@ -13,8 +13,8 @@ export function getChatMessageActions(message: ChatMessage) {
   const supportedFiles = attachments.every(attachment => attachment.type === 'image' || isChatTextDocumentFileName(attachment.fileName));
   return {
     quote: ordinary,
-    translate: ordinary && kind !== 'sticker' && kind !== 'shared_record' && message.text.trim().length > 0,
-    favorite: ordinary && kind !== 'shared_record' && supportedFiles
+    translate: ordinary && kind !== 'sticker' && kind !== 'shared_record' && kind !== 'shared_moment' && message.text.trim().length > 0,
+    favorite: ordinary && kind !== 'shared_record' && kind !== 'shared_moment' && supportedFiles
       && (message.text.trim().length > 0 || attachments.length > 0 || kind === 'sticker' || kind === 'voice'),
   };
 }

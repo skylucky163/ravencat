@@ -1,6 +1,5 @@
 /** Floating Layer 应用层公共出口。 */
 
-export { runFloatingMessageHeadlessTask } from './FloatingMessageHeadlessTask';
 
 export {
   addCaptureScreenRequestListener,

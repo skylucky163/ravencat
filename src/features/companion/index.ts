@@ -6,8 +6,8 @@ export {
   getNativeHealth,
 } from './application/CompanionNativeFacade';
 export { getCompanionNotificationDiagnostics } from './application/CompanionNotificationFacade';
-export { runCompanionWakeHeadlessTask } from './application/CompanionWakeHeadlessTask';
-export { cancelCompanionWakeExecution } from './application/CompanionWakeHeadlessTask';
+export { runCompanionWake } from './application/ExecuteCompanionWake';
+export { cancelCompanionWakeExecution } from './application/ExecuteCompanionWake';
 export {
   addCompanionExecutionCancelListener,
   addCompanionWakeListener,
@@ -23,23 +23,6 @@ export {
   recordProactiveAgentRunState,
 } from './application/ProactiveAgentRunState';
 export { disableCompanionProductState } from './application/CompanionSettingsFacade';
-export {
-  loadProactiveLifeOverview,
-  listProactiveLifeFuture,
-  listProactiveLifeHistory,
-} from './application/ProactiveLifeReadQueries';
-export type {
-  ProactiveLifeFutureCursor,
-  ProactiveLifeFutureItem,
-  ProactiveLifeHistoryCursor,
-  ProactiveLifeHistoryItem,
-  ProactiveLifeHistoryQuery,
-  ProactiveLifeOverview,
-  ProactiveLifeOverviewQuery,
-  ProactiveLifeFutureQuery,
-  ProactiveLifeRunningItem,
-  ProactiveLifeSourceType,
-} from './application/ProactiveLifeReadQueries';
 export { COMPANION_PROMPT_DEFINITIONS } from './application/CompanionPromptDefinitions';
 export {
   CancelAIScheduleTool,

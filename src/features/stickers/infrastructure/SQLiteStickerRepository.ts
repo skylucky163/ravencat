@@ -26,17 +26,22 @@ import {
   type StickerMetadataPatch,
 } from '../domain/Sticker';
 import type { StickerEmbedding } from '../domain/StickerEmbedding';
+import type { StickerProcessingRow } from '../domain/StickerProcessing';
+import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import type { StickerSystemConfig } from '../domain/StickerSystemConfig';
 import type {
   CreateStickerGroupInput,
   ListStickersInGroupInput,
   StickerEmbeddingModelContext,
+  StickerEmbeddingIndexControl,
+  StickerEmbeddingRebuild,
   StickerGroupReadySummary,
   StickerRepository,
   StickerSemanticSearchInput,
 } from '../domain/StickerRepository';
 
 interface StickerRow {
+  annotation_requested: number;
   id: string;
   media_asset_id: string;
   owner_assistant_id: string | null;
@@ -102,6 +107,7 @@ const STICKER_COLUMNS = `
   annotation_error,
   annotation_claim_id,
   annotation_claimed_at,
+  annotation_requested,
   semantic_revision,
   created_at,
   updated_at
@@ -195,6 +201,7 @@ function buildStickerValues(sticker: Sticker): (string | number | null)[] {
     sticker.annotationError,
     null,
     null,
+    0,
     sticker.semanticRevision,
     sticker.createdAt,
     sticker.updatedAt,
@@ -256,6 +263,16 @@ export async function stickerTransaction<T>(database: CoordinatedDatabaseExecuto
 }
 
 /** Sticker adapter 只持有已绑定 task metadata 的协调器 executor，不持有原始连接。 */
+async function writeEmbedding(tx: DatabaseTransactionExecutor, embedding: StickerEmbedding): Promise<void> {
+  await tx.runAsync(`INSERT INTO sticker_embeddings (
+    sticker_id, model_config_id, model_config_updated_at, semantic_revision, dimension, vector_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(sticker_id, model_config_id) DO UPDATE SET
+    model_config_updated_at = excluded.model_config_updated_at, semantic_revision = excluded.semantic_revision,
+    dimension = excluded.dimension, vector_json = excluded.vector_json, updated_at = excluded.updated_at`,
+  [embedding.stickerId, embedding.modelConfigId, embedding.modelConfigUpdatedAt, embedding.semanticRevision,
+    embedding.dimension, JSON.stringify(embedding.vector), embedding.createdAt, embedding.updatedAt]);
+}
+
 export class SQLiteStickerRepository implements StickerRepository {
   constructor(
     private readonly database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({
@@ -281,6 +298,17 @@ export class SQLiteStickerRepository implements StickerRepository {
     return row ? mapStickerRow(row) : null;
   }
 
+  async createStickerIfAbsent(sticker: Sticker): Promise<{ sticker: Sticker; reused: boolean }> {
+    return stickerTransaction(this.database, async transaction => {
+      const existing = await this.getStickerByMediaAssetIdInTransaction(
+        transaction, sticker.mediaAssetId, sticker.ownerAssistantId,
+      );
+      if (existing) return { sticker: existing, reused: true };
+      await this.createStickerInTransaction(transaction, sticker);
+      return { sticker, reused: false };
+    });
+  }
+
   async listGroups(): Promise<StickerGroup[]> {
     const rows = await this.database.getAllAsync<StickerGroupRow>(
       `SELECT ${GROUP_COLUMNS}
@@ -289,6 +317,61 @@ export class SQLiteStickerRepository implements StickerRepository {
        LIMIT ${STICKER_GROUP_LIMIT}`,
     );
     return rows.map(mapGroupRow);
+  }
+
+  async listUserStickerProcessing(context: StickerEmbeddingModelContext | null): Promise<StickerProcessingRow[]> {
+    const rows = await this.database.getAllAsync<StickerRow & { has_embedding: number; embedding_error: string | null }>(
+      `SELECT s.*, e.sticker_id IS NOT NULL AS has_embedding, f.error AS embedding_error
+       FROM stickers s
+       LEFT JOIN sticker_embeddings e ON e.sticker_id = s.id AND e.model_config_id = ?
+         AND e.model_config_updated_at = ? AND e.semantic_revision = s.semantic_revision
+       LEFT JOIN sticker_embedding_failures f ON f.sticker_id = s.id AND f.model_config_id = ?
+         AND f.model_config_updated_at = ? AND f.semantic_revision = s.semantic_revision
+       WHERE s.owner_assistant_id IS NULL ORDER BY s.created_at, s.id`,
+      [context?.modelConfigId ?? null, context?.modelConfigUpdatedAt ?? null,
+        context?.modelConfigId ?? null, context?.modelConfigUpdatedAt ?? null],
+    );
+    return rows.map(row => ({ sticker: mapStickerRow(row), annotationStartedAt: row.annotation_claimed_at, manuallyRequested: row.annotation_requested === 1,
+      hasEmbedding: row.has_embedding === 1, embeddingError: row.embedding_error }));
+  }
+
+  async retryAnnotation(stickerId: string, updatedAt: string): Promise<void> {
+    const result = await this.database.runAsync(
+      `UPDATE stickers SET annotation_status = 'pending', annotation_error = NULL, annotation_requested = 1, updated_at = ?
+       WHERE id = ? AND owner_assistant_id IS NULL AND annotation_status IN ('failed', 'pending', 'manual_required')
+         AND annotation_requested = 0 AND is_animated = 0`,
+      [updatedAt, stickerId],
+    );
+    if (result.changes !== 1) throw new Error('只能重试尚未完成且没有在处理的静态表情包');
+  }
+
+  async saveEmbeddingFailures(stickers: Sticker[], context: StickerEmbeddingModelContext, revision: number,
+    buildId: string | null, error: string, updatedAt: string, signal: AbortSignal): Promise<void> {
+    await stickerTransaction(this.database, async tx => {
+      throwIfAbortSignalAborted(signal);
+      const control = await tx.getFirstAsync<{ revision: number; build_id: string | null }>(
+        'SELECT revision, build_id FROM sticker_embedding_index_control WHERE id = 1');
+      // 错误也属于请求结果，旧模型、旧任务或已编辑素材的错误不能污染当前状态。
+      if (control!.revision !== revision || control!.build_id !== buildId) return;
+      for (const sticker of stickers) {
+        await tx.runAsync(`INSERT INTO sticker_embedding_failures
+          (sticker_id, model_config_id, model_config_updated_at, semantic_revision, error, updated_at)
+          SELECT id, ?, ?, semantic_revision, ?, ? FROM stickers
+          WHERE id = ? AND owner_assistant_id IS NULL AND annotation_status = 'ready' AND semantic_revision = ?
+          ON CONFLICT(sticker_id) DO UPDATE SET model_config_id = excluded.model_config_id,
+            model_config_updated_at = excluded.model_config_updated_at, semantic_revision = excluded.semantic_revision,
+            error = excluded.error, updated_at = excluded.updated_at`,
+        [context.modelConfigId, context.modelConfigUpdatedAt, error, updatedAt, sticker.id, sticker.semanticRevision]);
+      }
+      throwIfAbortSignalAborted(signal);
+    });
+  }
+
+  async clearEmbeddingFailures(context: StickerEmbeddingModelContext, stickerId?: string): Promise<void> {
+    await this.database.runAsync(`DELETE FROM sticker_embedding_failures WHERE model_config_id = ?
+      AND model_config_updated_at = ? AND sticker_id IN (SELECT id FROM stickers WHERE owner_assistant_id IS NULL)
+      ${stickerId === undefined ? '' : 'AND sticker_id = ?'}`,
+    [context.modelConfigId, context.modelConfigUpdatedAt, ...(stickerId === undefined ? [] : [stickerId])]);
   }
 
   async listStickers(input: ListStickersInput = {}): Promise<Sticker[]> {
@@ -408,15 +491,9 @@ export class SQLiteStickerRepository implements StickerRepository {
     if (currentCount >= STICKER_LIBRARY_MAX_COUNT) {
       throw new StickerLibraryFullError(STICKER_LIBRARY_MAX_COUNT);
     }
+    const values = buildStickerValues(sticker);
     await transaction.runAsync(
-      `INSERT INTO stickers (
-         id, media_asset_id, owner_assistant_id, group_id, name, description, tags_json, emotion,
-         source_file_name, mime_type, width, height, is_animated, is_favorite,
-         use_count, last_used_at, annotation_status, annotation_error,
-         annotation_claim_id, annotation_claimed_at, semantic_revision,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      buildStickerValues(sticker),
+      `INSERT INTO stickers (${STICKER_COLUMNS}) VALUES (${values.map(() => '?').join(', ')})`, values,
     );
   }
 
@@ -506,8 +583,8 @@ export class SQLiteStickerRepository implements StickerRepository {
         `UPDATE stickers
          SET name = ?, description = ?, tags_json = ?, emotion = ?,
              semantic_revision = CASE WHEN ? THEN semantic_revision + 1 ELSE semantic_revision END,
-             updated_at = ?, annotation_status = CASE WHEN ? THEN 'ready' ELSE annotation_status END,
-             annotation_error = CASE WHEN ? THEN NULL ELSE annotation_error END
+             updated_at = ?, annotation_status = ?, annotation_error = NULL,
+             annotation_claim_id = NULL, annotation_claimed_at = NULL, annotation_requested = 0
          WHERE id = ?`,
         [
           nextName,
@@ -516,8 +593,7 @@ export class SQLiteStickerRepository implements StickerRepository {
           nextEmotion,
           bumpRevision ? 1 : 0,
           updatedAt,
-          ownerAssistantId !== null ? 1 : 0,
-          ownerAssistantId !== null ? 1 : 0,
+          ownerAssistantId !== null || current.annotationStatus === 'ready' || nextDescription ? 'ready' : 'manual_required',
           id,
         ],
       );
@@ -598,6 +674,7 @@ export class SQLiteStickerRepository implements StickerRepository {
         `SELECT ${STICKER_COLUMNS}
          FROM stickers
          WHERE annotation_status = 'pending' AND owner_assistant_id IS NULL
+           AND (annotation_requested = 1 OR (SELECT automatic_recognition_enabled FROM sticker_system_config WHERE id = 'global') = 1)
          ORDER BY created_at ASC, id ASC
          LIMIT 1`,
       );
@@ -613,7 +690,7 @@ export class SQLiteStickerRepository implements StickerRepository {
       if (claimed.changes !== 1) return null;
       const sticker = await this.getStickerByIdInTransaction(transaction, candidate.id);
       if (!sticker) throw new StickerNotFoundError(candidate.id);
-      return { sticker, claimId, claimedAt };
+      return { sticker, claimId, claimedAt, manual: candidate.annotation_requested === 1 };
     });
   }
 
@@ -644,7 +721,7 @@ export class SQLiteStickerRepository implements StickerRepository {
         `UPDATE stickers
          SET name = ?, description = ?, tags_json = ?, emotion = ?,
              semantic_revision = CASE WHEN ? THEN semantic_revision + 1 ELSE semantic_revision END,
-             annotation_status = 'ready', annotation_error = NULL,
+             annotation_status = 'ready', annotation_error = NULL, annotation_requested = 0,
              annotation_claim_id = NULL, annotation_claimed_at = NULL,
              updated_at = ?
          WHERE id = ? AND annotation_status = 'processing' AND annotation_claim_id = ?`,
@@ -674,9 +751,6 @@ export class SQLiteStickerRepository implements StickerRepository {
     return stickerTransaction(this.database, async (transaction) => {
       const current = await this.getStickerByIdInTransaction(transaction, stickerId);
       if (!current) throw new StickerNotFoundError(stickerId);
-      if (current.annotationStatus !== 'manual_required' && current.annotationStatus !== 'failed') {
-        throw new Error(`当前 Sticker 不需要手动完成标注：${stickerId}`);
-      }
       // 手动完成标注同样遵守 canonical 语义字段实际变化才递增 revision 的规则。
       const nextName = metadata.name ?? current.name;
       const nextDescription = metadata.description === undefined
@@ -694,10 +768,10 @@ export class SQLiteStickerRepository implements StickerRepository {
         `UPDATE stickers
          SET name = ?, description = ?, tags_json = ?, emotion = ?,
              semantic_revision = CASE WHEN ? THEN semantic_revision + 1 ELSE semantic_revision END,
-             annotation_status = 'ready', annotation_error = NULL,
+             annotation_status = 'ready', annotation_error = NULL, annotation_requested = 0,
              annotation_claim_id = NULL, annotation_claimed_at = NULL,
              updated_at = ?
-         WHERE id = ? AND annotation_status IN ('manual_required', 'failed')`,
+         WHERE id = ?`,
         [
           nextName,
           nextDescription,
@@ -724,7 +798,7 @@ export class SQLiteStickerRepository implements StickerRepository {
     return stickerTransaction(this.database, async (transaction) => {
       const result = await transaction.runAsync(
         `UPDATE stickers
-         SET annotation_status = 'failed', annotation_error = ?,
+         SET annotation_status = 'failed', annotation_error = ?, annotation_requested = 0,
              annotation_claim_id = NULL, annotation_claimed_at = NULL,
              updated_at = ?
          WHERE id = ? AND annotation_status = 'processing' AND annotation_claim_id = ?`,
@@ -786,13 +860,15 @@ export class SQLiteStickerRepository implements StickerRepository {
     const row = await this.database.getFirstAsync<{
       recognition_model_config_id: string | null;
       embedding_model_config_id: string | null;
+      automatic_recognition_enabled: number;
       updated_at: string;
     }>(
-      `SELECT recognition_model_config_id, embedding_model_config_id, updated_at
+      `SELECT recognition_model_config_id, embedding_model_config_id, automatic_recognition_enabled, updated_at
        FROM sticker_system_config WHERE id = 'global' LIMIT 1`,
     );
     if (!row) return null;
     return {
+      automaticRecognitionEnabled: row.automatic_recognition_enabled === 1,
       recognitionModelConfigId: row.recognition_model_config_id,
       embeddingModelConfigId: row.embedding_model_config_id,
       updatedAt: row.updated_at,
@@ -810,6 +886,8 @@ export class SQLiteStickerRepository implements StickerRepository {
 
   async saveStickerSystemConfig(config: StickerSystemConfig, updatedAt: string): Promise<void> {
     await stickerTransaction(this.database, async (transaction) => {
+      await transaction.runAsync(`UPDATE sticker_embedding_index_control SET revision = revision + 1, build_id = NULL
+        WHERE id = 1 AND (SELECT embedding_model_config_id FROM sticker_system_config WHERE id = 'global') IS NOT ?`, [config.embeddingModelConfigId]);
       await transaction.runAsync(
         `INSERT INTO sticker_system_config (
            id, recognition_model_config_id, embedding_model_config_id, created_at, updated_at
@@ -830,30 +908,96 @@ export class SQLiteStickerRepository implements StickerRepository {
 
   // -- 语义向量索引 --
 
-  async upsertStickerEmbedding(embedding: StickerEmbedding): Promise<void> {
-    await stickerTransaction(this.database, async (transaction) => {
-      await transaction.runAsync(
-        `INSERT INTO sticker_embeddings (
-           sticker_id, model_config_id, model_config_updated_at, semantic_revision,
-           dimension, vector_json, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(sticker_id, model_config_id) DO UPDATE SET
-           model_config_updated_at = excluded.model_config_updated_at,
-           semantic_revision = excluded.semantic_revision,
-           dimension = excluded.dimension,
-           vector_json = excluded.vector_json,
-           updated_at = excluded.updated_at`,
-        [
-          embedding.stickerId,
-          embedding.modelConfigId,
-          embedding.modelConfigUpdatedAt,
-          embedding.semanticRevision,
-          embedding.dimension,
-          JSON.stringify(embedding.vector),
-          embedding.createdAt,
-          embedding.updatedAt,
-        ],
-      );
+  async setAutomaticRecognitionEnabled(enabled: boolean, updatedAt: string): Promise<void> {
+    await stickerTransaction(this.database, async tx => {
+      await tx.runAsync(`INSERT INTO sticker_system_config (id, automatic_recognition_enabled, created_at, updated_at)
+        VALUES ('global', ?, ?, ?) ON CONFLICT(id) DO UPDATE SET automatic_recognition_enabled = excluded.automatic_recognition_enabled,
+        updated_at = excluded.updated_at`, [enabled ? 1 : 0, updatedAt, updatedAt]);
+      if (!enabled) await tx.runAsync(`UPDATE stickers SET annotation_status = 'pending', annotation_claim_id = NULL,
+        annotation_claimed_at = NULL, updated_at = ? WHERE owner_assistant_id IS NULL AND annotation_status = 'processing' AND annotation_requested = 0`, [updatedAt]);
+    });
+  }
+
+  async restoreEmbeddingIndexPublication(context: StickerEmbeddingModelContext, expectedRevision: number): Promise<void> {
+    await stickerTransaction(this.database, async tx => {
+      const result = await tx.runAsync(`UPDATE sticker_embedding_index_control SET published_model_id = ?, published_model_updated_at = ?
+        WHERE id = 1 AND revision = ? AND build_id IS NULL AND selected_model_id = ? AND selected_model_updated_at = ?
+          AND EXISTS (SELECT 1 FROM sticker_embeddings e JOIN stickers s ON s.id = e.sticker_id
+            WHERE s.owner_assistant_id IS NULL AND s.annotation_status = 'ready' AND e.model_config_id = ?
+              AND e.model_config_updated_at = ? AND e.semantic_revision = s.semantic_revision)`,
+        [context.modelConfigId, context.modelConfigUpdatedAt, expectedRevision, context.modelConfigId, context.modelConfigUpdatedAt,
+          context.modelConfigId, context.modelConfigUpdatedAt]);
+      if (result.changes !== 1) throw new Error('当前模型没有可恢复的匹配索引，请手动重建全部索引');
+    });
+  }
+
+  async invalidateEmbeddingModelInTransaction(tx: DatabaseTransactionExecutor, modelConfigId: string): Promise<void> {
+    await tx.runAsync(`UPDATE sticker_embedding_index_control SET revision = revision + 1, build_id = NULL
+      WHERE id = 1 AND EXISTS (SELECT 1 FROM sticker_system_config WHERE embedding_model_config_id = ?)`, [modelConfigId]);
+  }
+
+  async syncEmbeddingModel(context: StickerEmbeddingModelContext | null, expectedRevision: number): Promise<number | null> {
+    return stickerTransaction(this.database, async tx => {
+      const state = await tx.getFirstAsync<{ revision: number; selected_model_id: string | null; selected_model_updated_at: string | null }>('SELECT revision, selected_model_id, selected_model_updated_at FROM sticker_embedding_index_control WHERE id = 1');
+      if (state!.revision !== expectedRevision) return null;
+      if (state!.selected_model_id === (context?.modelConfigId ?? null) && state!.selected_model_updated_at === (context?.modelConfigUpdatedAt ?? null)) return expectedRevision;
+      await tx.runAsync('UPDATE sticker_embedding_index_control SET revision = revision + 1, build_id = NULL, selected_model_id = ?, selected_model_updated_at = ? WHERE id = 1', [context?.modelConfigId ?? null, context?.modelConfigUpdatedAt ?? null]);
+      return expectedRevision + 1;
+    });
+  }
+
+  async getEmbeddingIndexControl() {
+    return (await this.database.getFirstAsync<StickerEmbeddingIndexControl>(
+      'SELECT revision, build_id AS buildId, published_model_id AS publishedModelId, published_model_updated_at AS publishedModelUpdatedAt FROM sticker_embedding_index_control WHERE id = 1'))!;
+  }
+
+  async beginEmbeddingRebuild(id: string, context: StickerEmbeddingModelContext, expectedRevision: number) {
+    return stickerTransaction(this.database, async tx => {
+      const state = await tx.getFirstAsync<{ revision: number; selected_model_id: string | null; selected_model_updated_at: string | null }>('SELECT revision, selected_model_id, selected_model_updated_at FROM sticker_embedding_index_control WHERE id = 1');
+      if (state!.revision !== expectedRevision || state!.selected_model_id !== context.modelConfigId || state!.selected_model_updated_at !== context.modelConfigUpdatedAt) throw new Error('向量模型已变化，请重新发起重建');
+      await tx.runAsync('UPDATE sticker_embedding_index_control SET revision = revision + 1, build_id = ? WHERE id = 1', [id]);
+      const control = await tx.getFirstAsync<{ revision: number }>('SELECT revision FROM sticker_embedding_index_control WHERE id = 1');
+      const rows = await tx.getAllAsync<StickerRow>("SELECT * FROM stickers WHERE owner_assistant_id IS NULL AND annotation_status = 'ready' ORDER BY id");
+      return { id, revision: control!.revision, stickers: rows.map(mapStickerRow) };
+    });
+  }
+
+  async publishEmbeddingRebuild(build: StickerEmbeddingRebuild, embeddings: StickerEmbedding[], context: StickerEmbeddingModelContext, signal: AbortSignal): Promise<void> {
+    await stickerTransaction(this.database, async tx => {
+      throwIfAbortSignalAborted(signal);
+      const control = await tx.getFirstAsync<{ revision: number; build_id: string | null; selected_model_id: string | null; selected_model_updated_at: string | null }>('SELECT * FROM sticker_embedding_index_control WHERE id = 1');
+      if (control!.revision !== build.revision || control!.build_id !== build.id || control!.selected_model_id !== context.modelConfigId || control!.selected_model_updated_at !== context.modelConfigUpdatedAt) throw new Error('向量模型或重建任务已变化，本次结果未覆盖旧索引');
+      const rows = await tx.getAllAsync<{ id: string; semantic_revision: number }>("SELECT id, semantic_revision FROM stickers WHERE owner_assistant_id IS NULL AND annotation_status = 'ready' ORDER BY id");
+      if (rows.length !== build.stickers.length || rows.some((row, index) => row.id !== build.stickers[index].id || row.semantic_revision !== build.stickers[index].semanticRevision)) throw new Error('重建期间表情包发生变化，本次结果未覆盖旧索引，请重新重建');
+      // 删除与写入属于同一事务，任何一步失败都会恢复完整旧索引。
+      await tx.runAsync('DELETE FROM sticker_embeddings WHERE sticker_id IN (SELECT id FROM stickers WHERE owner_assistant_id IS NULL)');
+      for (const embedding of embeddings) await writeEmbedding(tx, embedding);
+      await tx.runAsync('DELETE FROM sticker_embedding_failures WHERE sticker_id IN (SELECT id FROM stickers WHERE owner_assistant_id IS NULL)');
+      await tx.runAsync('UPDATE sticker_embedding_index_control SET build_id = NULL, published_model_id = ?, published_model_updated_at = ? WHERE id = 1', [context.modelConfigId, context.modelConfigUpdatedAt]);
+      throwIfAbortSignalAborted(signal);
+    });
+  }
+
+  async finishEmbeddingRebuild(id: string): Promise<void> {
+    await this.database.runAsync('UPDATE sticker_embedding_index_control SET build_id = NULL WHERE id = 1 AND build_id = ?', [id]);
+  }
+
+  async commitEmbeddingBatch(embeddings: StickerEmbedding[], revision: number, signal: AbortSignal): Promise<number> {
+    return stickerTransaction(this.database, async tx => {
+      throwIfAbortSignalAborted(signal);
+      const control = await tx.getFirstAsync<{ revision: number; build_id: string | null }>('SELECT revision, build_id FROM sticker_embedding_index_control WHERE id = 1');
+      if (control!.revision !== revision || control!.build_id !== null) return 0;
+      let accepted = 0;
+      for (const embedding of embeddings) {
+        const current = await tx.getFirstAsync<{ semantic_revision: number }>("SELECT semantic_revision FROM stickers WHERE id = ? AND owner_assistant_id IS NULL AND annotation_status = 'ready'", [embedding.stickerId]);
+        if (!current || current.semantic_revision !== embedding.semanticRevision) continue;
+        await writeEmbedding(tx, embedding);
+        await tx.runAsync('DELETE FROM sticker_embedding_failures WHERE sticker_id = ? AND model_config_id = ? AND model_config_updated_at = ? AND semantic_revision = ?',
+          [embedding.stickerId, embedding.modelConfigId, embedding.modelConfigUpdatedAt, embedding.semanticRevision]);
+        accepted++;
+      }
+      throwIfAbortSignalAborted(signal);
+      return accepted;
     });
   }
 
@@ -872,16 +1016,6 @@ export class SQLiteStickerRepository implements StickerRepository {
       [modelConfigId, ...uniqueIds],
     );
     return rows.map(mapStickerEmbeddingRow);
-  }
-
-  async deleteStickerEmbeddingsByModel(modelConfigId: string): Promise<number> {
-    return stickerTransaction(this.database, async (transaction) => {
-      const result = await transaction.runAsync(
-        `DELETE FROM sticker_embeddings WHERE model_config_id = ? AND sticker_id IN (SELECT id FROM stickers WHERE owner_assistant_id IS NULL)`,
-        [modelConfigId],
-      );
-      return result.changes;
-    });
   }
 
   async countReadyStickers(): Promise<number> {
@@ -926,6 +1060,8 @@ export class SQLiteStickerRepository implements StickerRepository {
        LEFT JOIN sticker_embeddings e
          ON e.sticker_id = s.id AND e.model_config_id = ?
        WHERE s.annotation_status = 'ready' AND s.owner_assistant_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM sticker_embedding_failures f WHERE f.sticker_id = s.id
+           AND f.model_config_id = ? AND f.model_config_updated_at = ? AND f.semantic_revision = s.semantic_revision)
          AND (
            e.sticker_id IS NULL
            OR e.model_config_updated_at <> ?
@@ -933,9 +1069,11 @@ export class SQLiteStickerRepository implements StickerRepository {
        ORDER BY s.updated_at ASC, s.id ASC
        LIMIT ?`,
       context.dimension === null
-        ? [context.modelConfigId, context.modelConfigUpdatedAt, Math.max(1, Math.floor(limit))]
+        ? [context.modelConfigId, context.modelConfigId, context.modelConfigUpdatedAt, context.modelConfigUpdatedAt, Math.max(1, Math.floor(limit))]
         : [
             context.modelConfigId,
+            context.modelConfigId,
+            context.modelConfigUpdatedAt,
             context.modelConfigUpdatedAt,
             context.dimension,
             Math.max(1, Math.floor(limit)),
@@ -1041,5 +1179,3 @@ function appendGroupFilter(
   where.push('group_id = ?');
   params.push(groupId);
 }
-
-export const stickerRepository = new SQLiteStickerRepository();

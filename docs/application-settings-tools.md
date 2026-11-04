@@ -13,7 +13,9 @@ AI 可以自主布置自己；当前主理 AI 可以管理其他 AI 及全局图
 | `get_call_background` | 无，`agent_id` 可选 | 自己；主理可看其他 AI |
 | `get_global_background` | 无 | 当前主理 AI |
 | `get_moments_cover` | 无 | 全部 AI |
+| `get_own_space_cover` | 无 | 仅调用者自己的个人空间封面（主页与朋友圈共用） |
 | `set_ai_avatar` | `action`，`agent_id` 可选 | 自己；主理可改其他 AI |
+| `set_own_space_cover` | `media_asset_id` | 仅调用者自己，主理也不能指定其他 AI |
 | `set_chat_background` | `action`，`agent_id` 可选 | 自己；主理可改其他 AI |
 | `set_call_background` | `action`，`agent_id` 可选 | 自己；主理可改其他 AI |
 | `set_user_avatar` | `action` | 当前主理 AI |
@@ -21,7 +23,11 @@ AI 可以自主布置自己；当前主理 AI 可以管理其他 AI 及全局图
 | `set_global_background` | `action` | 当前主理 AI |
 | `set_ai_name` | `name`，`agent_id` 可选 | 自己；主理可改其他 AI |
 
-图片写工具的 `action=set` 必须带 `media_asset_id`，`action=reset` 不接受图片 ID。目标仅使用身份目录中的不可变 `agentId`，省略表示自己；内部 Assistant 主键、名称和调用者身份不由模型选择。
+`set_own_space_cover` 只接受 `media_asset_id`，修改 AI 的个人空间封面，个人主页与该 AI 朋友圈顶部共用这一份图片，默认图为 `assets/stars.jpg`。目标直接取可信运行上下文的 Assistant ID，不接受目标参数，不改变用户自己的朋友圈封面。图片自动居中裁剪为 2:1，提交后两处页面通过同一助手资料事实刷新。
+
+`get_own_space_cover` 无需参数，同样以可信调用者为唯一目标。已设置封面时返回当前裁剪后图片的 `mediaAssetId` 和视觉结果；未设置时读取两处页面共用的打包星空图，`mediaAssetId` 为 `null`。已选图片不可用或视觉失败时返回明确错误，不切换为默认图，不新增媒体或聊天消息。
+
+其余图片写工具的 `action=set` 必须带 `media_asset_id`，`action=reset` 不接受图片 ID。目标仅使用身份目录中的不可变 `agentId`，省略表示自己；内部 Assistant 主键、名称和调用者身份不由模型选择。
 
 群头像按 `group_id` 精确读取；仅群聊回复中省略参数时使用当前群 ID，单聊、通话和自主运行必须明确指定。当前群的「群聊身份背景」注入 `group_id`；已注入的跨会话背景中，`kind=group` 的 `conversationId` 就是该群 ID，仅用于工具定位。群成员被移除或停用后失去读取资格。群头像修改、群名称及成员管理留给独立的群聊管理工具包。
 
@@ -37,7 +43,7 @@ AI 可以自主布置自己；当前主理 AI 可以管理其他 AI 及全局图
 
 ## 所有权与提交
 
-- Assistants：AI 头像、公开名称与当前主理关系。
+- Assistants：AI 头像、个人空间封面、公开名称与当前主理关系。
 - Profile：用户头像、朋友圈封面、全局与单聊壁纸选择。
 - Calls：按 AI 独立保存的通话背景。
 - Chat：群头像选择及当前成员关系，在同一次查询中裁决读取资格，不加载管理员凭据或成员资料；主理资格由可信 Host 提供。
@@ -49,6 +55,8 @@ AI 可以自主布置自己；当前主理 AI 可以管理其他 AI 及全局图
 改公开名称不修改用户私有昵称、人设、身份键或历史正文。工具结果不泄露私有昵称。提交后通过已有资料事件，以及壁纸、通话背景的更新事实刷新已挂载消费者；初次读取不能覆盖期间收到的更新。原生通话小窗与持续通知沿用该次通话启动时的身份快照。
 
 数据库版本 128 将旧 `change_own_avatar` 的单项权限、默认开关和星标迁到 `set_ai_avatar`，保留明确的新配置，删除旧工具入口；127 的已展开工具包保持原状。
+
+数据库版本 166 将 `get_own_profile_cover` / `set_own_profile_cover` 的单项权限、默认开关和星标迁到 `get_own_space_cover` / `set_own_space_cover`，保留已有封面图片和明确的新配置，删除旧运行入口。
 
 ## 验证
 

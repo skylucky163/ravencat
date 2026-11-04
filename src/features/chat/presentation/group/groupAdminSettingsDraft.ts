@@ -4,6 +4,7 @@ import { readDraftInteger, readDraftNumber } from '@shared/ui/draftValidation';
 import type { GroupChatAdminConfig, UpdateGroupChatAdminConfigInput } from '../../group/domain/GroupChat';
 
 export interface GroupAdminSettingsDraft {
+  serviceConfigId: string;
   apiBaseUrl: string;
   apiKey: string;
   selectedModel: string;
@@ -16,6 +17,7 @@ export interface GroupAdminSettingsDraft {
 
 export function getGroupAdminSettingsDraft(config?: GroupChatAdminConfig | null): GroupAdminSettingsDraft {
   return {
+    serviceConfigId: config?.serviceConfigId ?? '',
     apiBaseUrl: config?.apiBaseUrl ?? '', apiKey: config?.apiKey ?? '', selectedModel: config?.model ?? '',
     tempInput: config?.temperature == null ? '' : String(config.temperature),
     topPInput: config?.topP == null ? '' : String(config.topP),

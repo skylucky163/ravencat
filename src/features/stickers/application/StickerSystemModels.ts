@@ -10,17 +10,17 @@ import {
   evaluateStickerModelConfig,
   evaluateStickerModelSelection,
 } from '../domain/StickerSystemConfig';
-import { emitStickerAnnotationPending } from './StickerAnnotationPendingSignal';
-import { emitStickerEmbeddingPending } from './StickerEmbeddingPendingSignal';
+import { emitStickerAnnotationPending, emitStickerAutomaticRecognitionChanged } from './StickerAnnotationPendingSignal';
 import { getStickersRuntimeDependencies } from './StickerRuntime';
-
-const STICKER_SYSTEM_CONFIG_ID = 'global' as const;
+import { emitStickerProcessingChanged } from './StickerProcessingSignal';
+import { emitStickerAnnotationChanged } from './StickerAnnotationChangedSignal';
 
 export async function getStickerSystemConfig(): Promise<StickerSystemConfig> {
   const runtime = getStickersRuntimeDependencies();
   const stored = await runtime.repository.getStickerSystemConfig();
   return (
     stored ?? {
+      automaticRecognitionEnabled: false,
       recognitionModelConfigId: null,
       embeddingModelConfigId: null,
       updatedAt: runtime.now(),
@@ -28,7 +28,16 @@ export async function getStickerSystemConfig(): Promise<StickerSystemConfig> {
   );
 }
 
-/** Recognition 只接受 enabled 的 ocr 类模型配置；Embedding 只接受 enabled 的 embedding 配置。 */
+/** 开关与自动 claim 的撤销在同一事务提交；手动单张请求仍保留。 */
+export async function setStickerAutomaticRecognitionEnabled(enabled: boolean): Promise<void> {
+  const runtime = getStickersRuntimeDependencies();
+  await runtime.repository.setAutomaticRecognitionEnabled(enabled, runtime.now());
+  emitStickerAutomaticRecognitionChanged(enabled);
+  emitStickerAnnotationChanged();
+  emitStickerAnnotationPending();
+}
+
+/** 选择边界复用资产的类型与连接完整性规则。 */
 async function requireValidModelConfig(
   modelConfigId: string,
   requirement: StickerModelRequirementKind,
@@ -39,8 +48,8 @@ async function requireValidModelConfig(
   if (!valid) {
     throw new Error(
       requirement === 'ocr'
-        ? '视觉识别模型必须选择辅助模型中心已启用的 ocr 类模型'
-        : '向量化模型必须选择辅助模型中心已启用的 embedding 类模型',
+        ? '视觉识别模型必须选择辅助模型中心配置完整的 ocr 类模型'
+        : '向量化模型必须选择辅助模型中心配置完整的 embedding 类模型',
     );
   }
   return valid;
@@ -66,7 +75,7 @@ export async function setStickerRecognitionModel(
   return saved;
 }
 
-/** 设置向量化模型；持久化成功后立刻发出 embedding 队列信号触发补建 / 重建。 */
+/** 切换只撤销旧任务并更新所选模型，不授权为新模型重建索引。 */
 export async function setStickerEmbeddingModel(
   modelConfigId: string | null,
 ): Promise<StickerSystemConfig> {
@@ -74,11 +83,20 @@ export async function setStickerEmbeddingModel(
   if (normalized) {
     await requireValidModelConfig(normalized, 'embedding');
   }
-  const saved = await saveStickerSystemConfig({ embeddingModelConfigId: normalized });
-  if (normalized) {
-    emitStickerEmbeddingPending();
-  }
-  return saved;
+  return getStickersRuntimeDependencies().withEmbeddingMaintenance(async () => {
+    const saved = await saveStickerSystemConfig({ embeddingModelConfigId: normalized });
+    await syncStickerEmbeddingModel();
+    return saved;
+  });
+}
+
+export async function syncStickerEmbeddingModel(): Promise<void> {
+  const runtime = getStickersRuntimeDependencies();
+  const before = await runtime.repository.getEmbeddingIndexControl();
+  const model = await resolveStickerEmbeddingModel();
+  await runtime.repository.syncEmbeddingModel(model
+    ? { modelConfigId: model.id, modelConfigUpdatedAt: model.updatedAt, dimension: null } : null, before.revision);
+  emitStickerProcessingChanged();
 }
 
 async function saveStickerSystemConfig(
@@ -87,6 +105,7 @@ async function saveStickerSystemConfig(
   const runtime = getStickersRuntimeDependencies();
   const current = await getStickerSystemConfig();
   const next: StickerSystemConfig = {
+    automaticRecognitionEnabled: current.automaticRecognitionEnabled,
     recognitionModelConfigId: patch.recognitionModelConfigId === undefined
       ? current.recognitionModelConfigId
       : patch.recognitionModelConfigId,
@@ -96,6 +115,7 @@ async function saveStickerSystemConfig(
     updatedAt: runtime.now(),
   };
   await runtime.repository.saveStickerSystemConfig(next, next.updatedAt);
+  emitStickerProcessingChanged();
   return next;
 }
 
@@ -103,9 +123,9 @@ export async function listStickerModelCandidates(
   requirement: StickerModelRequirementKind,
 ): Promise<StickerModelConfigRef[]> {
   const runtime = getStickersRuntimeDependencies();
-  // picker 只显示 enabled 且 capabilityKind 匹配的模型；创建模型仍属于辅助模型中心。
+  // 候选与运行解析共用可用性判定，创建模型仍属于辅助模型中心。
   const configs = await runtime.auxiliaryModels.listModelConfigsByRequirement(requirement);
-  return configs.filter((config) => config.enabled);
+  return configs.filter((config) => evaluateStickerModelConfig(config, requirement) !== null);
 }
 
 /**
@@ -120,9 +140,11 @@ export interface StickerSystemModelSelection {
   embedding: StickerModelSelection;
 }
 
-export async function getStickerSystemModelSelection(): Promise<StickerSystemModelSelection> {
+export async function getStickerSystemModelSelection(
+  snapshot?: StickerSystemConfig,
+): Promise<StickerSystemModelSelection> {
   const runtime = getStickersRuntimeDependencies();
-  const config = await getStickerSystemConfig();
+  const config = snapshot ?? await getStickerSystemConfig();
   const [recognitionConfig, embeddingConfig] = await Promise.all([
     config.recognitionModelConfigId
       ? runtime.auxiliaryModels.getModelConfigById(config.recognitionModelConfigId)
@@ -159,13 +181,13 @@ export async function resolveStickerRecognitionModel(): Promise<StickerModelConf
   return evaluateStickerModelConfig(model, 'ocr');
 }
 
-/** embedding resolver：模型必须存在、enabled 且 capabilityKind 为 embedding。 */
-export async function resolveStickerEmbeddingModel(): Promise<StickerModelConfigRef | null> {
-  const config = await getStickerSystemConfig();
+/** embedding resolver：模型必须存在、连接完整且 capabilityKind 为 embedding。 */
+export async function resolveStickerEmbeddingModel(
+  snapshot?: StickerSystemConfig,
+): Promise<StickerModelConfigRef | null> {
+  const config = snapshot ?? await getStickerSystemConfig();
   if (!config.embeddingModelConfigId) return null;
   const runtime = getStickersRuntimeDependencies();
   const model = await runtime.auxiliaryModels.getModelConfigById(config.embeddingModelConfigId);
   return evaluateStickerModelConfig(model, 'embedding');
 }
-
-export { STICKER_SYSTEM_CONFIG_ID };

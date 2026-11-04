@@ -242,7 +242,7 @@ assert.match(
 assert.match(bubbleSkinStoreSource, /require\(!Files\.isSymbolicLink\(persistedFile\.toPath\(\)\)\)/u);
 assert.match(
   bubbleSkinStoreSource,
-  /private const val SKIN_DIRECTORY = BubbleSkinAssetResolver\.STORAGE_DIRECTORY/u,
+  /private const val SKIN_DIRECTORY = "ravencat\/bubble-skins"/u,
   'owner root 只有一个定义，避免打包 root 与 key 解析边界漂移',
 );
 assert.match(bubbleSkinStoreSource, /require\(seenIds\.add\(id\)\)/u);

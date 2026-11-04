@@ -105,7 +105,7 @@ export async function saveMcpServer(input: SaveMcpServerUseCaseInput): Promise<M
       }
       saved = invalidated;
     } else {
-      // 新建配置只有成功连接后才能启用。
+      // 新增服务默认启用；实际工具暴露仍以成功连接和工具授权为门槛。
       saved = await runtime.serverConfigRepository.save({
         id: input.id,
         name,
@@ -116,7 +116,7 @@ export async function saveMcpServer(input: SaveMcpServerUseCaseInput): Promise<M
         credentialRef,
         endpointClass: endpoint.endpointClass,
         expectedConnection: existing ? { url: existing.url, credentialRef: existing.credentialRef } : null,
-        enabled: existing ? input.enabled : false,
+        enabled: existing ? input.enabled : true,
         nowIso,
       });
     }

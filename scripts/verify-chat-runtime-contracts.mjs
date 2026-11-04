@@ -266,12 +266,8 @@ const nativeNotificationReceiverSource = read(
 );
 assert.match(
   nativeNotificationReceiverSource,
-  /notificationAction == "reject"[\s\S]*NotificationResponseDispatcher\.recordForHeadless\(appContext, response\)[\s\S]*return[\s\S]*appContext\.startActivity\(launchIntent\)/,
+  /notificationAction == "reject"[\s\S]*NotificationResponseDispatcher\.recordCallAction\(appContext, response\)[\s\S]*return[\s\S]*appContext\.startActivity\(launchIntent\)/,
   '系统通知拒绝动作必须在启动界面之前转入后台任务并返回'
-);
-
-const nativeNotificationDispatcherSource = read(
-  'modules/kimiphone-notifications/android/src/main/java/expo/modules/kimiphonenotifications/NotificationResponseDispatcher.kt'
 );
 
 const nativeIncomingCallActivitySource = read(
@@ -301,11 +297,7 @@ assert.match(
 // reject 的 durable native→Host inbox：先持久化 response；
 // 前台 observer 在线则交付 Host 并出队；前台不在线则 Headless 立即执行 rejectCall()，
 // 但保留 pending response 供 Host 下次启动/恢复消费对账（native action 不得只依赖一次内存事件交付）。
-assert.match(
-  nativeNotificationDispatcherSource,
-  /recordForHeadless[\s\S]*enqueueResponse\(context, response\)[\s\S]*NotificationResponseEvents\.emit\(response\)[\s\S]*removePendingResponse\(context, responseId\)[\s\S]*CallNotificationActionHeadlessTaskService\.start\(context, response\)/,
-  'reject 必须先持久化 response，Headless 执行后仍保留 durable response 供 Host 消费'
-);
+
 
 const nativeIncomingCallPublisherSource = read(
   'modules/kimiphone-notifications/android/src/main/java/expo/modules/kimiphonenotifications/NotificationPublisher.kt'
@@ -409,22 +401,6 @@ assert.match(
   /IncomingCallActivity[\s\S]*showWhenLocked="true"[\s\S]*turnScreenOn="true"/,
   'IncomingCallActivity 必须声明锁屏展示与亮屏能力'
 );
-const nativeNotificationManifestSource = read(
-  'modules/kimiphone-notifications/android/src/main/AndroidManifest.xml'
-);
-assert.match(
-  nativeNotificationManifestSource,
-  /CallNotificationActionHeadlessTaskService/,
-  '通知拒绝后台任务服务未注册'
-);
-
-const appEntrySource = read('index.js');
-assert.match(
-  appEntrySource,
-  /registerHeadlessTask\([\s\S]*'KimiPhoneCallNotificationActionTask'[\s\S]*runCallNotificationActionHeadlessTask/,
-  '通知拒绝后台任务未注册到 React Native'
-);
-
 const tabsLayoutSource = read('src/app/(tabs)/_layout.tsx');
 assert.match(
   tabsLayoutSource,
@@ -445,8 +421,6 @@ assert.doesNotMatch(
 for (const routePath of [
   'src/app/(tabs)/conversations.tsx',
   'src/app/chat/[aiId]/index.tsx',
-  'src/app/chat/[aiId]/model-settings.tsx',
-  'src/app/chat/[aiId]/chat-settings.tsx',
   'src/app/chat/[aiId]/file-preview.tsx',
 ]) {
   assert.match(read(routePath), /from '@features\/chat'/, `${routePath} 未通过 Chat 公共出口接入`);

@@ -71,9 +71,6 @@ export {
 } from './DeviceObserver';
 export {
   startConversationTurnExecutionHost,
-  waitForConversationExecutionStop,
-  finishConversationExecution,
-  getConversationExecutionRemainingTime,
   startHostRelationshipReplyExecution,
   type ConversationTurnExecutionStartOptions,
 } from './ConversationTurnExecutionHost';
@@ -175,3 +172,15 @@ export {
   type DeviceLocationAccessState,
   type DeviceLocationSnapshot,
 } from './DeviceLocation';
+export {
+  getBackgroundRuntimeState,
+  setBackgroundRuntimeEnabled,
+  reconcileBackgroundRuntime,
+  type BackgroundRuntimeState,
+  connectApplicationExecutionHost,
+  postApplicationExecution,
+  takeApplicationExecutions,
+  completeApplicationExecution,
+  subscribeApplicationExecutions,
+  type ApplicationExecutionRequest,
+} from './BackgroundRuntime';

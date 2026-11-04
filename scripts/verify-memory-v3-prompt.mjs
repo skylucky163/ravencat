@@ -56,6 +56,7 @@ mocks.set('@features/chat', { ...metadata, getChatBackgroundContexts: async () =
   settings: summarySettings, contextSegments: summarySettings.injectEnabled ? contextSegments ?? segments : [],
   timeline: buildConversationTimeline(remaining.filter((item) => !protectedIds.includes(item.messageId)), pendingCalls),
 }), subscribeChatSummaryChanged: () => () => {}, openConversationTimeline: async () => ({ success: true, messages: timelineMessages, hasMore: false }) });
+mocks.get('@features/chat').getChatSummarySettings = async () => ({ primaryLimit: null, groupTriggerCount: 40, modelConfigId: null });
 const factory = load('src/host/prompt/PromptPackBlockFactory.ts').promptPackBlockFactory;
 mocks.set('./providers', { renderHostPromptProviderBlock: async (id, { params }) => {
   if (id === 'context.tools_description') return factory.createToolsDescriptionBlock(params.toolsDescription, params.mcpServices);
@@ -481,7 +482,7 @@ mocks.set('./agent/createAgentToolRegistry', {
 mocks.set('./agent/ToolPackageExposure', { registerToolPackagesForHostRun: () => ({ instructions: () => ({ catalog: '固定工具包目录' }) }) });
 mocks.set('./agent/registerMcpToolsForHostRun', { resolveMcpExposure: async () => ({ services: [] }) });
 const assistants = {
-  a: { id: 'a', name: '小鸦', systemPrompt: '你是小鸦，用温柔而直接的语气与枫渡相处。', apiBaseUrl: 'https://example.invalid', apiKey: 'test', model: 'chat', maxTokens: 2000 },
+  a: { id: 'a', name: '小鸦', privateContextPrimaryLimit: 30, systemPrompt: '你是小鸦，用温柔而直接的语气与枫渡相处。', apiBaseUrl: 'https://example.invalid', apiKey: 'test', model: 'chat', maxTokens: 2000 },
   b: { id: 'b', name: '小月', systemPrompt: '你是小月，口吻沉静，珍惜与枫渡的共同经历。', apiBaseUrl: 'https://example.invalid', apiKey: 'test', model: 'chat', maxTokens: 2000 },
 };
 let selectedModel = { baseURL: 'https://aux.invalid', apiKey: 'aux-key', model: 'aux-summary', maxTokens: 7000, temperature: 0, topP: null };
@@ -509,6 +510,12 @@ mocks.set('@features/chat/composition', {
 });
 mocks.set('../runtime/ChatSummaryQueueCoordinator', { configureChatSummaryQueue() {} });
 load('src/host/composition/configureChatSummaryRuntime.ts').configureChatSummary();
+assert.deepEqual(await summaryRuntime.getBatchSettings('a'), { batchSize: 30, recentWindowLimit: 30 }, '单聊批次与近期原文保留量来自当前 AI 的注入设置');
+assert.equal((await summaryRuntime.getBatchSettings('group')).recentWindowLimit, 0, '群摘要不引入单聊近期保留规则');
+const defaultSummarySettingsReader = mocks.get('@features/chat').getChatSummarySettings;
+mocks.get('@features/chat').getChatSummarySettings = async () => ({ primaryLimit: 10, groupTriggerCount: 40, modelConfigId: null });
+assert.deepEqual(await summaryRuntime.getBatchSettings('a'), { batchSize: 10, recentWindowLimit: 30 }, '手动固定摘要批次不改变近期原文保留量');
+mocks.get('@features/chat').getChatSummarySettings = defaultSummarySettingsReader;
 const diagnostics=[]; const report=async value=>{diagnostics.push(value);};
 const requestSettings={requestTimeoutSeconds:300,maxOutputTokens:null,modelConfigId:null};
 const summaryClaim = { conversationId: 'a', previous: [], timeZone: 'Asia/Shanghai', calls: [],
@@ -562,6 +569,21 @@ await assert.rejects(summaryRuntime.generateSecondary({conversationId:'a',timeZo
 modelResponse={...modelResponse,text:'猫'.repeat(501)};
 assert.equal(await summaryRuntime.generateAddition(summaryClaim,new AbortController().signal,report,requestSettings),modelResponse.text,
   '超过提示词字数的非空纯正文仍完整返回');
+for (const generate of [summaryRuntime.generateAddition, summaryRuntime.generateSecondary]) {
+  const input = generate === summaryRuntime.generateAddition ? summaryClaim : { conversationId: 'a', timeZone: 'Asia/Shanghai', segments: [] };
+  for (const text of ['本批无新增。', '本批无新增', '本批无新增.', ' \n本批无摘要。\t', '本批无摘要']) {
+    modelResponse = { ...modelResponse, text };
+    assert.equal(await generate(input, new AbortController().signal, report, requestSettings), null, '无新增说明转成成功空结果');
+    assert.equal(diagnostics.at(-1).finishReason, 'stop', '成功空结果仍保留调用诊断');
+  }
+  for (const text of ['用户要求不把“本批无新增。”保存成记忆。', '本批无新增。\n搬家：用户决定下周搬家。']) {
+    modelResponse = { ...modelResponse, text };
+    assert.equal(await generate(input, new AbortController().signal, report, requestSettings), text, '包含无新增字样的真实正文不被误删');
+  }
+}
+modelResponse={...modelResponse,finishReason:'length',text:'本批无新增。'};
+await assert.rejects(summaryRuntime.generateAddition(summaryClaim,new AbortController().signal,report,requestSettings),
+  error=>error.failure.kind==='output_limit','截断结果即使等于无新增说明也不能成功交接');
 modelResponse={success:false,text:'',error:'credential test invalid',httpStatus:401};
 await assert.rejects(summaryRuntime.generateAddition(summaryClaim,new AbortController().signal,report,requestSettings),error=>error.failure.kind==='request' && !error.failure.retryable);
 assert.ok(!diagnostics.at(-1).serverError.includes('test'),'服务端错误中的凭据不落库');

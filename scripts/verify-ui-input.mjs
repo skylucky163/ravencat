@@ -66,7 +66,7 @@ function Editor({ enabled = true }) {
 }
 await act(async () => { rendered = create(React.createElement(Editor), { createNodeMock: (element) => element.type === 'Input' ? inputNative : windowNative }); });
 const windowView = () => rendered.root.findAllByType('View').find(node => node.props.testID === 'window');
-const bottom = () => Object.assign({}, ...windowView().props.style).paddingBottom;
+const keyboardHeight = () => Object.assign({}, ...windowView().props.style).height;
 const emit = async (event, coordinates) => {
   keyboard = event === 'keyboardDidShow' ? coordinates : undefined;
   await act(async () => { for (const listener of listeners.get(event)) listener({ endCoordinates: coordinates }); });
@@ -85,35 +85,35 @@ assert.equal(ref.current, inputNative);
 assert.equal(ref.current.focused, true);
 for (let cycle = 0; cycle < 3; cycle++) {
   await showKeyboard();
-  assert.equal(bottom(), 300, '只补窗口与键盘重叠的部分');
+  assert.equal(keyboardHeight(), 500, '容器底边直接与键盘顶边对齐');
   await emit('keyboardDidHide', { screenY: 400, height: 0 });
-  assert.equal(bottom(), 0, '隐藏事件即使携带旧坐标也清除留白');
+  assert.equal(keyboardHeight(), undefined, '隐藏事件即使携带旧坐标也恢复原始布局');
   assert.equal(rendered.root.findByType('Input').props.value, '第一行\n第二行');
 }
 await act(async () => rendered.update(React.createElement(Editor, { enabled: false })));
 assert.equal(listeners.size, 0, '窗口关闭后释放键盘监听');
 keyboard = { screenY: 500, screenX: 0, width: 400, height: 300 };
 await act(async () => rendered.update(React.createElement(Editor)));
-assert.equal(bottom(), 300, '接入已打开键盘的改写窗口时读取当前键盘位置');
+assert.equal(keyboardHeight(), 500, '接入已打开键盘的改写窗口时读取当前键盘位置');
 await layout({ y: 0, height: 500 });
-assert.equal(bottom(), 0, '原生窗口已缩到键盘上方时不能再加一次键盘高度');
+assert.equal(keyboardHeight(), 500, '原生窗口已缩到键盘上方时保持相同底边');
 await layout({ y: 120, height: 500 });
-assert.equal(bottom(), 120, '局部 onLayout 的 y 为零时仍使用窗口实际起点');
+assert.equal(keyboardHeight(), 380, '局部 onLayout 的 y 为零时仍使用窗口实际起点');
 await layout({ y: 0, height: 800 });
-assert.equal(bottom(), 300, '窗口恢复全屏时重新计算实际重叠');
+assert.equal(keyboardHeight(), 500, '窗口恢复全屏时底边仍不重复扣除键盘高度');
 deferMeasurements = true;
 await showKeyboard();
 await emit('keyboardDidHide', { screenY: 500, height: 0 });
 await act(async () => measurements.splice(0).forEach(complete => complete()));
-assert.equal(bottom(), 0, '隐藏后晚到的测量不能恢复大块空白');
+assert.equal(keyboardHeight(), undefined, '隐藏后晚到的测量不能恢复受限高度');
 await showKeyboard();
 await layout({ y: 0, height: 500 });
 await act(async () => measurements.splice(0).reverse().forEach(complete => complete()));
-assert.equal(bottom(), 0, '窗口缩放后旧测量逆序返回也不能覆盖最新重叠量');
+assert.equal(keyboardHeight(), 500, '窗口缩放后旧测量逆序返回也不能移动键盘边界');
 await showKeyboard();
 await act(async () => rendered.update(React.createElement(Editor, { enabled: false })));
 await act(async () => measurements.splice(0).forEach(complete => complete()));
-assert.equal(bottom(), 0, '退出窗口后不再接受旧测量');
+assert.equal(keyboardHeight(), undefined, '退出窗口后不再接受旧测量');
 deferMeasurements = false;
 await act(async () => rendered.unmount());
 assert.equal(listeners.size, 0, '窗口卸载后释放键盘监听');
@@ -134,32 +134,32 @@ frame = { y: 0, height: 800 };
 await act(async () => { rendered = create(React.createElement(DetachableContainer)); });
 await showKeyboard();
 const detachedWindow = () => rendered.root.findByType('DetachedWindow');
-const detachedBottom = () => Object.assign({}, ...detachedWindow().props.style).paddingBottom;
-assert.equal(detachedBottom(), 0, '没有原生 View 的保留页面忽略其他窗口的键盘事件');
+const detachedHeight = () => Object.assign({}, ...detachedWindow().props.style).height;
+assert.equal(detachedHeight(), undefined, '没有原生 View 的保留页面忽略其他窗口的键盘事件');
 nativeViewAttached = true;
 await act(async () => { rendered.update(React.createElement(DetachableContainer)); });
 await act(async () => { detachedWindow().props.onLayout({ nativeEvent: { layout: { y: 0, height: 800 } } }); });
-assert.equal(detachedBottom(), 300, '原生 View 重新接入后按实际键盘位置避让');
+assert.equal(detachedHeight(), 500, '原生 View 重新接入后按实际键盘位置避让');
 deferMeasurements = true;
 frame = { y: 0, height: 700 };
 await showKeyboard();
 nativeViewAttached = false;
 await act(async () => { rendered.update(React.createElement(DetachableContainer)); });
 await act(async () => { measurements.splice(0).forEach(complete => complete()); });
-assert.equal(detachedBottom(), 300, '原生 View 退场立即作废在途测量，不等待 effect 清理');
+assert.equal(detachedHeight(), 500, '原生 View 退场立即作废在途测量，不等待 effect 清理');
 await showKeyboard();
 deferMeasurements = false;
 await act(async () => { rendered.unmount(); });
 assert.equal(listeners.size, 0);
 
-// 改写单聊/群聊消息共用同一个编辑器；使用真实表单、弹窗和避让容器验证窗口缩放后的间隙。
+// 底部弹窗铺满独立原生窗口，直接使用屏幕键盘顶边，不受原生平移和缩放坐标影响。
 const modalTheme = load('src/shared/theme/themes/defaultLight.ts', {}).defaultLightTheme;
 const modalNative = {
   ...native, TouchableOpacity: 'Button', TouchableWithoutFeedback: 'Backdrop',
   Dimensions: { get: () => ({ width: 400, height: 800 }) },
-  Modal: function Modal(props) {
-    React.useEffect(() => { props.onShow(); }, []);
-    return React.createElement('Modal', props, props.children);
+  Modal: function Modal({ onShow, children }) {
+    React.useEffect(() => { onShow(); }, [onShow]);
+    return React.createElement('Modal', {}, children);
   },
   Animated: {
     Value: class { constructor(value) { this.value = value; } }, View: 'AnimatedView',
@@ -184,12 +184,12 @@ for (let cycle = 0; cycle < 3; cycle++) {
   await act(async () => { rendered = create(React.createElement(MessageEditor, {
     message: { id: 1, text: '待改写的 AI 正文' }, onClose() {}, onSaved() {},
   }), { createNodeMock: () => windowNative }); });
-  await layout({ y: 0, height: 500 });
-  assert.equal(bottom(), 0, '每次改写时窗口已避开键盘，不能额外顶起弹窗');
+  await layout({ y: 160, height: 640 });
+  assert.equal(keyboardHeight(), 500, '系统平移窗口时弹窗底边仍保持在键盘顶边');
   const editorInput = rendered.root.findByType('Input');
   await act(async () => editorInput.props.onChangeText('修改后的 AI 正文'));
   await showKeyboard();
-  assert.equal(bottom(), 0, '编辑和重复键盘事件不会在弹窗下方叠加空白');
+  assert.equal(keyboardHeight(), 500, '编辑和重复键盘事件不会引入额外空白');
   assert.equal(editorInput.props.value, '修改后的 AI 正文');
   assert.equal(rendered.root.findAllByType('Input').length, 1, '改写只有一个原生输入');
   await act(async () => rendered.unmount());

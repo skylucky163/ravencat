@@ -4,6 +4,7 @@ import { ACTIVE_RECALL_PAGE_SIZE_OPTIONS, PASSIVE_RECALL_LIMIT_OPTIONS, MemoryIn
 import type { CreateMemoryRecord } from '../domain/MemoryRepository';
 import { getMemoryRuntimeDependencies } from './MemoryRuntimeDependencies';
 import { emitMemoryChanged } from './MemorySignals';
+import { synchronizeMemoryEmbeddingModel } from './MemoryEmbeddingModels';
 
 /** 用户、工具与 Host 的跨 Feature 转存复用同一输入边界。 */
 export function prepareMemoryRecord(poolId: string, value: string, summaryValue: string | null, writeKey: string | null): CreateMemoryRecord {
@@ -38,15 +39,20 @@ export async function forgetMemory(assistantId: string, memoryId: string) {
 }
 export async function retryMemoryEmbedding(assistantId: string, memoryId: string) {
   const runtime = getMemoryRuntimeDependencies();
-  const space = await runtime.resolveMemorySpace(assistantId);
-  await runtime.repository.retryEmbedding(space.poolId, memoryId);
+  await runtime.withEmbeddingMaintenance(async () => {
+    const space = await runtime.resolveMemorySpace(assistantId);
+    const { model, revision } = await synchronizeMemoryEmbeddingModel();
+    if (!model) throw new MemoryInputError('请先开启记忆向量化，并选择可用的向量模型');
+    if (revision === null) throw new MemoryInputError('向量模型已变化，请重新请求');
+    await runtime.repository.retryEmbedding(space.poolId, memoryId, revision);
+  });
   emitMemoryChanged();
 }
 export async function selectMemorySpace(assistantId: string) {
   const runtime = getMemoryRuntimeDependencies();
   await runtime.resolveMemorySpace(assistantId);
   await runtime.repository.setPreferredAssistantId(assistantId);
-  emitMemoryChanged();
+  // 选择偏好不是记忆内容变化；页面已拥有选中状态，不能因此重查正文并唤醒向量队列。
 }
 export async function setMemoryRecallSettings(assistantId: string, settings: MemoryRecallSettings) {
   if (!(PASSIVE_RECALL_LIMIT_OPTIONS as readonly number[]).includes(settings.passiveLimit)

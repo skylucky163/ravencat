@@ -262,14 +262,41 @@ const pendingSubmissions = [];
 const callDialogs = [];
 let outgoingCallAction;
 let activeCall = null;
-const hookModule = { exports: {} };
-const hookCode = ts.transpileModule(fs.readFileSync(path.join(root, 'src/features/chat/presentation/messages/ChatDetail/useChatSendFlow.ts'), 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+function loadComposerModule(name, mocks) {
+  const module = { exports: {} };
+  const code = ts.transpileModule(fs.readFileSync(path.join(root, `src/features/chat/presentation/messages/ChatDetail/${name}.ts`), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  new Function('require', 'module', 'exports', code)(id => {
+    assert.ok(Object.hasOwn(mocks, id), id);
+    return mocks[id];
+  }, module, module.exports);
+  return module.exports;
+}
+const sourceFiles = new Set();
+let sourceSequence = 0;
+const deviceMedia = {
+  PERSISTENT_MEDIA_CATEGORY: { chatImage: 'chatImage' },
+  pickChatImagesFromDevice: async () => [image, anotherImage].map(item => ({ ...item, uri: item.localUri })),
+  persistDeviceMedia: async () => {
+    const uri = `file:///draft-${++sourceSequence}.png`;
+    sourceFiles.add(uri);
+    return uri;
+  },
+  deletePersistentMediaIfExists: async uri => { sourceFiles.delete(uri); },
+};
+const draftFiles = loadComposerModule('ChatAttachmentDraftFiles', { '@platform/device/DeviceMediaService': deviceMedia });
+const { useAttachmentDraft } = loadComposerModule('useAttachmentDraft', {
+  react: React,
+  './ChatAttachmentDraftFiles': draftFiles,
+  '../../../messages/application/AttachmentParser': { attachmentParser: {}, assertChatAttachmentFileSupported() {} },
+  '@features/chat/messages/domain': load('src/features/chat/messages/domain/ChatAttachment.ts'),
+  '@platform/device/DeviceMediaService': deviceMedia,
+});
 const hookMocks = {
   react: React,
   '@shared/ui': { showAppDialog: dialog => callDialogs.push(dialog) },
-  './ChatAttachmentDraftFiles': { retainChatAttachmentDraftFiles: () => () => {} },
+  './ChatAttachmentDraftFiles': draftFiles,
   '../../../messages/application/MessageTimeline': timeline,
   '../../../messages/application/SendUserMessage': { sendUserMessage: params => new Promise((resolve, reject) => pendingSubmissions.push({ params, resolve, reject })) },
   '../../../conversation/application/ChatCallGateway': {
@@ -281,21 +308,22 @@ const hookMocks = {
   '../../../conversation/application/ChatTogetherListeningGateway': {},
   '../../../messages/application/UserVoiceMessageRecording': {},
 };
-new Function('require', 'module', 'exports', hookCode)(id => {
-  assert.ok(Object.hasOwn(hookMocks, id), id);
-  return hookMocks[id];
-}, hookModule, hookModule.exports);
+const { useChatSendFlow } = loadComposerModule('useChatSendFlow', hookMocks);
 let composer;
 function Composer() {
   const [text, setText] = React.useState('第一条');
   const [messages, setMessages] = React.useState([]);
   const [error, setError] = React.useState(null);
   const lastMessageIdRef = React.useRef(null);
-  const flow = hookModule.exports.useChatSendFlow({
+  const attachments = useAttachmentDraft();
+  const flow = useChatSendFlow({
     sessionId: 's1', aiAssistant: { id: 'ai-1' }, aiRequestConfig: { id: 'ai-1' },
     messages, setMessages, setError, setIsTyping() {}, lastMessageIdRef,
   });
-  composer = { ...flow, text, setText, messages, error };
+  const sendDraft = () => attachments.withAttachmentSubmission((items, consumeDraft) => flow.sendMessage(text, null, items, {
+    onQueued: () => { consumeDraft(); setText(''); },
+  }));
+  composer = { ...flow, ...attachments, sendDraft, text, setText, messages, error };
   return null;
 }
 let composerSurface;
@@ -339,14 +367,51 @@ try {
   assert.ok(composer.messages.slice(1).every(message => message.status === 'failed'), '受理后失败由气泡承载');
   assert.equal(composer.error, '发送失败用例');
 
+  await act(async () => { await composer.selectImageAttachment(); });
+  const submittedAttachments = composer.readyAttachments;
+  const beforeImages = composer.messages.length;
+  let imagesFinished = false;
+  await act(async () => {
+    sending = composer.sendDraft();
+    sending.then(() => { imagesFinished = true; });
+  });
+  assert.equal(composer.draftAttachments.length, 0, '图片气泡接管时立即移除全部预览');
+  assert.equal(composer.messages.length, beforeImages + 2, '两张图片已由时间线接管');
+  assert.equal(imagesFinished, false, '清空预览不必等待持久化完成');
+  assert.ok(submittedAttachments.every(item => sourceFiles.has(item.localUri)), '预览消失不能删除发送所需源文件');
+  const imageSubmission = pendingSubmissions.shift();
+  await act(async () => { await composer.selectImageAttachment(); });
+  const nextAttachments = composer.readyAttachments;
+  await act(async () => {
+    imageSubmission.reject(new Error('图片落库失败'));
+    assert.equal(await sending, true);
+  });
+  assert.deepEqual(composer.readyAttachments, nextAttachments, '旧发送结束保留新选的下一批图片');
+  assert.ok(composer.messages.slice(beforeImages).every(item => item.status === 'failed'));
+  assert.ok(submittedAttachments.every(item => sourceFiles.has(item.localUri)), '失败气泡继续持有源文件供重发');
+  for (const failedImage of composer.messages.slice(beforeImages)) {
+    let retrying;
+    await act(async () => { retrying = composer.retrySend(failedImage.id); });
+    const retrySubmission = pendingSubmissions.shift();
+    const retryAttachment = retrySubmission.params.attachments[0];
+    assert.ok(sourceFiles.has(retryAttachment.localUri), '重试仍能读取已清空预览的图片');
+    await act(async () => {
+      const canonicalMessage = { ...failedImage, id: 10000 + failedImage.id, status: 'sent' };
+      retrySubmission.resolve({ success: true, userMessage: canonicalMessage, userMessages: [canonicalMessage] });
+      await retrying;
+    });
+    assert.equal(sourceFiles.has(retryAttachment.localUri), false, '重试提交后释放源文件');
+  }
+
   activeCall = { state: 'active', chatSessionId: 's1', aiAssistantId: 'ai-1' };
   await act(async () => composer.setText('被通话拦截的草稿'));
   const beforeBlocked = composer.messages;
   await act(async () => {
-    assert.equal(await composer.sendMessage(composer.text, null, [], { onQueued: () => composer.setText('') }), false);
+    assert.equal(await composer.sendDraft(), false);
   });
   assert.equal(composer.text, '被通话拦截的草稿', '发送检查拒绝时必须保留输入');
   assert.equal(composer.messages, beforeBlocked);
+  assert.deepEqual(composer.readyAttachments, nextAttachments, '发送被拒绝时保留待发送图片预览');
   assert.equal(pendingSubmissions.length, 0);
 
   // 已有聊天消息时，拨号动作失败也必须显示独立详情，而非写入不可见的加载错误。
@@ -371,6 +436,7 @@ try {
 } finally {
   if (composerSurface) await act(async () => composerSurface.unmount());
 }
+assert.equal(sourceFiles.size, 0, '退出后释放未发送的下一批图片');
 
 db.close();
 console.log('图文原子发送、单次回复、独立重发、乐观替换、群聊整批提交与图片预览几何验证通过。');

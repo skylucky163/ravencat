@@ -15,7 +15,7 @@ function evaluateSelection(
     return { modelConfigId: null, status: 'unconfigured', name: null, model: null };
   }
   if (!config) return { modelConfigId, status: 'deleted', name: null, model: null };
-  if (!config.enabled) return { modelConfigId, status: 'disabled', name: null, model: null };
+  if (!config.baseUrl.trim() || !config.apiKey?.trim() || !config.model.trim()) return { modelConfigId, status: 'incomplete', name: null, model: null };
   if (config.capabilityKind !== 'ocr') {
     return { modelConfigId, status: 'capability_mismatch', name: null, model: null };
   }
@@ -39,7 +39,7 @@ export async function setMomentImageAnalysisModel(
     if (evaluateSelection(normalized, config).status !== 'active') {
       throw new MomentDomainError(
         'invalid_image_analysis_model',
-        '图片理解模型必须选择辅助模型中心已启用的 OCR 类模型'
+        '图片理解模型必须选择辅助模型中心配置完整的 OCR 类模型'
       );
     }
   }
@@ -49,7 +49,7 @@ export async function setMomentImageAnalysisModel(
 
 export async function listMomentImageAnalysisModelCandidates(): Promise<MomentImageAnalysisModelRef[]> {
   const configs = await getMomentMediaRuntime().auxiliaryModels.listOcr();
-  return configs.filter((config) => config.enabled && config.capabilityKind === 'ocr');
+  return configs.filter((config) => evaluateSelection(config.id, config).status === 'active');
 }
 
 export async function getMomentImageAnalysisModelSelection(): Promise<MomentImageAnalysisModelSelection> {
@@ -61,12 +61,14 @@ export async function getMomentImageAnalysisModelSelection(): Promise<MomentImag
   return evaluateSelection(settings.imageAnalysisModelConfigId, config);
 }
 
-export async function resolveMomentImageAnalysisModel(): Promise<MomentImageAnalysisModelRef | null> {
+export async function resolveMomentImageAnalysisModel(
+  settings?: MomentSettings,
+): Promise<MomentImageAnalysisModelRef | null> {
   const runtime = getMomentMediaRuntime();
-  const settings = await getMomentSettings();
-  if (!settings.imageAnalysisModelConfigId) return null;
-  const config = await runtime.auxiliaryModels.getById(settings.imageAnalysisModelConfigId);
-  return evaluateSelection(settings.imageAnalysisModelConfigId, config).status === 'active'
+  const current = settings ?? await getMomentSettings();
+  if (!current.imageAnalysisModelConfigId) return null;
+  const config = await runtime.auxiliaryModels.getById(current.imageAnalysisModelConfigId);
+  return evaluateSelection(current.imageAnalysisModelConfigId, config).status === 'active'
     ? config
     : null;
 }

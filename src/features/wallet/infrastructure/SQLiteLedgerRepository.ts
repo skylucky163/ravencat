@@ -1,6 +1,6 @@
 /** Wallet repository adapter backed by the shared SQLite connection. */
 
-import { databaseCoordinator, type CoordinatedDatabaseExecutor } from '@platform/persistence';
+import { databaseCoordinator, type CoordinatedDatabaseExecutor, type DatabaseWriteExecutor } from '@platform/persistence';
 import {
   createWalletRecord,
   createWalletRecordFromRow,
@@ -17,7 +17,9 @@ import type {
   MonthlyLedgerStats,
   YearlyLedgerStats,
   LedgerKeywordSearchStats,
+  LedgerRangeSummary,
   CreateQuickActionInput,
+  UpdateQuickActionInput,
 } from '../domain/LedgerRepository';
 
 /**
@@ -35,7 +37,12 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
    */
   async insertRecord(record: CreateWalletRecordInput): Promise<WalletRecord> {
     const db: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'wallet.insertRecord', feature: 'wallet', priority: 'runtime' });
-    
+
+    return this.insertRecordWithExecutor(db, record);
+  }
+
+  // 普通新增与快捷记账共用写入；事务内必须使用传入的 executor，不能重新排队。
+  private async insertRecordWithExecutor(db: DatabaseWriteExecutor, record: CreateWalletRecordInput): Promise<WalletRecord> {
     // 使用实体工厂创建标准格式的记录
     const recordToSave = createWalletRecord(record);
 
@@ -162,19 +169,6 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
     
     const categories = await db.getAllAsync<{ category: string; count: number; expense: number | null; income: number | null }>(categorySql, [yearStr, monthStr]);
 
-    // 按日期统计
-    const dailySql = `SELECT 
-      record_date,
-      COUNT(*) as count,
-      SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense,
-      SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income
-      FROM ledger_records 
-      WHERE strftime('%Y', record_date) = ? AND strftime('%m', record_date) = ?
-      GROUP BY record_date
-      ORDER BY record_date`;
-    
-    const daily = await db.getAllAsync<{ record_date: string; count: number; expense: number | null; income: number | null }>(dailySql, [yearStr, monthStr]);
-
     return {
       year,
       month,
@@ -187,12 +181,6 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
         count: c.count,
         expense: c.expense || 0,
         income: c.income || 0,
-      })),
-      daily: daily.map(d => ({
-        date: d.record_date,
-        count: d.count,
-        expense: d.expense || 0,
-        income: d.income || 0,
       })),
     };
   }
@@ -216,19 +204,6 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
     
     const summary = await db.getFirstAsync<{ count: number; total_expense: number; total_income: number }>(summarySql, [yearStr]);
 
-    // 按月统计
-    const monthlySql = `SELECT 
-      strftime('%m', record_date) as month,
-      COUNT(*) as count,
-      SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense,
-      SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income
-      FROM ledger_records 
-      WHERE strftime('%Y', record_date) = ?
-      GROUP BY month
-      ORDER BY month`;
-    
-    const monthly = await db.getAllAsync<{ month: string; count: number; expense: number | null; income: number | null }>(monthlySql, [yearStr]);
-
     // 按分类统计
     const categorySql = `SELECT 
       category,
@@ -248,12 +223,6 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
       totalExpense: summary?.total_expense || 0,
       totalIncome: summary?.total_income || 0,
       balance: (summary?.total_income || 0) - (summary?.total_expense || 0),
-      monthly: monthly.map(m => ({
-        month: parseInt(m.month, 10),
-        count: m.count,
-        expense: m.expense || 0,
-        income: m.income || 0,
-      })),
       categories: categories.map(c => ({
         category: c.category,
         count: c.count,
@@ -421,7 +390,7 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
       created_at: string;
       updated_at: string;
     }>(
-      'SELECT * FROM ledger_quick_actions ORDER BY sort_order ASC, created_at ASC'
+      'SELECT * FROM ledger_quick_actions ORDER BY sort_order ASC, created_at ASC, id ASC'
     );
     
     // 使用实体工厂从数据库行创建实体
@@ -435,36 +404,55 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
   async insertQuickAction(action: CreateQuickActionInput): Promise<QuickAction> {
     const db: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'wallet.insertQuickAction', feature: 'wallet', priority: 'runtime' });
     
-    // 使用实体工厂创建标准格式的快捷记账
-    const actionToSave = createQuickAction(action);
-
-    await db.runAsync(
-      `INSERT INTO ledger_quick_actions (id, name, type, category, detail, amount, sort_order, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        actionToSave.id,
-        actionToSave.name,
-        actionToSave.type,
-        actionToSave.category,
-        actionToSave.detail,
-        actionToSave.amount,
-        actionToSave.sortOrder,
-        actionToSave.createdAt,
-        actionToSave.updatedAt,
-      ]
-    );
-
-    return actionToSave;
+    // 默认排位由仓储拥有；取末尾与写入必须原子执行，不能用页面条数推算。
+    return db.withExclusiveTransactionAsync(async (tx) => {
+      const sortOrder = action.sortOrder ?? (await tx.getFirstAsync<{ next_order: number }>(
+        'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM ledger_quick_actions'
+      ))!.next_order;
+      const actionToSave = createQuickAction({ ...action, sortOrder });
+      await tx.runAsync(
+        `INSERT INTO ledger_quick_actions (id, name, type, category, detail, amount, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          actionToSave.id,
+          actionToSave.name,
+          actionToSave.type,
+          actionToSave.category,
+          actionToSave.detail,
+          actionToSave.amount,
+          actionToSave.sortOrder,
+          actionToSave.createdAt,
+          actionToSave.updatedAt,
+        ]
+      );
+      return actionToSave;
+    });
   }
 
-  /**
-   * 删除快捷记账
-   * @param id - 快捷记账ID
-   */
+  async updateQuickAction(id: string, updates: UpdateQuickActionInput): Promise<boolean> {
+    const db = databaseCoordinator.openTaskExecutor({ name: 'wallet.updateQuickAction', feature: 'wallet', priority: 'runtime' });
+    const fields: string[] = [];
+    const values: (string | number)[] = [];
+    const columns = {
+      name: 'name', type: 'type', category: 'category', detail: 'detail', amount: 'amount', sortOrder: 'sort_order',
+    } as const;
+    for (const key of Object.keys(columns) as (keyof UpdateQuickActionInput)[]) {
+      if (updates[key] !== undefined) {
+        fields.push(`${columns[key]} = ?`);
+        values.push(updates[key]);
+      }
+    }
+    fields.push('updated_at = ?');
+    values.push(new Date().toISOString(), id);
+    const result = await db.runAsync(`UPDATE ledger_quick_actions SET ${fields.join(', ')} WHERE id = ?`, values);
+    return result.changes > 0;
+  }
+
+  /** 删除快捷记账，返回是否真正删除。 */
   async deleteQuickAction(id: string): Promise<boolean> {
     const db: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'wallet.deleteQuickAction', feature: 'wallet', priority: 'runtime' });
-    await db.runAsync('DELETE FROM ledger_quick_actions WHERE id = ?', [id]);
-    return true;
+    const result = await db.runAsync('DELETE FROM ledger_quick_actions WHERE id = ?', [id]);
+    return result.changes > 0;
   }
 
   /**
@@ -474,28 +462,19 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
    */
   async useQuickAction(quickActionId: string, recordDate?: string): Promise<WalletRecord> {
     const db: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'wallet.useQuickAction', feature: 'wallet', priority: 'runtime' });
-    const quickAction = await db.getFirstAsync<{
-      type: WalletRecordType;
-      category: string;
-      detail: string | null;
-      amount: number;
-    }>(
-      'SELECT * FROM ledger_quick_actions WHERE id = ?',
-      [quickActionId]
-    );
-    
-    if (!quickAction) {
-      throw new Error('快捷记账不存在');
-    }
-
-    const record = await this.insertRecord({
-      type: quickAction.type,
-      category: quickAction.category,
-      detail: quickAction.detail || '',
-      amount: quickAction.amount,
-      recordDate,
+    // 模板读取与账单提交属于同一原子操作，编辑或删除不能插入两者之间。
+    const record = await db.withExclusiveTransactionAsync(async (tx) => {
+      const quickAction = await tx.getFirstAsync<{
+        name: string;
+        type: WalletRecordType;
+        category: string;
+        detail: string | null;
+        amount: number;
+      }>('SELECT name, type, category, detail, amount FROM ledger_quick_actions WHERE id = ?', [quickActionId]);
+      if (!quickAction) return null;
+      return this.insertRecordWithExecutor(tx, { ...quickAction, detail: quickAction.detail || quickAction.name, recordDate });
     });
-
+    if (!record) throw new Error('快捷记账不存在，可能已被删除，请重新查询');
     return record;
   }
 
@@ -528,20 +507,7 @@ export class SQLiteLedgerRepository implements ILedgerRepository {
    * @param endDate - 结束日期 YYYY-MM-DD
    * @returns 汇总数据
    */
-  async getRangeSummary(startDate: string, endDate: string): Promise<{
-    totalExpense: number;
-    totalIncome: number;
-    balance: number;
-    categoryStats: {
-      category: string;
-      type: 'income' | 'expense';
-      amount: number;
-      percentage: number;
-      count: number;
-      color: string;
-    }[];
-    records: WalletRecord[];
-  }> {
+  async getRangeSummary(startDate: string, endDate: string): Promise<LedgerRangeSummary> {
     // 获取时间范围内的所有记录
     const records = await this.getRecords({ startDate, endDate, limit: 1000 });
 

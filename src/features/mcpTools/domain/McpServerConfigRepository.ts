@@ -57,17 +57,6 @@ export interface McpServerConfigRepository {
   commitConnectionSuccess(
     input: CommitMcpConnectionSuccessInput
   ): Promise<McpServerConfig | null>;
-  updateProtocolDiagnostics(input: {
-    id: string;
-    lastNegotiatedProtocolVersion: string | null;
-    lastProtocolEra: string | null;
-    endpointClass: string;
-    nowIso: string;
-  }): Promise<McpServerConfig | null>;
-  clearProtocolStateAndSnapshot(input: {
-    id: string;
-    nowIso: string;
-  }): Promise<McpServerConfig | null>;
   /**
    * URL/认证身份变化的原子失效：
    * 在同一个 SQLite 事务中更新显示名称、规范化 URL 与凭据引用、强制 enabled=false、

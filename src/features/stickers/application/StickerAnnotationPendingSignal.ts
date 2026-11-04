@@ -9,6 +9,16 @@
 export type StickerAnnotationPendingListener = () => void;
 
 const listeners = new Set<StickerAnnotationPendingListener>();
+const policyListeners = new Set<(enabled: boolean) => void>();
+
+export function subscribeStickerAutomaticRecognitionChanged(listener: (enabled: boolean) => void): () => void {
+  policyListeners.add(listener);
+  return () => { policyListeners.delete(listener); };
+}
+
+export function emitStickerAutomaticRecognitionChanged(enabled: boolean): void {
+  for (const listener of policyListeners) listener(enabled);
+}
 
 export function subscribeStickerAnnotationPending(
   listener: StickerAnnotationPendingListener,

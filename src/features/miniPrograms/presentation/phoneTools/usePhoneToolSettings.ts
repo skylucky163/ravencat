@@ -114,7 +114,7 @@ export function usePhoneToolSettings() {
   }
 
   return {
-    isEnabled, statusLabel, toggleTool, refresh, disabled: !snapshot?.host || saving,
+    isEnabled, statusLabel, toggleTool, disabled: !snapshot?.host || saving,
     isPackageEnabled, togglePackage, packageDisabled: !snapshot || saving,
     hostName: snapshot?.host?.name ?? null,
     // 说明文字归标题问号；这里只留读取、失败和缺主理 AI 的临时状态。

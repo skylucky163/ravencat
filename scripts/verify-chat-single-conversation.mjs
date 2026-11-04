@@ -1,3 +1,4 @@
+import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /** Chat Single-Conversation Foundation 的持久化与公开产品契约验证。 */
 import assert from 'node:assert/strict';
@@ -56,9 +57,9 @@ async function importMessageRepository(executor) {
   const moduleUrl = source => 'data:text/javascript;base64,' + Buffer.from(ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
   }).outputText).toString('base64');
-  const metadataUrl = moduleUrl(read('src/features/chat/messages/domain/chatMessageMetadata.ts')
+  const metadataUrl = moduleUrl(read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`)
     .replaceAll("from './ChatSticker'", `from '${moduleUrl(read('src/features/chat/messages/domain/ChatSticker.ts'))}'`)
-    .replaceAll("from './SharedChatRecord'", `from '${moduleUrl(read('src/features/chat/messages/domain/SharedChatRecord.ts'))}'`));
+    .replaceAll("from './SharedChatRecord'", `from '${sharedChatRecordModuleUrl}'`));
   const source = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`)
     .replaceAll("from '../domain/chatMessageMetadata'", `from '${metadataUrl}'`)
     .replace(

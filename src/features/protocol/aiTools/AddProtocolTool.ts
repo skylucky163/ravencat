@@ -4,15 +4,8 @@
  */
 
 import type { ProtocolToolContext } from './ProtocolToolContext';
-import type { Protocol } from '../domain/ProtocolRepository';
+import type { ProtocolInsertResult } from '../domain/ProtocolRepository';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
-
-/**
- * 插入协议返回类型（包含 alreadyExists 标记）
- */
-interface ProtocolInsertResult extends Protocol {
-  alreadyExists: boolean;
-}
 
 /**
  * 工具参数接口
@@ -83,7 +76,7 @@ export async function execute(
       aiAssistantId,
       content,
       summary,
-    }) as ProtocolInsertResult;
+    });
 
     return {
       success: true,

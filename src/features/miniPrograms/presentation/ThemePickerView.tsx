@@ -5,7 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { pickCroppedImage } from '@platform/device/DeviceMediaService';
 import { Ionicons } from '@expo/vector-icons';
-import { getThemeById, isPaperNoteTheme, useThemeContext, useThemedStyles, useWallpaper } from '@shared/theme';
+import { MessageCircle } from 'lucide-react-native';
+import { isPaperNoteTheme, supportsChatBubbleSkins, useThemeContext, useThemedStyles, useWallpaper } from '@shared/theme';
 import type {
   ChatColorToken,
   PresentationTheme,
@@ -20,11 +21,12 @@ import GlassBlurSettings from './GlassBlurSettings';
 import PaperNoteChatFooterSettings from './PaperNoteChatFooterSettings';
 
 import { listAIAssistants } from '@features/assistants';
-import { getCanonicalChatConversation, listGroupChats } from '@features/chat';
+import { getCanonicalChatConversation, listGroupChats, useChatBubbleTextColors } from '@features/chat';
 
 type ChatWallpaperApplyScope = 'all' | 'single' | 'group';
 
 interface ThemePickerViewProps {
+  onOpenBubbleSkins(): void;
   onBack: () => void;
 }
 
@@ -83,6 +85,7 @@ const createStyles = (theme: PresentationTheme) =>
     checkmark: {
       marginLeft: theme.spacing.md,
     },
+    entryIcon: { marginRight: theme.spacing.md },
     sectionGap: {
       height: theme.spacing.xl,
     },
@@ -162,15 +165,12 @@ const CHAT_WALLPAPER_SCOPES: { id: ChatWallpaperApplyScope; label: string }[] = 
   { id: 'group', label: '群聊' },
 ];
 
-export default function ThemePickerView({ onBack }: ThemePickerViewProps) {
+export default function ThemePickerView({ onBack, onOpenBubbleSkins }: ThemePickerViewProps) {
   const {
     theme,
     themeId,
     setThemeId,
     availableThemes,
-    chatColorOverrides,
-    setChatColorOverride,
-    resetChatColorOverride,
   } = useThemeContext();
   const {
     appWallpaper,
@@ -186,11 +186,11 @@ export default function ThemePickerView({ onBack }: ThemePickerViewProps) {
   const [colorPickerToken, setColorPickerToken] = useState<ChatColorToken | null>(null);
   const supportsAppWallpaper = theme.effects.glass.enabled;
 
-  // 主题默认的文字颜色（用于 ColorPickerModal 的 defaultColor 和对比判断）
-  const defaultUserText = getThemeById(themeId).colors.chat.userText;
-  const defaultAiText = getThemeById(themeId).colors.chat.aiText;
-  const currentUserText = chatColorOverrides.userText ?? theme.colors.chat.userText;
-  const currentAiText = chatColorOverrides.aiText ?? theme.colors.chat.aiText;
+  const textColors = useChatBubbleTextColors();
+  const defaultUserText = textColors.userText.defaultColor;
+  const defaultAiText = textColors.aiText.defaultColor;
+  const currentUserText = textColors.userText.color;
+  const currentAiText = textColors.aiText.color;
 
   const handleSelect = useCallback(
     async (id: PresentationThemeId) => {
@@ -380,6 +380,27 @@ export default function ThemePickerView({ onBack }: ThemePickerViewProps) {
           </>
         )}
 
+        {supportsChatBubbleSkins(theme) && (
+          <>
+            <Text style={styles.sectionTitle}>气泡</Text>
+            <View style={styles.card}>
+              <TouchableOpacity
+                style={[styles.item, styles.itemLast]}
+                accessibilityRole="button"
+                activeOpacity={0.7}
+                onPress={onOpenBubbleSkins}
+              >
+                <MessageCircle size={20} color={theme.colors.text.secondary} style={styles.entryIcon} />
+                <View style={styles.textContainer}>
+                  <Text style={styles.name}>气泡编辑</Text>
+                  <Text style={styles.mode}>自定义用户与 AI 的消息气泡</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.sectionGap} />
+          </>
+        )}
+
         {/* 文字颜色 */}
         <Text style={styles.sectionTitle}>文字颜色</Text>
         <View style={styles.card}>
@@ -392,7 +413,7 @@ export default function ThemePickerView({ onBack }: ThemePickerViewProps) {
             <View style={styles.textContainer}>
               <Text style={styles.name}>用户文字</Text>
               <Text style={styles.mode}>
-                {chatColorOverrides.userText ? '自定义' : '主题默认'}
+                {textColors.userText.label}
               </Text>
             </View>
             <Text style={styles.colorHexLabel}>{currentUserText}</Text>
@@ -411,7 +432,7 @@ export default function ThemePickerView({ onBack }: ThemePickerViewProps) {
             <View style={styles.textContainer}>
               <Text style={styles.name}>AI 文字</Text>
               <Text style={styles.mode}>
-                {chatColorOverrides.aiText ? '自定义' : '主题默认'}
+                {textColors.aiText.label}
               </Text>
             </View>
             <Text style={styles.colorHexLabel}>{currentAiText}</Text>
@@ -459,13 +480,13 @@ export default function ThemePickerView({ onBack }: ThemePickerViewProps) {
         onClose={() => setColorPickerToken(null)}
         onConfirm={(color) => {
           if (colorPickerToken) {
-            void setChatColorOverride(colorPickerToken, color);
+            void textColors.setColor(colorPickerToken, color);
           }
         }}
         onReset={
           colorPickerToken
             ? () => {
-                void resetChatColorOverride(colorPickerToken);
+                void textColors.resetColor(colorPickerToken);
               }
             : null
         }

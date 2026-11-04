@@ -79,6 +79,7 @@ for (const relativePath of [
   'src/features/chat/messages/domain/ChatMessage.ts',
   'src/features/chat/messages/domain/MessageRepository.ts',
   'src/features/chat/messages/domain/ChatSticker.ts',
+  'src/features/chat/messages/domain/SharedMoment.ts',
   'src/features/chat/messages/domain/SharedChatRecord.ts',
   'src/features/chat/messages/domain/chatMessageMetadata.ts',
   'src/features/chat/messages/events/ChatEvents.ts',

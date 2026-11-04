@@ -1,12 +1,13 @@
 /**
- * @fileoverview 普通回复、重写和日程共用的 T3 提交策略；自主回合不推进用户回复游标。
+ * @fileoverview 普通回复、重写和日程共用的回合提交策略；媒体输出不提前结束执行。
  *
  * 把 processAIReply 的最终落库替换为单事务 commitTurn：fence + 全量 items +
  * preview + run 终态 + 游标推进。fence 失败 = 安静结束本 run：不落错误气泡、
  * 不重试（用户消息事务已触发新一轮 claim，新输入自然被覆盖）。
  * 工具续轮的中间 assistant 文本（前言）经 persistAssistantPrelude 只收集不单独落库，
  * 并入本轮 items 随同一 T3 事务提交；canonical 路径任何 assistant 文本只经 T3 落库。
- * commit 后再做 UI 通知、逐段回调与领域事件。
+ * 图片／表情可由同一 owner 在工具完成后提交并发布，T3 仅绑定其最终顺序。
+ * 重写保持整轮原子替换。commit 后再做 UI 通知、逐段回调与领域事件。
  */
 
 import { getChatMessageRuntimeDependencies } from '../../messages/application/ChatMessageRuntime';
@@ -94,9 +95,8 @@ export function createSingleTransactionTurnCommit(
       runtimeContext = {},
     } = params;
 
-    settled = true;
-
     if (items.length === 0 || (run.kind === 'regenerate' && !items.some((item) => item.message.senderType === 'assistant'))) {
+      settled = true;
       await discardPreparedItems(items);
       outcome = 'empty_items';
       // 保持既有完成信号语义；这里没有任何消息，因此不会触发 assistant
@@ -118,6 +118,9 @@ export function createSingleTransactionTurnCommit(
       throw error;
     }
 
+    // 事务抛错不代表 run 失去错误反馈资格；只有持久裁决返回后才收口。
+    // commit 后的展示异常则不能再写错误气泡，避免把成功事实误报成提交失败。
+    settled = true;
     if (result.outcome === 'fence_failed') {
       await discardPreparedItems(items);
       outcome = 'fence_failed';
@@ -143,6 +146,7 @@ export function createSingleTransactionTurnCommit(
     const assistantSegments = result.messages.filter(
       (message) => message.senderType === 'assistant'
     );
+    const committedOutputIds = new Set(items.flatMap(item => item.committedMessageId === undefined ? [] : [item.committedMessageId]));
     if (presentation?.isClosed()) {
       callbacks.onReplyCommitted?.();
       return { outcome, messages: result.messages };
@@ -156,11 +160,11 @@ export function createSingleTransactionTurnCommit(
     }
 
     const tracksArrival = Boolean(aiConfig?.id && aiConfig.name && !runtimeContext.suppressAIMessageReceivedEvent);
-    const messageIds = assistantSegments.map((message) => message.id);
+    const messageIds = assistantSegments.filter(message => !committedOutputIds.has(message.id)).map((message) => message.id);
     const segmentTotal = assistantSegments.length;
     let deliveryInterrupted = false;
     try {
-      if (tracksArrival) {
+      if (tracksArrival && messageIds.length > 0) {
         await beginAssistantMessageArrival({
           observer: { sessionId, aiId: aiConfig!.id, aiName: aiConfig!.name },
           messageIds,
@@ -171,25 +175,28 @@ export function createSingleTransactionTurnCommit(
       // 完整事实仍一次读回；展示消费者共享已登记的分段到达投影。
       callbacks.notifyUI?.(sessionId);
       for (const [segmentIndex, message] of assistantSegments.entries()) {
-        if (presentation && !await presentation.publishSegment(message)) {
-          deliveryInterrupted = true;
-          break;
+        if (!committedOutputIds.has(message.id)) {
+          if (presentation && !await presentation.publishSegment(message)) {
+            deliveryInterrupted = true;
+            break;
+          }
+          await notifyCommittedSegment({
+            message,
+            segmentIndex,
+            segmentTotal,
+            sessionId,
+            aiConfig,
+            runtimeContext: presentation ? { ...runtimeContext, arrivalAlreadyScheduled: true,
+              suppressAIMessageReceivedEvent: runtimeContext.suppressAIMessageReceivedEvent
+                || presentation.hasNotifiedSegment(message.clientMessageId!),
+            } : runtimeContext,
+            callbacks,
+          });
         }
-        await notifyCommittedSegment({
-          message,
-          segmentIndex,
-          segmentTotal,
-          sessionId,
-          aiConfig,
-          runtimeContext: presentation ? { ...runtimeContext, arrivalAlreadyScheduled: true,
-            suppressAIMessageReceivedEvent: runtimeContext.suppressAIMessageReceivedEvent
-              || presentation.hasNotifiedSegment(message.clientMessageId!),
-          } : runtimeContext,
-          callbacks,
-        });
+        if (segmentIndex === segmentTotal - 1 && (runtimeContext.triggerSource || 'chat') === 'chat') callbacks.onReplyCommitted?.();
       }
     } finally {
-      if (tracksArrival) await finishAssistantMessageArrival(messageIds);
+      if (tracksArrival && messageIds.length > 0) await finishAssistantMessageArrival(messageIds);
     }
 
     if (deliveryInterrupted) {
@@ -265,6 +272,32 @@ export function createSingleTransactionTurnCommit(
       return commitItems(params, params.items);
     },
 
+    async commitAgentOutput(params) {
+      if (run.kind === 'regenerate') return { outcome: 'deferred', messages: [] };
+      const runtimeContext = params.runtimeContext ?? {};
+      assertChatReplyNotAborted(runtimeContext);
+      await presentation?.flush();
+      const result = await getChatMessageRuntimeDependencies().turns.commitOutput(run, params.item, {
+        deadlineAt: runtimeContext.executionDeadlineAt, signal: runtimeContext.abortSignal,
+      });
+      if (result.outcome === 'fence_failed') return { outcome: 'fence_failed', messages: [] };
+      const message = result.messages[0];
+      // 消息和可见版本已提交；交付观察／原生通知失败不撤销它，也不重放发送。
+      try { params.callbacks?.notifyUI?.(run.sessionId); }
+      catch (error) { console.warn('[SingleTransactionTurnCommit] 已提交媒体的界面通知失败', { runId: run.runId, messageId: message.id, error }); }
+      try {
+        await deliverCommittedAssistantSegment({
+          sessionId: run.sessionId, text: message.text, metadataJson: message.metadataJson,
+          messageId: message.id, clientMessageId: message.clientMessageId!, logicalMessageId: message.logicalMessageId ?? null,
+          segmentIndex: 0, segmentTotal: 1, aiConfig: params.aiConfig,
+          runtimeContext: { ...runtimeContext, arrivalAlreadyScheduled: Boolean(presentation) }, callbacks: params.callbacks ?? {},
+        });
+      } catch (error) {
+        console.warn('[SingleTransactionTurnCommit] 已提交媒体的交付观察失败', { runId: run.runId, messageId: message.id, error });
+      }
+      return { outcome: 'committed', messages: result.messages };
+    },
+
     async persistCompletedAssistantReply(params) {
       const items = [...preludeItems, ...buildTurnItems(params)];
       await commitItems(params, items);
@@ -327,8 +360,4 @@ async function notifyCommittedSegment(params: {
     runtimeContext,
     callbacks,
   });
-
-  if (segmentIndex === segmentTotal - 1 && (runtimeContext.triggerSource || 'chat') === 'chat') {
-    callbacks.onReplyCommitted?.();
-  }
 }

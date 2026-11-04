@@ -83,6 +83,7 @@ fresh.close();
 const { protocolRepository: repository } = load('src/features/protocol/infrastructure/SQLiteProtocolRepository.ts', {
   'expo-crypto': { randomUUID }, '@platform/persistence': { databaseCoordinator: { openTaskExecutor: () => sql } },
 });
+const findProtocol = async (id) => (await repository.getByAI('a')).find((protocol) => protocol.id === id) ?? null;
 assert.equal(await repository.getPromptText('a'), '- 请叫我枫渡\n- 每天用中文回应\n- 记录我们的纪念日');
 assert.equal(await repository.getPromptText('missing'), '');
 assert.deepEqual((await repository.search('a', '中文')).map((item) => item.id), ['expired']);
@@ -131,7 +132,7 @@ const updated = await executeForModel('Update', { protocolId: targetId, content:
 assert.equal(updated.status, 'success');
 assert.equal(updated.data.content, '修改后的实际正文');
 assert.equal(updated.data.summary, '精确管理');
-assert.deepEqual(updated.data, await repository.getById(targetId), '返回 commit 对应的完整条目');
+assert.deepEqual(updated.data, await findProtocol(targetId), '返回 commit 对应的完整条目');
 assert.ok(updated.modelContent.includes(targetId));
 assert.ok(updated.modelContent.includes('修改后的实际正文'));
 assert.ok((await executeForModel('Search', { keyword: '修改后的实际正文' })).modelContent.includes(targetId));
@@ -170,10 +171,10 @@ db.exec('DROP TRIGGER reject_protocol_update; DROP TRIGGER reject_protocol_delet
 const deleted = await executeForModel('Delete', { protocolId: targetId });
 assert.equal(deleted.status, 'success');
 assert.ok(deleted.modelContent.includes(targetId));
-assert.equal(await repository.getById(targetId), null);
+assert.equal(await findProtocol(targetId), null);
 assert.ok(!(await executeForModel('Get', {})).modelContent.includes(targetId));
 assert.ok(!(await repository.getPromptText('a')).includes(updated.data.content));
-assert.ok(await repository.getById(similar.id), '按 ID 删除必须保留相似条目');
+assert.ok(await findProtocol(similar.id), '按 ID 删除必须保留相似条目');
 assert.equal((await executeForModel('Delete', { protocolId: targetId })).status, 'error', '重复删除不得假报成功');
 await repository.delete('a', similar.id);
 

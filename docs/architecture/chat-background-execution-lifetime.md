@@ -1,27 +1,25 @@
-# 普通聊天宿主的有界 Android 生命周期
+# 普通聊天执行与应用持续运行
 
-本实现保留原 `ConversationTurnHeadlessTaskService → ConversationTurnExecutionTask → ConversationTurnCoordinator` 所有权，不新增第二个执行宿主，也不依赖 Overlay FGS。
+普通聊天沿 `T1 commit → ApplicationExecutionHost → ExecuteConversationTurns → ConversationTurnCoordinator`
+执行。页面只提交应用宿主请求，不持有 AI run，也不为每条消息建立 Android 服务或 RN task。
+总开关与唯一 RN 后台身份见 [应用后台运行](./application-background-runtime.md)。
 
-## 平台类型与启动
+## 所有权和截止
 
-普通 Agent Loop 包含模型往返和工具操作，本项目将整个用户请求的执行期映射到 `specialUse`，并在 Manifest 声明具体用途。这是工程用例判断，不代表已取得应用商店审核结果。[Android 类型说明](https://developer.android.com/develop/background-work/services/fgs/service-types)中的 `remoteMessaging` 面向跨设备消息接力，`shortService` 约三分钟；`dataSync` 适合数据传输，但不能概括完整 Agent 工具执行。`specialUse` 仍受前台服务启动资格限制，不会获得后台任意启动权限。
+原生信箱接受请求返回 true，只表示请求已经登记，不再提供逐消息 Service 启动握手。
+请求不被接受时保留持久 pending；已经取走但因进程死亡未完成的回合仍由既有恢复入口接管。
+总开关关闭时不提供持续后台保证，也不另起临时服务；禁止改回页面执行。
 
-用户可见页面发送及合法交互触发可以请求启动；恢复仍只委派既有宿主。系统拒绝或原生启动回执五秒超时返回 false，不启动页面执行，不自动重试。Service 必须先成功进入前台，才确认启动并交给 RN。过期启动回执的迟到 Intent 不执行。参见 [Android 后台启动限制](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)。
+聊天请求使用九分钟单调预算，覆盖原生信箱等待、数据库启动门和批量会话串行执行。
+应用宿主向用例传递剩余预算、AbortSignal 与 JS 单调截止点，不再通过原生逐任务停止回执取消。
+到期只取消这一业务请求并归还 CPU 登记；总服务和应用 RN 身份持续存在。
+T3 在事务内检查截止点，过期整体回滚；Coordinator 在底层不响应 abort 时先收拢展示、
+完成 T4 并撤销 owner，迟到执行仍受 fence、signal 与截止约束。
+T3 已提交时只封闭未交付展示尾部，不回退 committed 或游标。
 
-Android 13 由 ServiceCompat 按平台支持的类型启动；Android 14+ 使用声明的 specialUse 类型与权限。执行通知与 assistant 回复通知分属不同事实，前者只表示原生任务存活，后者仍由 AIMessageDeliveryCoordinator 决定。关闭回复通知权限不等于撤销执行所有权。
+## 验证
 
-## 截止与收口
-
-一次原生请求的软截止为九分钟，覆盖启动门与该任务的串行会话执行；原有 RN 十分钟 task timeout 保留为最终原生收口边界。软截止通过原生挂起回执取消 JS，不能将 RN timeout 本身当作模型取消。两端使用单调时钟，T3 在原事务中检查宿主授予的截止点；过期时整体回滚，包括游标 CAS 与媒体物化。
-
-Coordinator 在宿主取消后先汇集指定 run 已收到的展示回执，再完成 T4。即使底层网络或工具暂不响应 abort，也不无限等待旧 Promise 才撤销 owner。迟到执行有完成／异常消费者，仍受原 fence、signal 和截止点约束。T3 已提交时，T4 不回退 committed 或游标，只封闭未交付展示尾部。
-
-Service 持有独立、有时限的 CPU WakeLock，避免只依赖 RN 跨 Service 共享且不计数的静态锁。正常任务仍由 RN task completion 结束 Service；并发任务结束一个不停止其余任务。原生硬边界负责停止没有及时结束的宿主。`START_NOT_STICKY` 禁止 Android 重投旧 Intent；持久恢复只归 ConversationTurn Repository。
-
-任何前台服务都不能保证不被用户停止、厂商冻结或低内存杀死。重启后依据持久展示资格恢复；已开始工具的孤儿失败收口，不自动重放工具。已经发出的工具副作用不能通过 abort 回滚，结果未确认时不得声称工具成功。
-
-## 验证边界
-
-原生单元测试覆盖启动拒绝、启动超时、迟到启动、并发完成隔离、截止终态不可改为成功，以及完成早于桥接观察的次序。JS 测试覆盖宿主取消传播、底层不响应 abort 时先 T4、T3 过期零提交与 prepared backing 清理、T3 后超时仅关闭展示。
-
-真机仍必须按 Protected Contract 连续三次执行 Home 后后台完成场景，并分别测试 Overlay OFF/ON、屏幕关闭、网络断开、VPN、进程死亡、通知权限关闭和 Android 启动拒绝。没有这些设备证据，不宣称后台冻结已经解决。模块原生改动需要更新安装包，Metro 重载不包含这些改动；本任务未构建完整 APK。
+原生测试保护共享身份、信箱一次消费、桥接等待预算和执行资源隔离；JS 测试保护启动门、
+串行等待、取消传播、不响应 abort 时先 T4、T3 过期零提交和 T3 后超时只收口展示。
+设备仍需连续三次发送后 Home，并覆盖总开关、悬浮窗、熄屏、无网络和进程死亡。
+不以静态检查或 JVM 测试替代真机证据。

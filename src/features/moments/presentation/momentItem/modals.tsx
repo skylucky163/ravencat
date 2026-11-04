@@ -255,7 +255,6 @@ export function CommentInputModal({
     <ModalSheet
       visible={visible}
       onClose={handleClose}
-      avoidKeyboard
       style={modalStyles.commentInputContainer}
     >
       <View style={modalStyles.commentInputRow}>

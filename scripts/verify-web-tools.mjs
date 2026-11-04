@@ -45,7 +45,14 @@ const searchDomain = load('src/features/webTools/domain/SearchSettings.ts');
 const database = new DatabaseSync(':memory:');
 database.exec('PRAGMA foreign_keys=ON');
 await bootstrapSqlite(createSqliteExecutor(database));
-// 从上一版真实库结构升级，保留既有资料，新配置只由 bootstrap 创建。
+function removeModelServiceSchema() {
+  for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) {
+    database.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id;`);
+  }
+  database.exec('DROP TABLE model_service_configs; DROP TABLE model_service_settings;');
+}
+// 还原 133 的真实结构，保留既有资料，新配置只由 bootstrap 创建。
+removeModelServiceSchema();
 database.exec(`UPDATE user_profile SET name='保留资料'; DROP TABLE web_search_sources; DROP TABLE web_search_settings;
   CREATE TABLE assistant_nickname_changes(id INTEGER PRIMARY KEY AUTOINCREMENT,
     assistant_id TEXT NOT NULL REFERENCES ai_assistants(id) ON DELETE CASCADE,
@@ -115,6 +122,7 @@ const registration = load('src/host/composition/agent/createAgentToolRegistry.ts
   '@features/moments/composition': {},
   './ApplicationSettingsTools': { applicationSettingsTools: [] },
   './GroupManagementTools': { groupManagementTools: [] },
+  './ShareMomentTool': { ShareMomentTool: placeholder('share_moment') },
   ...Object.fromEntries(featureNames.map((name) => [`@features/${name}`, proxy])),
   '@features/phoneTools': new Proxy(load('src/features/phoneTools/toolPackages/ToolPackageCatalog.ts'), {
     get: (target, key) => target[key] ?? placeholder(String(key).startsWith('Xiaohongshu')
@@ -350,7 +358,8 @@ assert.equal((await searchConfiguration.readSearchSelection()).status, 'unconfig
 await searchConfiguration.updateSearchConfiguration({ kind: 'default', engine: 'duckduckgo' });
 await searchConfiguration.updateSearchConfiguration({ kind: 'connection', mode: 'direct' });
 const saved = await searchRuntime.settings.read();
-// 从上一版保留搜索来源与密钥引用，只为新连接设置补入直连默认值。
+// 149 保留搜索来源与密钥引用，150 只补入直连默认值。
+removeModelServiceSchema();
 database.exec('ALTER TABLE web_search_settings DROP COLUMN connection_mode; PRAGMA user_version=149;');
 await bootstrapSqlite(createSqliteExecutor(database));
 assert.deepEqual(await searchRuntime.settings.read(), saved);
@@ -559,7 +568,7 @@ assert.equal(officialRequests.length, requestsBeforeCancel, '取消后不得继�
   const restoredSettings = await restoredConfiguration.readSearchConfiguration();
   assert.equal(restoredSettings.sources.find(source => source.engine === 'tavily').apiKey, 'tavily-fixture');
   assert.equal(restoredSettings.sources.find(source => source.engine === 'brave').configured, true);
-  assert.equal(restoredSettings.sources.find(source => source.engine === 'brave').enabled, false, '恢复凭据不改变启用状态');
+  assert.equal((await sqliteSearchSettingsRepository.read()).sources.find(source => source.engine === 'brave').enabled, false, '恢复凭据不改变启用状态');
   await gateway.restoreStableSettingsJson(incoming.stableSettingsJson);
   assert.equal(secureValues.size, 2, '重复恢复不创建新引用');
 

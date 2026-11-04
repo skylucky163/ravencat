@@ -4,12 +4,6 @@
   <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
   <application>
-    <service
-      android:name="expo.modules.kimiphonenotifications.CallNotificationActionHeadlessTaskService"
-      android:exported="false" />
-    <service
-      android:name="expo.modules.kimiphonenotifications.TogetherListeningNotificationActionHeadlessTaskService"
-      android:exported="false" />
     <receiver
       android:name="expo.modules.kimiphonenotifications.NotificationActionReceiver"
       android:exported="false" />

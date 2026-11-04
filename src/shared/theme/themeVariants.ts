@@ -73,6 +73,11 @@ export function isPaperNoteTheme(theme: PresentationTheme): boolean {
   return getChatPresentationVariant(theme) === 'paper-note';
 }
 
+/** 自定义气泡是 daylight/night 的装饰，不改变其他主题自己的消息表面。 */
+export function supportsChatBubbleSkins(theme: PresentationTheme): boolean {
+  return theme.id === 'default-light' || theme.id === 'default-dark';
+}
+
 export function getChatInteractionProfile(theme: PresentationTheme): ChatInteractionProfile {
   const variant = getChatPresentationVariant(theme);
   if (variant === 'moon-kimi') {

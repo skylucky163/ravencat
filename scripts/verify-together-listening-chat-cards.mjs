@@ -72,6 +72,7 @@ for (const file of [
   'src/features/chat/messages/domain/chatMessageMetadata.ts',
   'src/features/chat/summary/domain/ChatContext.ts',
   'src/features/chat/messages/domain/ChatSticker.ts',
+  'src/features/chat/messages/domain/SharedMoment.ts',
   'src/features/chat/messages/domain/SharedChatRecord.ts',
   'src/features/chat/messages/application/UpsertTogetherListeningTimelineEntry.ts',
   'src/features/chat/presentation/messages/components/togetherListeningCardViewModel.ts',

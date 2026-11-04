@@ -10,7 +10,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Camera, FileText, Headphones, Image, Video, type LucideIcon } from 'lucide-react-native';
-import { useTheme, useThemedStyles } from '@shared/theme';
+import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
 import { resolveChatToolPanelTools } from './chatToolPanelCapability';
 
@@ -20,7 +20,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ITEMS_PER_ROW = 4;
 // 每个工具项的容器宽度
 const ITEM_SIZE = (SCREEN_WIDTH - 32 - (ITEMS_PER_ROW - 1) * 16) / ITEMS_PER_ROW;
-// 灰色垫底大小
+// 图标底板大小，玻璃与普通主题共用原有网格尺寸。
 const ICON_BG_SIZE = 56;
 
 interface ToolItemDef {
@@ -57,8 +57,9 @@ const TOGETHER_LISTENING_TOOL: ToolItemDef = {
 const createStyles = (theme: PresentationTheme) =>
   StyleSheet.create({
     container: {
-      backgroundColor: theme.colors.chat.inputBar,
-      borderTopWidth: 0.5,
+      // 玻璃材质只属于各个图标底板，面板空白处直接露出会话背景。
+      backgroundColor: theme.effects.glass.enabled ? 'transparent' : theme.colors.chat.inputBar,
+      borderTopWidth: theme.effects.glass.enabled ? 0 : 0.5,
       borderTopColor: theme.colors.border.default,
     },
     scrollView: {
@@ -136,10 +137,12 @@ export default function ChatToolPanel({
             style={styles.toolItem}
             onPress={() => handlePress(tool.id)}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={tool.label}
           >
-            <View style={styles.iconBackground}>
+            <ThemedSurface nativeGlass cornerRadius={12} style={styles.iconBackground}>
               <tool.Icon size={26} strokeWidth={1.65} color={theme.colors.icon.primary} />
-            </View>
+            </ThemedSurface>
             <Text style={styles.toolLabel}>{tool.label}</Text>
           </TouchableOpacity>
         ))}

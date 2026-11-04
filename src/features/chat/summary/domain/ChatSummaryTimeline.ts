@@ -2,6 +2,7 @@
 import type { CallSummarySource } from '@features/calls';
 import type { ChatContextItem } from './ChatContext';
 import type { SharedChatRecord } from '../../messages/domain/SharedChatRecord';
+import type { SharedMoment } from '../../messages/domain/SharedMoment';
 
 export interface ConversationContextItem {
   source: 'chat' | 'call';
@@ -11,6 +12,7 @@ export interface ConversationContextItem {
   content: string;
   actor?: ChatContextItem['actor'];
   sharedRecord?: SharedChatRecord;
+  sharedMoment?: SharedMoment;
   sharedComment?: string;
   logicalIdentity: string | null;
   messageId?: number;
@@ -53,6 +55,7 @@ export function buildConversationTimeline(raw: readonly ChatContextItem[], calls
       ...(item.actor ? { actor: item.actor } : {}),
       ...(item.isVoiceMessage ? { isVoiceMessage: true as const } : {}),
       ...(item.sharedRecord ? { sharedRecord: item.sharedRecord, sharedComment: item.sharedComment } : {}),
+      ...(item.sharedMoment ? { sharedMoment: item.sharedMoment } : {}),
       logicalIdentity: item.kind === 'dialogue'
         ? item.logicalMessageId === null ? 'chat:message:' + item.messageId : 'chat:logical:' + item.logicalMessageId : null });
   }
@@ -70,10 +73,10 @@ export function conversationDialogueStartIndexes(items: readonly ConversationCon
   return starts;
 }
 
-/** N 是触发门槛；跨入电话后范围延伸到挂断，不留下半通电话等待下一次凑数。 */
-export function selectSummaryRange(items: readonly ConversationContextItem[], batchSize: number): ConversationContextItem[] {
+/** 只领取近期窗口之前的完整批次；通话仍需闭合，不能为凑批次吞掉应保留的近期原文。 */
+export function selectSummaryRange(items: readonly ConversationContextItem[], batchSize: number, recentWindowLimit: number): ConversationContextItem[] {
   const starts = conversationDialogueStartIndexes(items);
-  if (starts.length < batchSize) return [];
+  if (starts.length < batchSize + recentWindowLimit) return [];
   let end = starts[batchSize] ?? items.length;
   // 额度已在通话前满足时，不把紧接着的下一通电话起点误归入上一批。
   const nextCall = items.findIndex((item, index) => index > starts[batchSize - 1] && item.callBoundary === 'start');
@@ -87,5 +90,6 @@ export function selectSummaryRange(items: readonly ConversationContextItem[], ba
     if (endedIndex === undefined) return [];
     end = Math.max(end, endedIndex + 1);
   }
+  if (starts.filter(index => index >= end).length < recentWindowLimit) return [];
   return items.slice(0, end);
 }

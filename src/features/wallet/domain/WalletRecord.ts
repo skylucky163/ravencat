@@ -42,9 +42,7 @@ export interface QuickAction {
 
 // ==================== 历史记账功能新增类型 ====================
 
-/**
- * 分类统计（用于饼图）
- */
+/** 分类统计（用于饼图） */
 export interface CategoryStat {
   category: string;
   type: WalletRecordType;
@@ -52,22 +50,6 @@ export interface CategoryStat {
   percentage: number;  // 占总支出/收入的百分比
   count: number;       // 笔数
   color: string;       // 饼图颜色
-}
-
-/**
- * 时间范围汇总数据
- */
-export interface SummaryData {
-  timeRange: {
-    startDate: string;
-    endDate: string;
-    label: string;
-  };
-  totalExpense: number;
-  totalIncome: number;
-  balance: number;
-  categoryStats: CategoryStat[];
-  records: WalletRecord[];
 }
 
 interface WalletRecordRow {
@@ -129,7 +111,7 @@ export function createQuickAction(data: Partial<QuickAction> = {}): QuickAction 
   const now = new Date().toISOString();
 
   return {
-    id: data.id || `quick_${Date.now()}`,
+    id: data.id || `quick_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
     name: data.name || '',
     type: data.type || 'expense',
     category: data.category || '',

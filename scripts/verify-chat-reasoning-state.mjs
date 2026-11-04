@@ -48,6 +48,7 @@ function create(element) {
 }
 let theme = load('src/shared/theme/themes/defaultLight.ts').defaultLightTheme;
 const themeApi = {
+  ...load('src/shared/theme/themeVariants.ts'),
   useTheme: () => theme,
   isMoonKimiTheme: (value) => value.id === 'moon-kimi',
   isPaperNoteTheme: (value) => value.id === 'paper-note',
@@ -74,12 +75,16 @@ const contents = {
 };
 const defaultStub = (name) => ({ __esModule: true, default: name });
 const Bubble = load('src/features/chat/presentation/messages/MessageBubble/index.tsx', {
+  '../../../appearance/presentation/useChatBubbleSkins': { useChatBubbleSkins: () => ({ user: null, ai: null }) },
+  '../../../appearance/presentation/BubbleSkinDrawing': {},
+  '../../../appearance/presentation/BubbleDecorationLayer': {},
   '../components/reasoningExpansionState': expansionState,
   '@platform/device': textSelection,
   react: React, 'react-native': native, '@shared/theme': themeApi, '@shopify/flash-list': flash,
   './styles': styles, './Avatar': { Avatar: 'Avatar' }, './ReplyQuote': { ReplyQuote: 'Quote' },
   './TokenInfo': { TokenInfo: 'TokenInfo' }, './ReasoningHeader': { ReasoningHeader: 'ReasoningHeader' },
   '../components/SharedChatRecordView': defaultStub('SharedChatRecord'),
+  '../components/SharedMomentCard': defaultStub('SharedMoment'),
   './OfficialReplicaProcessCard': processCard, './PaperNoteMessageFrame': defaultStub('PaperFrame'),
   './StickerMessageCard': defaultStub('Sticker'), './VoiceMessageCard': defaultStub('Voice'),
   './layoutProbe': { isLayoutProbeEnabled: () => false }, './MessageBubbleContent': contents,
@@ -290,7 +295,7 @@ const { TouchableMessageBubble } = load('src/features/chat/presentation/messages
   '../MessageBubble': defaultStub('MessageBubble'), '../MessageBubble/ActionGroupProcessCard': defaultStub('ActionGroup'),
   '../MessageBubble/layoutProbe': { isLayoutProbeEnabled: () => false },
   './TogetherListeningActivityCard': defaultStub('TogetherListeningCard'), './ChatMessageInlineActions': defaultStub('InlineActions'),
-  '../../../messages/domain/chatMessageMetadata': { getMessageSharedRecord: () => null, parseMessageMetadata: () => null },
+  '../../../messages/domain/chatMessageMetadata': { getMessageSharedRecord: () => null, getMessageSharedMoment: () => null, parseMessageMetadata: () => null },
   './chatMessageRenderUtils': {}, './chatActionGrouping': {}, './chatStyles': { createMessageListPartsStyles: () => ({}) },
   './togetherListeningCardViewModel': {},
   '@shared/theme': { ...themeApi, getChatInteractionProfile: (value) => ({

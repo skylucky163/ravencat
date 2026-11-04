@@ -672,6 +672,17 @@ const selectedMoment = await createMomentModule.createUserMoment(
   { content: '只给 AI乙看', audience: { mode: 'selected', viewerAgentIds: ['agent-b', 'agent-b'] } },
 );
 assert.equal(selectedMoment.audienceMode, 'selected');
+const { createMomentShareSnapshot } = load('src/features/moments/application/ShareMoment.ts');
+const unreadBeforeShare = (await repository.listUnreadSocialDeliveries('agent-b', { limit: 100 })).length;
+const userShare = await createMomentShareSnapshot(repository, selectedMoment.id);
+const aiShare = await createMomentShareSnapshot(repository, selectedMoment.id, 'agent-b');
+assert.equal(userShare.momentId, selectedMoment.id);
+assert.deepEqual(aiShare, userShare, '用户与可见 AI 获取同一正文图片快照');
+assert.equal('comments' in userShare, false); assert.equal('likes' in userShare, false);
+assert.equal((await repository.listUnreadSocialDeliveries('agent-b', { limit: 100 })).length, unreadBeforeShare, '准备分享不消费社交未读');
+await assert.rejects(createMomentShareSnapshot(repository, selectedMoment.id, 'agent-c'), error => error.code === 'moment_not_visible');
+assert.equal((await repository.getMomentDetailForUser(selectedMoment.id)).id, selectedMoment.id);
+assert.equal(await repository.getMomentDetailForUser('missing-moment'), null);
 assert.deepEqual(
   db.prepare('SELECT viewer_agent_id FROM moment_audience_ai WHERE moment_id = ?').all(selectedMoment.id)
     .map((row) => row.viewer_agent_id),
@@ -757,7 +768,7 @@ const aiSelectedMoment = await createMomentModule.createAgentMoment(
   },
 );
 assert.ok(
-  (await repository.listMomentsForUser()).some((moment) => moment.id === aiSelectedMoment.id),
+  (await repository.listMomentTimelineForUser()).some((moment) => moment.id === aiSelectedMoment.id),
   '用户始终能看到 AI 发布的 Moment，包括 selected audience',
 );
 assert.ok(

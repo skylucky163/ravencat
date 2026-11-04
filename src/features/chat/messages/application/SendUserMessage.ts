@@ -12,6 +12,7 @@ import type { ChatMessage } from '../domain/ChatMessage';
 import type { ChatReplyQuote } from '../domain/chatMessageMetadata';
 import type { ChatAttachment } from '../domain/ChatAttachment';
 import type { SharedChatRecord } from '../domain/SharedChatRecord';
+import type { SharedMoment } from '../domain/SharedMoment';
 import type { StickerMessageSnapshot } from '../domain/ChatSticker';
 import { recordUserStickerUse } from '@features/stickers';
 import type { CommitMessageInput, IMessageRepository } from '../domain/MessageRepository';
@@ -46,6 +47,7 @@ export interface SendUserMessageParams {
   clientMessageId?: string | null;
   attachments?: ChatAttachment[];
   sharedRecord?: SharedChatRecord;
+  sharedMoment?: SharedMoment;
   /** 独立 Sticker 消息语义；不能与普通附件同时出现。 */
   sticker?: StickerMessageSnapshot | null;
 }
@@ -68,6 +70,8 @@ export interface SendUserMessageDeps {
   replyCallbacks?: ProcessAIReplyCallbacks;
   deliveryTiming?: 'paced' | 'immediate';
   correlationId?: string;
+  signal?: AbortSignal;
+  executionDeadlineAt?: number;
 }
 
 /**
@@ -90,6 +94,7 @@ export async function sendUserMessageInternal(
     attachments = [],
     sticker = null,
     sharedRecord,
+    sharedMoment,
   } = params;
 
   const now = new Date();
@@ -115,11 +120,11 @@ export async function sendUserMessageInternal(
       throw new Error('Sticker 消息不能同时携带普通附件');
     }
 
-    const parts = splitUserMessageSubmission({ text, attachments, clientMessageId, sharedRecord });
+    const parts = splitUserMessageSubmission({ text, attachments, clientMessageId, sharedRecord, sharedMoment });
     // 同次发送可有多个气泡，摘要仍按一次用户提交计数。
     const logicalMessageId = parts.length > 1 ? 'user_submission:' + (clientMessageId ?? randomUUID()) : null;
     const inputs: CommitMessageInput[] = parts.map((part, index) => {
-      const messageMetadata = part.sharedRecord ? { kind: 'shared_record', sharedRecord: part.sharedRecord } : sticker
+      const messageMetadata = part.sharedRecord ? { kind: 'shared_record', sharedRecord: part.sharedRecord } : part.sharedMoment ? { kind: 'shared_moment', sharedMoment: part.sharedMoment } : sticker
         ? buildStickerMessageMetadata(sticker)
         : buildAttachmentMessageMetadata(part);
       const isLast = index === parts.length - 1;
@@ -163,6 +168,8 @@ export async function sendUserMessageInternal(
       replyCallbacks: deps.replyCallbacks,
       deliveryTiming: deps.deliveryTiming,
       correlationId: deps.correlationId,
+      signal: deps.signal,
+      executionDeadlineAt: deps.executionDeadlineAt,
       repository: deps.repository,
       materializeMessagesInTransaction: prepared?.materialize,
     });

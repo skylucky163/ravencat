@@ -14,7 +14,7 @@ import { CategoryList } from './components/CategoryList';
 import { useHistoryDetail } from './useHistoryDetail';
 import { useStyles } from './styles';
 import { ThemedSurface, useTheme } from '@shared/theme';
-import type { HistoryDetailScreenProps } from './types';
+import type { HistoryDetailScreenProps } from '../historyTypes';
 import AddRecordModal from '../AddRecordModal';
 import { useWalletRecordActions } from '../useWalletRecordActions';
 

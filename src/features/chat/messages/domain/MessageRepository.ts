@@ -327,6 +327,13 @@ export interface IMessageRepository {
     input: CommitMessagesInput,
   ): Promise<ChatMessage[]>;
 
+  /** 回合 owner 在原 fence 内绑定提前提交消息的最终顺序；已删除返回 null，不重建消息或引用。 */
+  bindTurnMessageInTransaction(
+    transaction: DatabaseTransactionExecutor,
+    messageId: number,
+    itemIndex: number,
+  ): Promise<ChatMessage | null>;
+
   /**
    * 在调用方拥有的事务中 CAS 更新 metadata_json。
    * 迁移必须同时提交 MediaAsset 行与本次引用；expected raw 不匹配时直接失败，

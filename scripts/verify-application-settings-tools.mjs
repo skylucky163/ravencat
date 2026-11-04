@@ -85,8 +85,11 @@ const common = { '@platform/persistence': persistence, '@features/media': media,
   '@shared/errors/SettingChangeConflictError': conflict, '@shared/runtime/RuntimeSlot': slot,
   '@react-native-async-storage/async-storage': asyncStorage, '@platform/device/DeviceMediaService': deviceService };
 const { AIAssistantRepository } = load('src/features/assistants/infrastructure/SQLiteAssistantRepository.ts', {
-  ...common, '@features/profile': {}, '../domain/AIProfile': {}, './SQLiteAuxiliaryModelDefaults': {},
-  './SQLiteAuxiliaryModelRepository': {}, '../domain/HostRepository': {},
+  ...common, '@features/profile': {}, '../domain/AIProfile': load('src/features/assistants/domain/AIProfile.ts', { '@shared/prompt': {
+    DEFAULT_PRIVATE_CONTEXT_PRIMARY_LIMIT: 30, DEFAULT_PRIVATE_CONTEXT_SECONDARY_LIMIT: 10,
+    DEFAULT_GROUP_CONTEXT_PRIMARY_LIMIT: 40, DEFAULT_GROUP_CONTEXT_SECONDARY_LIMIT: 5,
+  } }), './SQLiteAuxiliaryModelDefaults': {},
+  './SQLiteAuxiliaryModelRepository': {}, './SQLiteModelServiceRepository': {}, '../domain/ModelService': {}, '../domain/HostRepository': {},
 });
 const aiRepository = new AIAssistantRepository();
 const summaries = () => db.prepare(`SELECT id,agent_id AS agentId,name,nickname,avatar,avatar_media_asset_id AS avatarMediaAssetId,
@@ -94,11 +97,13 @@ const summaries = () => db.prepare(`SELECT id,agent_id AS agentId,name,nickname,
   canonicalConversationId: `conversation-${row.id}` }));
 const aiPort = {
   getAvatarMediaAssetReference: id => aiRepository.getAvatarMediaAssetReference(id),
+  getProfileCoverReference: id => aiRepository.getProfileCoverReference(id),
+  tryCommitProfileCoverInTransaction: (...args) => aiRepository.tryCommitProfileCoverInTransaction(...args),
   tryCommitAvatarMediaAssetReferenceInTransaction: (...args) => aiRepository.tryCommitAvatarMediaAssetReferenceInTransaction(...args),
   canManageApplicationSettingsInTransaction: (...args) => aiRepository.canManageApplicationSettingsInTransaction(...args),
   changeNameInTransaction: (...args) => aiRepository.changeNameInTransaction(...args),
   getById: async id => {
-    const snapshot = summaries().find(row => row.id === id) ?? null;
+    const snapshot = await aiRepository.getById(id);
     if (pauseNameRead) await pauseNameRead();
     return snapshot;
   }, listSummaries: async () => summaries(),
@@ -111,7 +116,7 @@ const assistants = load('src/features/assistants/AIAssistantManagement.ts', { ..
   './infrastructure/SQLiteHostRepository': { aiHostRepository: {} },
 });
 const { GroupChatRepository } = load('src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts', {
-  ...common, '@features/profile': {},
+  ...common, '@features/profile': {}, '@features/assistants': {},
 });
 const groupRuntime = load('src/features/chat/group/application/ChatGroupRuntime.ts', { '@shared/runtime/RuntimeSlot': slot });
 groupRuntime.configureChatGroupRuntime({ groups: new GroupChatRepository() });
@@ -143,12 +148,12 @@ const fence = load('src/host/composition/agent/assertImageToolRunCurrent.ts', {
     isGroupSpeechTaskRunCurrentInTransaction: async () => runCurrent },
 });
 const viewed = [];
-let visionRoute = 'direct_vision', pauseVision = null;
+let visionRoute = 'direct_vision', pauseVision = null, unreadableImageUri = null;
 class BrokenGroupImage extends Error {}
 const imageRuntime = load('src/features/media/application/AIImageRuntime.ts', { '@shared/runtime/RuntimeSlot': slot });
 const imageTools = load('src/features/media/application/AIImageTools.ts', {
   'expo-file-system': {}, '@platform/device': { inspectLocalImage: async uri => {
-    if (uri === 'file:///broken-group.png') throw new BrokenGroupImage();
+    if (uri === 'file:///broken-group.png' || uri === unreadableImageUri) throw new BrokenGroupImage();
     return { mimeType: 'image/png', isAnimated: false };
   } },
   '@platform/web': {}, '@shared/runtime/abortSignal': abort, './AIImageRuntime': imageRuntime,
@@ -164,11 +169,12 @@ imageRuntime.configureAIImageRuntime({ view: async input => {
 const { applicationSettingsTools } = load('src/host/composition/agent/ApplicationSettingsTools.ts', {
   '@platform/persistence': persistence,
   'react-native': { Dimensions: { get: () => ({ width: 1080, height: 2400 }) } },
-  'expo-asset': { Asset: { fromModule: assetId => ({ downloadAsync: async () => ({ localUri: assetId === 2 ? 'file:///default-group.png' : 'file:///default-cover.png' }) }) } },
+  'expo-asset': { Asset: { fromModule: assetId => ({ downloadAsync: async () => ({ localUri: assetId === 3 ? 'file:///default-stars.jpg'
+    : assetId === 2 ? 'file:///default-group.png' : 'file:///default-cover.png' }) }) } },
   '@shared/avatar/avatarRegistry': { getDefaultGroupAvatarAsset: () => 2 },
   '@features/chat': groupQueries,
   '@features/moments': { DEFAULT_MOMENTS_COVER_SOURCE: 1 },
-  '@features/assistants': { ...assistants, ...access }, '@features/profile': { ...profile, ...wallpapers }, '@features/calls': calls,
+  '@features/assistants': { ...assistants, ...access, DEFAULT_ASSISTANT_SPACE_COVER_SOURCE: 3 }, '@features/profile': { ...profile, ...wallpapers }, '@features/calls': calls,
   '@features/media': { ...imageTools, mediaImageFailure: error => error instanceof MediaAssetNotFoundError
     ? { status: 'error', code: 'IMAGE_NOT_FOUND', retryable: false, modelContent: '图片不存在' }
     : error instanceof BrokenGroupImage ? { status: 'error', code: 'IMAGE_UNREADABLE', retryable: false, modelContent: '群头像文件已损坏' } : null },
@@ -176,6 +182,8 @@ const { applicationSettingsTools } = load('src/host/composition/agent/Applicatio
   '@shared/theme/themeStorage': { loadStoredThemeId: async () => themeId }, './assertImageToolRunCurrent': fence,
 });
 const tools = new Map(applicationSettingsTools.map(entry => [entry.tool.name, entry.tool]));
+assert.equal(tools.has('get_own_profile_cover'), false, '旧主页工具不保留第二个运行入口');
+assert.equal(tools.has('set_own_profile_cover'), false);
 const schemas = load('src/shared/aiTools/AgentToolInputSchema.ts', agentToolSchemaDependencies);
 const { AgentToolExecutor } = load('src/platform/agentRuntime/AgentToolExecutor.ts', {
   '@shared/aiTools': schemas, './AgentRunState': runState,
@@ -220,6 +228,67 @@ for (const { tool } of applicationSettingsTools) schemas.assertAgentToolInputSch
 for (const invalid of [{ action: 'set' }, { ...set, actor_id: 'host' }, { action: 'reset', media_asset_id: originalId },
   { ...set, source_uri: 'file:///private.png' }]) assert.equal(schemas.matchesAgentToolInputSchema(invalid, tools.get('set_ai_avatar').definition.parameters), false);
 assert.equal(schemas.matchesAgentToolInputSchema({ name: '   ' }, tools.get('set_ai_name').definition.parameters), false);
+
+// 自己的主页封面只接受媒体身份，连主理 AI 也没有选择其他目标的参数。
+const coverInput = { media_asset_id: originalId };
+for (const invalid of [{}, { ...coverInput, agent_id: 'agent-b' }, { ...coverInput, assistant_id: 'b' }, { source_uri: 'file:///cover.png' }]) {
+  assert.equal(schemas.matchesAgentToolInputSchema(invalid, tools.get('set_own_space_cover').definition.parameters), false);
+}
+const firstCover = await execute('set_own_space_cover', coverInput);
+assert.equal(firstCover.status, 'success');
+assert.deepEqual(cropRequests.at(-1).aspect, [2, 1]);
+const coverId = firstCover.data.mediaAssetId;
+assert.equal((await aiRepository.getProfileCoverReference('a')).mediaAssetId, coverId);
+assert.equal((await aiRepository.getById('a')).profileCoverMediaAssetId, coverId, '重新读取资料保留封面身份');
+assert.equal((await aiRepository.getProfileCoverReference('b')).mediaAssetId, null);
+const hostCover = await execute('set_own_space_cover', coverInput, 'host');
+assert.equal(hostCover.status, 'success');
+assert.equal((await aiRepository.getProfileCoverReference('host')).mediaAssetId, hostCover.data.mediaAssetId);
+// 即使绕过模型参数校验，执行目标也完全取自可信上下文。
+await tools.get('set_own_space_cover').execute({ ...coverInput, agent_id: 'agent-b' }, context('host'));
+assert.equal((await aiRepository.getProfileCoverReference('b')).mediaAssetId, null);
+assert.ok(updates.some(([kind, id]) => kind === 'ai' && id === 'a'));
+assert.ok((await mediaRepository.listBackupAssets(executor)).some(asset => asset.id === coverId), '备份包含主页封面的真实媒体');
+assert.ok((await mediaRepository.auditDatabase()).references.some(ref => ref.kind === 'assistant_profile_cover' && ref.assetId === coverId));
+await media.releaseMediaAssetCandidates([coverId]);
+assert.ok(await mediaRepository.getById(coverId), '仍被封面引用的媒体不能回收');
+assert.ok((await mediaRepository.listAssistantMediaAssetIds('a', executor)).includes(coverId), '角色删除收集封面引用');
+
+// 查询沿用同一视觉入口，不暴露模型配置，也不把默认资源注册成新媒体。
+for (const invalid of [{ agent_id: 'agent-b' }, { assistant_id: 'b' }, { media_asset_id: originalId }]) {
+  assert.equal(schemas.matchesAgentToolInputSchema(invalid, tools.get('get_own_space_cover').definition.parameters), false);
+}
+const mediaCountBeforeCoverRead = db.prepare('SELECT COUNT(*) AS n FROM media_assets').get().n;
+const ownCover = await execute('get_own_space_cover');
+assert.equal(ownCover.status, 'success');
+assert.equal(ownCover.data.mediaAssetId, coverId);
+assert.equal(ownCover.data.source, 'space_cover');
+assert.equal(ownCover.modelImages[0].url, 'data:image/png;base64,AA==');
+assert.equal(viewed.at(-1).assistantId, 'a');
+assert.ok(!JSON.stringify(ownCover).includes('用户私密备注'));
+const defaultCover = await execute('get_own_space_cover', {}, 'b');
+assert.equal(defaultCover.status, 'success');
+assert.equal(defaultCover.data.mediaAssetId, null);
+assert.equal(defaultCover.data.source, 'default_space_cover');
+assert.equal(viewed.at(-1).imageUri, 'file:///default-stars.jpg');
+assert.equal(defaultCover.modelImages[0].url, 'data:image/png;base64,AA==');
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM media_assets').get().n, mediaCountBeforeCoverRead);
+const ignoredTarget = await tools.get('get_own_space_cover').execute({ agent_id: 'agent-a' }, context('b'));
+assert.equal(ignoredTarget.data.mediaAssetId, null, '即使绕过参数校验，目标仍取调用者身份');
+const viewCountBeforeMissingActor = viewed.length;
+assert.equal((await execute('get_own_space_cover', {}, 'deleted-ai')).code, 'SETTING_TARGET_UNAVAILABLE');
+assert.equal(viewed.length, viewCountBeforeMissingActor);
+unreadableImageUri = (await media.resolveMediaAsset(coverId)).localUri;
+assert.equal((await execute('get_own_space_cover')).code, 'IMAGE_UNREADABLE', '已选封面损坏时不能伪装成默认图');
+unreadableImageUri = null;
+visionRoute = 'ocr';
+const describedCover = await execute('get_own_space_cover');
+assert.equal(describedCover.data.route, 'ocr');
+assert.equal(describedCover.data.mediaAssetId, coverId);
+assert.deepEqual(describedCover.modelImages, []);
+visionRoute = 'vision_unavailable';
+assert.equal((await execute('get_own_space_cover')).code, 'IMAGE_VISION_UNAVAILABLE');
+visionRoute = 'direct_vision';
 
 assert.equal((await execute('set_ai_name', { name: '新名字' })).status, 'success');
 assert.equal(db.prepare("SELECT name FROM ai_assistants WHERE id='a'").get().name, '新名字');
@@ -360,10 +429,22 @@ await duringCrop('set_ai_avatar', 'host', async () => db.exec("UPDATE ai_assista
 db.exec("UPDATE ai_assistants SET is_host_ai=1 WHERE id='host'");
 await duringCrop('set_ai_avatar', 'a', async () => { runCurrent = false; }, 'SUPERSEDED');
 runCurrent = true;
+await duringCrop('set_own_space_cover', 'a', async () => { runCurrent = false; }, 'SUPERSEDED', coverInput);
+runCurrent = true;
+await duringCrop('set_own_space_cover', 'a', async () => {
+  db.prepare('UPDATE assistant_profile_covers SET media_asset_id=? WHERE assistant_id=?').run(originalId, 'a');
+}, 'SETTING_CHANGE_CONFLICT', coverInput);
+assert.equal((await aiRepository.getProfileCoverReference('a')).mediaAssetId, originalId, '并发新选择不被迟到结果覆盖');
+await media.releaseMediaAssetCandidates([coverId]);
+assert.ok(await mediaRepository.getById(coverId), '相同图片仍被其他 AI 的封面引用');
+const coverController = new AbortController();
+await duringCrop('set_own_space_cover', { ...context(), abortSignal: coverController.signal }, async () => coverController.abort(), 'AbortError', coverInput);
 const controller = new AbortController();
 await duringCrop('set_chat_background', { ...context(), abortSignal: controller.signal }, async () => controller.abort(), 'AbortError');
 const groupActor = { ...context(), task: { ...context().task, type: 'group_chat_reply' } };
 await duringCrop('set_ai_avatar', groupActor, async () => { runCurrent = false; }, 'SUPERSEDED');
+runCurrent = true;
+await duringCrop('set_own_space_cover', groupActor, async () => { runCurrent = false; }, 'SUPERSEDED', coverInput);
 runCurrent = true;
 
 let nameReadStarted, resumeNameRead;
@@ -377,6 +458,7 @@ assert.equal((await nameChange).code, 'SETTING_CHANGE_CONFLICT');
 assert.equal(db.prepare("SELECT name FROM ai_assistants WHERE id='a'").get().name, '用户新名称');
 
 assert.equal((await execute('set_ai_avatar', { action: 'set', media_asset_id: 'missing' })).code, 'IMAGE_NOT_FOUND');
+assert.equal((await execute('set_own_space_cover', { media_asset_id: 'missing' })).code, 'IMAGE_NOT_FOUND');
 for (const name of ['set_ai_avatar', 'set_chat_background', 'set_call_background']) assert.equal((await execute(name, reset)).status, 'success');
 for (const name of ['set_user_avatar', 'set_moments_cover', 'set_global_background']) assert.equal((await execute(name, reset, 'host')).status, 'success');
 assert.equal((await aiRepository.getAvatarMediaAssetReference('a')).avatarMediaAssetId, null);
@@ -397,12 +479,36 @@ try {
   db.exec('DROP TRIGGER reject_setting_name');
   console.error = originalConsoleError;
 }
+// 删除角色会撤销封面和下载引用，最后一个引用消失后才回收媒体文件。
+db.prepare('INSERT INTO ai_assistants (id,agent_id,name,model,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+  .run('cover-owner', 'agent-cover-owner', '封面归属测试', 'model', now, now);
+files.set('file:///cover-source.png', 'independent-cover-source');
+const coverSource = await creator.execute({ sourceUri: 'file:///cover-source.png', storageBackend: 'persistent-media', fileName: 'cover-source.png',
+  mimeType: 'image/png', width: 1800, height: 900, durationMs: null }, async ({ transaction: tx, asset }) => {
+  await tx.runAsync('INSERT INTO ai_downloaded_images VALUES (?,?,?,?,?,?)', ['cover-download', 'cover-owner', asset.id, 'https://example.com/cover.png', 'cover-source.png', now]);
+});
+const deletedCover = await execute('set_own_space_cover', { media_asset_id: coverSource.asset.id }, 'cover-owner');
+assert.equal(deletedCover.status, 'success');
+const removedCandidates = await transaction(async tx => {
+  const candidates = await mediaRepository.listAssistantMediaAssetIds('cover-owner', tx);
+  await tx.runAsync('DELETE FROM ai_assistants WHERE id=?', ['cover-owner']);
+  return candidates;
+});
+assert.ok(removedCandidates.includes(deletedCover.data.mediaAssetId));
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM assistant_profile_covers WHERE assistant_id=?').get('cover-owner').n, 0);
+await media.releaseMediaAssetCandidates(removedCandidates);
+assert.equal(await mediaRepository.getById(deletedCover.data.mediaAssetId), null);
+assert.equal(await mediaRepository.getById(coverSource.asset.id), null);
 db.close();
 
 // 还原 127 的昵称审计表与旧工具身份，验证升级保留权限、特批及已展开的包。
 const upgrade = new DatabaseSync(':memory:');
 const upgradeExecutor = createSqliteExecutor(upgrade);
 await bootstrapSqlite(upgradeExecutor);
+for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) {
+  upgrade.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id`);
+}
+upgrade.exec('DROP TABLE model_service_configs; DROP TABLE model_service_settings;');
 upgrade.exec(`INSERT INTO ai_assistants (id,agent_id,name,model,created_at,updated_at) VALUES ('old','agent-old','旧名称','model','${now}','${now}');
   INSERT INTO chat_conversations (id,kind) VALUES ('old-chat','direct');
   INSERT INTO chat_tool_package_exposure VALUES ('old-chat','old','media');
@@ -436,4 +542,44 @@ assert.equal(upgrade.prepare("SELECT name FROM ai_assistants WHERE id='old'").ge
 await bootstrapSqlite(upgradeExecutor);
 assert.equal(upgrade.prepare("SELECT enabled FROM assistant_tool_permissions WHERE tool_name='set_ai_avatar'").get().enabled, 0);
 upgrade.close();
+// 165 -> 当前：更名保留关闭、星标、默认开关和封面；明确的新配置优先，失败整笔回滚。
+const spaceUpgrade = new DatabaseSync(':memory:');
+spaceUpgrade.exec('PRAGMA foreign_keys=ON');
+const spaceExecutor = createSqliteExecutor(spaceUpgrade);
+await bootstrapSqlite(spaceExecutor);
+spaceUpgrade.prepare('INSERT INTO ai_assistants (id,agent_id,name,model,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+  .run('space-ai', 'agent-space-ai', '已有个人空间', 'model', now, now);
+spaceUpgrade.prepare(`INSERT INTO media_assets (id,storage_backend,storage_key,hash_algorithm,content_hash,mime_type,byte_size,status,created_at,updated_at)
+  VALUES ('saved-cover','persistent-media','catalog/media/saved-cover.jpg','sha256',?,'image/jpeg',1,'ready',?,?)`).run('a'.repeat(64), now, now);
+spaceUpgrade.exec("INSERT INTO assistant_profile_covers VALUES ('space-ai','saved-cover')");
+for (const name of ['get_own_profile_cover', 'set_own_profile_cover']) {
+  spaceUpgrade.prepare('INSERT INTO assistant_tool_permissions VALUES (?,?,0,?)').run('space-ai', name, now);
+  spaceUpgrade.prepare('INSERT INTO assistant_direct_tools VALUES (?,?)').run('space-ai', name);
+  spaceUpgrade.prepare('INSERT INTO prompt_default_switches VALUES (?,0)').run(`tool:${name}`);
+}
+spaceUpgrade.prepare('INSERT INTO assistant_tool_permissions VALUES (?,?,1,?)').run('space-ai', 'set_own_space_cover', now);
+spaceUpgrade.exec(`PRAGMA user_version=165;
+  CREATE TRIGGER reject_space_tool_migration BEFORE INSERT ON prompt_default_switches
+  WHEN NEW.key='tool:get_own_space_cover' BEGIN SELECT RAISE(ABORT,'space tool migration failed'); END;`);
+await assert.rejects(bootstrapSqlite(spaceExecutor), /space tool migration failed/);
+assert.equal(spaceUpgrade.prepare('PRAGMA user_version').get().user_version, 165);
+assert.equal(spaceUpgrade.prepare("SELECT COUNT(*) AS n FROM assistant_tool_permissions WHERE tool_name='get_own_profile_cover'").get().n, 1);
+assert.equal(spaceUpgrade.prepare("SELECT COUNT(*) AS n FROM assistant_tool_permissions WHERE tool_name='get_own_space_cover'").get().n, 0);
+assert.equal(spaceUpgrade.prepare("SELECT COUNT(*) AS n FROM assistant_direct_tools WHERE tool_name IN ('get_own_profile_cover','set_own_profile_cover')").get().n, 2);
+spaceUpgrade.exec('DROP TRIGGER reject_space_tool_migration');
+await bootstrapSqlite(spaceExecutor);
+assert.equal(spaceUpgrade.prepare('PRAGMA user_version').get().user_version, DATABASE_SCHEMA_VERSION);
+assert.equal(spaceUpgrade.prepare("SELECT enabled FROM assistant_tool_permissions WHERE tool_name='get_own_space_cover'").get().enabled, 0);
+assert.equal(spaceUpgrade.prepare("SELECT enabled FROM assistant_tool_permissions WHERE tool_name='set_own_space_cover'").get().enabled, 1);
+assert.equal(spaceUpgrade.prepare("SELECT COUNT(*) AS n FROM assistant_tool_permissions WHERE tool_name IN ('get_own_profile_cover','set_own_profile_cover')").get().n, 0);
+assert.deepEqual(spaceUpgrade.prepare('SELECT tool_name FROM assistant_direct_tools ORDER BY tool_name').all().map(row => row.tool_name), ['get_own_space_cover', 'set_own_space_cover']);
+for (const name of ['get_own_space_cover', 'set_own_space_cover']) {
+  assert.equal(spaceUpgrade.prepare('SELECT enabled FROM prompt_default_switches WHERE key=?').get(`tool:${name}`).enabled, 0);
+}
+assert.equal(spaceUpgrade.prepare("SELECT COUNT(*) AS n FROM prompt_default_switches WHERE key IN ('tool:get_own_profile_cover','tool:set_own_profile_cover')").get().n, 0);
+assert.equal(spaceUpgrade.prepare('SELECT media_asset_id FROM assistant_profile_covers').get().media_asset_id, 'saved-cover');
+await bootstrapSqlite(spaceExecutor);
+assert.equal(spaceUpgrade.prepare("SELECT enabled FROM assistant_tool_permissions WHERE tool_name='set_own_space_cover'").get().enabled, 1);
+assert.deepEqual(spaceUpgrade.prepare('PRAGMA foreign_key_check').all(), []);
+spaceUpgrade.close();
 console.log('应用设置工具验证通过：权限、稳定身份、自动裁剪接入、视觉读取、默认图、CAS、撤权、取消与媒体引用。');

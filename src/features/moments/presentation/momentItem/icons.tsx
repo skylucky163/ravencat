@@ -1,17 +1,20 @@
 import type { ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { UserAvatar } from '@shared/ui';
+import { AIAvatar, UserAvatar } from '@shared/ui';
 import { useTheme } from '@shared/theme';
+import type { MomentActorType } from '../../domain/MomentRepository';
 
 interface AvatarProps {
+  actorType: MomentActorType;
   name: string;
   avatarUrl?: string | null;
 }
 
-export const Avatar = ({ name, avatarUrl }: AvatarProps) => {
+export const Avatar = ({ actorType, name, avatarUrl }: AvatarProps) => {
   const theme = useTheme();
+  const AvatarComponent = actorType === 'ai' ? AIAvatar : UserAvatar;
   return (
-    <UserAvatar
+    <AvatarComponent
       name={name}
       avatarUrl={avatarUrl}
       size="small"
@@ -19,7 +22,7 @@ export const Avatar = ({ name, avatarUrl }: AvatarProps) => {
         width: 44,
         height: 44,
         borderRadius: theme.radius.sm,
-        backgroundColor: theme.colors.surface.muted,
+        backgroundColor: 'transparent',
         justifyContent: 'center',
         alignItems: 'center',
       } as ViewStyle}

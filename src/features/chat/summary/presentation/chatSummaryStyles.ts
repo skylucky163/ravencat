@@ -20,6 +20,10 @@ export const createChatSummaryStyles = (theme: PresentationTheme) => StyleSheet.
   sourceRow: { gap: 6, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default },
   textButton: { minHeight: 40, justifyContent: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  thresholdInput: { color: theme.colors.text.primary, borderWidth: 1, borderColor: theme.colors.border.light,
+  // 开关行不参与 space-between：说明块自己撑满剩余宽度，开关固定贴右（与手机工具页一致）。
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  rowText: { flex: 1, minWidth: 0, gap: 4 },
+  thresholdInput: { color: theme.colors.text.primary, backgroundColor: theme.colors.surface.input,
+    borderWidth: 1, borderColor: theme.colors.border.default,
     borderRadius: theme.radius.lg, paddingHorizontal: 12, paddingVertical: 8, minWidth: 90, textAlign: 'right' },
 });

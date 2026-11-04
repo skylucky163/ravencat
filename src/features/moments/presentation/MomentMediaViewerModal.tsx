@@ -10,7 +10,7 @@ import { ActivityIndicator, FlatList, Modal, StyleSheet, Text, TextInput, Toucha
 import { X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MomentRecordMedia } from '../presentationFacade';
-import MomentMediaImage from './MomentMediaImage';
+import { MediaAssetImage } from '@features/media';
 import {
   retryMomentMediaAnalysis,
   saveMomentMediaAnalysis,
@@ -117,7 +117,7 @@ export default function MomentMediaViewerModal({
           onMomentumScrollEnd={(event) => setIndex(Math.round(event.nativeEvent.contentOffset.x / width))}
           renderItem={({ item }) => (
             <View style={[styles.page, { width, height }]}>
-              <MomentMediaImage mediaAssetId={item.mediaAssetId} style={styles.image} resizeMode="contain" color="rgba(255,255,255,0.65)" />
+              <MediaAssetImage mediaAssetId={item.mediaAssetId} style={styles.image} resizeMode="contain" color="rgba(255,255,255,0.65)" />
             </View>
           )}
         />

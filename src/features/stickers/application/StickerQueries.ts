@@ -24,6 +24,11 @@ export function listStickers(input: ListStickersInput = {}): Promise<Sticker[]> 
   return getStickersRuntimeDependencies().repository.listStickers(input);
 }
 
+/** 同素材在不同 AI 收藏中有不同 ID，用户是否已添加只按用户库的素材身份判断。 */
+export async function isStickerInUserLibrary(mediaAssetId: string): Promise<boolean> {
+  return await getStickersRuntimeDependencies().repository.getStickerByMediaAssetId(mediaAssetId) !== null;
+}
+
 /** 只按 Sticker 结构化字段查询，AI 不需要在每次选择时重新执行视觉识别。 */
 export function searchStickers(input: SearchStickersInput = {}): Promise<Sticker[]> {
   return getStickersRuntimeDependencies().repository.searchStickers(input);

@@ -1,12 +1,14 @@
 /** 一次发送拆成独立展示消息；图文或分享附言仍共享同一次提交与回复边界。 */
 import type { ChatAttachment } from '../domain/ChatAttachment';
 import type { SharedChatRecord } from '../domain/SharedChatRecord';
+import type { SharedMoment } from '../domain/SharedMoment';
 
 export interface UserMessageContent {
   text: string;
   attachments: ChatAttachment[];
   clientMessageId: string | null;
   sharedRecord?: SharedChatRecord;
+  sharedMoment?: SharedMoment;
 }
 
 export function splitUserMessageSubmission(params: {
@@ -14,12 +16,13 @@ export function splitUserMessageSubmission(params: {
   attachments: ChatAttachment[];
   clientMessageId?: string | null;
   sharedRecord?: SharedChatRecord;
+  sharedMoment?: SharedMoment;
 }): UserMessageContent[] {
   const { text, attachments, clientMessageId = null } = params;
-  if (params.sharedRecord) {
+  if (params.sharedRecord || params.sharedMoment) {
     const comment = text.trim();
     const record: UserMessageContent = {
-      text: '', attachments: [], sharedRecord: params.sharedRecord,
+      text: '', attachments: [], sharedRecord: params.sharedRecord, sharedMoment: params.sharedMoment,
       clientMessageId: comment && clientMessageId ? `${clientMessageId}:record` : clientMessageId,
     };
     // 附言是当前用户的独立发言，尾消息作为整次分享的输入上界。

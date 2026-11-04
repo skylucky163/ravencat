@@ -19,7 +19,7 @@ const cancellationRegistryModule = loadModule(
   {},
 );
 const companionWakeTask = loadModule(
-  'src/features/companion/application/CompanionWakeHeadlessTask.ts',
+  'src/features/companion/application/ExecuteCompanionWake.ts',
   {
     './CompanionExecutionCancellation': cancellationRegistryModule,
     './CompanionRuntimeDependencies': {
@@ -55,7 +55,7 @@ const companionWakeTask = loadModule(
 
   },
 );
-await companionWakeTask.runCompanionWakeHeadlessTask(callback);
+await companionWakeTask.runCompanionWake(callback);
 assert.deepEqual(runnerCompletions, [{
   deliveryEventId: 'wake-old',
   succeeded: true,
@@ -77,7 +77,7 @@ async function waitUntil(predicate, message) {
 runnerCompletions.length = 0;
 routedSignals.length = 0;
 cancellationMarkers.add(deliveryEventId);
-await companionWakeTask.runCompanionWakeHeadlessTask(callback);
+await companionWakeTask.runCompanionWake(callback);
 assert.equal(
   routedSignals.at(-1)?.aborted,
   true,
@@ -97,7 +97,7 @@ let resolveSelfWakeRun;
 releaseSelfWakeRun = new Promise((resolve) => {
   resolveSelfWakeRun = resolve;
 });
-const inFlightTask = companionWakeTask.runCompanionWakeHeadlessTask(callback);
+const inFlightTask = companionWakeTask.runCompanionWake(callback);
 await waitUntil(() => routedSignals.length === 1, 'in-flight runner 必须已经在跑');
 assert.equal(routedSignals[0].aborted, false, '未收到取消前 autonomous run 不得被 abort');
 assert.equal(
@@ -125,7 +125,7 @@ let releaseConsume;
 consumeGate = new Promise((resolve) => {
   releaseConsume = resolve;
 });
-const racingTask = companionWakeTask.runCompanionWakeHeadlessTask(callback);
+const racingTask = companionWakeTask.runCompanionWake(callback);
 await waitUntil(() => consumeCalls.length === 1, 'runner 必须已经进入 native consume');
 assert.equal(routedSignals.length, 0, 'native consume 未返回前 runner 不得开始执行');
 assert.equal(
@@ -150,7 +150,7 @@ routedSignals.length = 0;
 runnerCompletions.length = 0;
 consumeThrows = true;
 await assert.rejects(
-  companionWakeTask.runCompanionWakeHeadlessTask(callback),
+  companionWakeTask.runCompanionWake(callback),
   /native consume 不可用/,
 );
 consumeThrows = false;

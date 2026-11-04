@@ -1,3 +1,4 @@
+import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 import { prepareConsumedTurnFixture } from './helpers/sqlite-bootstrap-fixture.mjs';
 import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /**
@@ -82,9 +83,9 @@ const coordinatorStub = `const databaseCoordinator = {
 const messageRepoSource = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`);
 const stubbedMessageRepoSource = messageRepoSource
   .replaceAll("from '../domain/chatMessageMetadata'", `from '${transpileToModuleUrl(
-    read('src/features/chat/messages/domain/chatMessageMetadata.ts')
+    read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`)
       .replaceAll("from './ChatSticker'", `from '${transpileToModuleUrl(read('src/features/chat/messages/domain/ChatSticker.ts'))}'`)
-      .replaceAll("from './SharedChatRecord'", `from '${transpileToModuleUrl(read('src/features/chat/messages/domain/SharedChatRecord.ts'))}'`),
+      .replaceAll("from './SharedChatRecord'", `from '${sharedChatRecordModuleUrl}'`),
   )}'`)
   .replace(
     /import\s*\{[\s\S]*?\}\s*from\s*['"]@platform\/persistence['"];/,
@@ -259,13 +260,14 @@ function makeAssistantItem(text, createdAt) {
   };
 }
 
-function makeTimelineItem(senderType, text, createdAt) {
+function makeTimelineItem(senderType, text, createdAt, metadataJson = null) {
   return {
     message: {
       sessionId: 's1',
       text,
       isMe: false,
       senderType,
+      metadataJson,
       time: '12:00',
       createdAt,
     },
@@ -331,9 +333,9 @@ function makeTimelineItem(senderType, text, createdAt) {
 
   const result = await repo.commitTurn(run, [
     makeTimelineItem('reasoning', 'reasoning', '2026-08-01T10:04:00.000Z'),
-    makeTimelineItem('system', 'tool running', '2026-08-01T10:01:00.000Z'),
+    makeTimelineItem('system', 'tool running', '2026-08-01T10:01:00.000Z', JSON.stringify({ type: 'toolStatus' })),
     makeTimelineItem('assistant', '最终回答', '2026-08-01T10:03:00.000Z'),
-    makeTimelineItem('system', 'tool completed', '2026-08-01T10:02:00.000Z'),
+    makeTimelineItem('system', 'tool completed', '2026-08-01T10:02:00.000Z', JSON.stringify({ type: 'toolStatus' })),
   ], { assistantId: 'ai1', changes: [] });
   assert.equal(result.outcome, 'committed');
   assert.deepEqual(

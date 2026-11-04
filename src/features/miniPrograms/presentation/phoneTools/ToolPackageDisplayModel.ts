@@ -52,7 +52,7 @@ export interface ToolPackageDisplayModel {
   tools: ToolPackageDisplayTool[];
 }
 
-export function getToolPackageStatusLabel(status: PhoneToolPackageStatus): string {
+function getToolPackageStatusLabel(status: PhoneToolPackageStatus): string {
   return status === 'available' ? '已接入' : '开发中';
 }
 

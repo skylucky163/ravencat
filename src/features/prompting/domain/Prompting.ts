@@ -48,14 +48,6 @@ export interface AssistantUserPrompt {
   updatedAt: string;
 }
 
-export interface PromptMigrationOrphan {
-  id: string;
-  sourceType: 'custom_block' | 'preset' | 'binding';
-  sourceId: string;
-  reason: string;
-  createdAt: string;
-}
-
 export type PromptCustomBlockCategory = 'persona' | 'user_rules' | 'scenario';
 
 export interface PromptCustomBlock {

@@ -57,7 +57,7 @@ export const KimiMewTool: Tool<MoonshotMewInput, ToolContext> = {
   },
   async execute(input, context) {
     const result = await createClient(context).mew(input, context.abortSignal);
-    if (result.ok === false) return { success: false, errorCode: result.code, error: result.message };
+    if (result.ok === false) return observation(result);
     return { success: true, data: result.data, message: result.data.kind === 'output'
       ? result.data.output : `${result.data.message}\n${JSON.stringify(result.data.functions)}` };
   },

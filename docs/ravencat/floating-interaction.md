@@ -388,7 +388,7 @@ Floating settings 页面可以显示简化状态，例如：
 - 其它 Feature 不得因为它的存在偶然让进程更容易存活而依赖它；
 - 反向同理：关闭/开启 Floating Interaction 只停止或启动 Overlay Service 与悬浮 UI，不得取消 Companion wake、不得停用 Companion、不得停止正在执行的 Companion run、不得修改 Companion 的 SQLite 事实。
 
-Companion 一次 wake 的执行如果有界地需要 foreground execution，那是 Proactive Companion 自己的一次执行生命周期（见 `docs/ravencat/proactive-companion.md` §6.3），与 Overlay FGS 是两个独立 owner：两者同时存在时是 **两个不同的 foreground 组件**，各自有自己的通知与终态清理。
+应用级持续后台运行由独立总开关拥有，见 [后台运行契约](../architecture/application-background-runtime.md)。Companion 只拥有一次执行的等待与取消，不创建或销毁通用前台服务；Overlay FGS 继续只拥有悬浮 UI。
 
 因此合法的运行时组合必须包括：
 
@@ -423,17 +423,17 @@ View、通知文案与终态清理，不能把共享 Window primitive 扩张成�
 
 ## 10. Native Module 物理边界
 
-当前 `modules/ravencat-floating-layer` 同时容纳 Overlay UI/service、AI 日程 Alarm/Work 调度、恢复接收器与 Companion Headless 执行代码。物理共处不代表产品生命周期绑定：日程由 Companion 持有，Overlay FGS 由 Floating Interaction 持有。
+当前 `modules/ravencat-floating-layer` 同时容纳 Overlay UI/service、AI 日程 Alarm/Work 调度、恢复接收器与 Companion 执行请求与回执代码。物理共处不代表产品生命周期绑定：日程由 Companion 持有，Overlay FGS 由 Floating Interaction 持有。
 
 当前没有独立的 `ravencat-companion-runtime` 模块。不要依据旧拆分草案创建新运行链或恢复已退役的单值 Self Wake 调度。修改原生文件时按实际 owner 维护窄边界。
 
-## 11. Floating Message Headless Task
+## 11. 悬浮消息执行
 
-`RavenCatFloatingMessageHeadlessTaskService` 当前用于：
-
-> 用户从 native floating UI 发出消息时，即使 Activity/React 页面不存在，也能完成消息投递。
-
-当前归属 Floating Layer，因为它直接服务 Floating Interaction 的用户主动操作。它不承担 Companion 的 AI 日程执行，不能用于建立常驻主动伴随生命周期。
+native floating UI 将显式发送、截图和草稿清理提交到共享 `ApplicationExecutionHost`，
+由 `executeFloatingMessage` 调用原有 Chat 窄端口并等待回复投影与终态回执。
+Activity 或 React 页面不拥有执行生命周期，也不再创建悬浮消息专用 Service 或 RN task。
+业务 signal 与截止点继续传入 Chat；取消时等待方收口，不留下悬挂预览等待。
+持续后台保证由独立总开关提供，不属于 Floating Interaction 或 Companion。
 
 ## 12. Liveness 指示的边界
 
@@ -458,7 +458,7 @@ bridgeConnected
 ```
 
 `overlayForegroundServiceRunning` 只表示 Overlay FGS 自身在运行；Companion 的诊断必须使用自己的
-`companionExecutionForegroundRunning`（一次执行期临时前台执行），不得把 Overlay FGS 呈现成
+`applicationBackgroundRunning`（独立总开关的持续后台运行），不得把 Overlay FGS 呈现成
 「本地伴随前台服务」。
 
 其他 runtime 各自报告自己的 health。

@@ -12,7 +12,7 @@ import { ViewSwitcher } from './components/ViewSwitcher';
 import { CardList } from './components/CardList';
 import { useHistoryScreen } from './useHistoryScreen';
 import { useHistoryStyles } from './styles';
-import type { HistoryScreenProps } from './types';
+import type { HistoryScreenProps } from '../historyTypes';
 
 export default function HistoryScreen({
   onBack,
@@ -29,6 +29,7 @@ export default function HistoryScreen({
     summaries,
     handleViewChange,
     handleLoadMore,
+    handleContentShort,
     handleSelectCard,
   } = useHistoryScreen({
     initialView,
@@ -65,6 +66,7 @@ export default function HistoryScreen({
           loading={loading}
           onSelect={handleSelectCard}
           onLoadMore={handleLoadMore}
+          onContentShort={handleContentShort}
         />
       </View>
     </SafeAreaView>

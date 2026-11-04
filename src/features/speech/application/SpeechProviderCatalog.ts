@@ -9,6 +9,29 @@ import type {
 
 export const SPEECH_PROVIDERS: readonly SpeechProviderDefinition[] = [
   {
+    id: 'volcengineRealtimeAsr',
+    label: '火山引擎（豆包）实时 ASR',
+    kind: 'stt',
+    baseURL: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async',
+    models: ['volc.seedasr.sauc.duration', 'volc.seedasr.sauc.concurrent'],
+    modelLabels: {
+      'volc.seedasr.sauc.duration': '豆包实时识别 2.0 · 按时长',
+      'volc.seedasr.sauc.concurrent': '豆包实时识别 2.0 · 按并发',
+    },
+    defaultModel: 'volc.seedasr.sauc.duration',
+    credentialLabel: '语音服务 API Key',
+  },
+  {
+    id: 'stepfunRealtimeAsr',
+    label: '阶跃星辰实时 ASR',
+    kind: 'stt',
+    baseURL: 'wss://api.stepfun.com/v1/realtime/asr/stream',
+    models: ['stepaudio-2.5-asr-stream'],
+    modelLabels: { 'stepaudio-2.5-asr-stream': 'StepAudio 2.5 ASR（实时）' },
+    defaultModel: 'stepaudio-2.5-asr-stream',
+    credentialLabel: 'API Key',
+  },
+  {
     id: 'tencentRealtimeAsr',
     label: '腾讯云实时 ASR',
     kind: 'stt',
@@ -198,6 +221,16 @@ const select = (
 ): SpeechParameter => ({ key, label, type: 'select', options, defaultValue });
 export function getSpeechParameters(provider: SpeechProviderId, model: string): SpeechParameter[] {
   switch (provider) {
+    case 'volcengineRealtimeAsr':
+      return [
+        { key: 'enableNonstream', label: '句末二遍识别纠错', type: 'boolean', defaultValue: true, advanced: true },
+      ];
+    case 'stepfunRealtimeAsr':
+      return [
+        text('language', '识别语言', { defaultValue: 'zh', advanced: true, hint: '例如 zh（中文）、en（英文）' }),
+        text('prompt', '识别提示', { advanced: true, hint: '可填写人名、专业术语等上下文' }),
+        { key: 'fullRerunOnCommit', label: '句末二遍识别纠错', type: 'boolean', defaultValue: false, advanced: true },
+      ];
     case 'tencentRealtimeAsr':
       return [
         text('appId', 'AppID', { required: true }),

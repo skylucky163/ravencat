@@ -3,7 +3,7 @@
 import { showAppDialog } from '@shared/ui';
 import React, { useCallback, useEffect, useMemo } from 'react';
 import { ActivityIndicator, FlatList, ListRenderItem, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 
 import { useTheme } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
@@ -12,19 +12,34 @@ import MomentItem from './MomentItem';
 import MomentsHeader from './MomentsHeader';
 import { describeMomentLikeFailure, describeMomentUnlikeFailure } from './momentActionFeedback';
 
-const INITIAL_VISIBLE_COUNT = 5;
-
 const keyExtractor = (item: MomentRecord) => item.id;
 
-interface MomentsTabProps {
+interface MomentsTabBaseProps {
   /**
    * 保活路由的焦点刷新版本（host 提供）：从发布 / 设置等独立页面返回、
    * 或从其他 Tab 切回时 +1。首次聚焦保持 0，首屏加载由挂载 effect 负责。
    */
   refreshRevision: number;
+}
+
+export interface MomentProfileAssistant {
+  agentId: string;
+  name: string;
+  avatar: string | null;
+  profileCoverMediaAssetId: string | null;
+}
+
+type MomentsTabProps = MomentsTabBaseProps & ({
+  assistant: MomentProfileAssistant;
+  onBack: () => void;
+  onPublishPress?: never;
+  onSettingsPress?: never;
+} | {
+  assistant?: never;
+  onBack?: never;
   onPublishPress: () => void;
   onSettingsPress: () => void;
-}
+});
 
 function createMomentsTabStyles(theme: PresentationTheme) {
   return StyleSheet.create({
@@ -51,6 +66,7 @@ function createMomentsTabStyles(theme: PresentationTheme) {
       color: theme.colors.text.secondary,
       marginBottom: theme.spacing.xl,
     },
+    profileEmptyContainer: { padding: 32, alignItems: 'center' },
     publishButton: {
       backgroundColor: theme.colors.brand.primary,
       paddingHorizontal: 32,
@@ -81,9 +97,13 @@ export default function MomentsTab({
   refreshRevision,
   onPublishPress,
   onSettingsPress,
+  assistant,
+  onBack,
 }: MomentsTabProps) {
   const theme = useTheme();
   const styles = useMemo(() => createMomentsTabStyles(theme), [theme]);
+  const safeAreaEdges: Edge[] = theme.effects.glass.enabled ? ['left', 'right'] : ['top', 'left', 'right'];
+  if (assistant) safeAreaEdges.push('bottom');
   const {
     moments,
     initialLoading,
@@ -99,7 +119,7 @@ export default function MomentsTab({
     removeMoment,
     removeLike,
     removeComment,
-  } = useMoments();
+  } = useMoments(assistant?.agentId);
 
   /**
    * 点赞 / 取消点赞：必须自己吞掉 reject。
@@ -150,10 +170,10 @@ export default function MomentsTab({
         onComment={handleComment}
         onDelete={handleDelete}
         onDeleteComment={handleDeleteComment}
-        onMediaUpdated={() => void loadMoments(Math.max(moments.length, INITIAL_VISIBLE_COUNT))}
+        onMediaUpdated={reloadLoadedMoments}
       />
     ),
-    [currentUserId, handleComment, handleDelete, handleDeleteComment, handleLike, handleUnlike, loadMoments, moments.length]
+    [currentUserId, handleComment, handleDelete, handleDeleteComment, handleLike, handleUnlike, reloadLoadedMoments]
   );
 
   useEffect(() => {
@@ -166,9 +186,7 @@ export default function MomentsTab({
     void reloadLoadedMoments();
   }, [refreshRevision, reloadLoadedMoments]);
 
-  const handleRefresh = useCallback(async () => {
-    await loadMoments(INITIAL_VISIBLE_COUNT);
-  }, [loadMoments]);
+  const handleRefresh = useCallback(() => loadMoments(), [loadMoments]);
 
   const handleLoadMore = useCallback(() => {
     void loadMoreMoments();
@@ -177,6 +195,8 @@ export default function MomentsTab({
   // 传入元素，避免导航回调变化被列表识别为新组件类型并重置封面状态。
   const header = (
     <MomentsHeader
+      assistant={assistant}
+      onBack={onBack}
       onCameraPress={onPublishPress}
       onSettingsPress={onSettingsPress}
     />
@@ -204,7 +224,8 @@ export default function MomentsTab({
 
   if (initialLoading && moments.length === 0) {
     return (
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={styles.container} edges={safeAreaEdges}>
+        {assistant && header}
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.brand.primary} />
         </View>
@@ -213,21 +234,21 @@ export default function MomentsTab({
   }
 
   const renderEmptyState = () => (
-    <View style={styles.emptyContainer}>
-      <Text style={styles.emptyText}>还没有时刻</Text>
-      <TouchableOpacity
+    <View style={assistant ? styles.profileEmptyContainer : styles.emptyContainer}>
+      <Text style={styles.emptyText}>{assistant ? 'TA 还没有发布朋友圈' : '还没有时刻'}</Text>
+      {onPublishPress && <TouchableOpacity
         style={styles.publishButton}
         onPress={onPublishPress}
         activeOpacity={0.7}
       >
         <Text style={styles.publishButtonText}>去发布</Text>
-      </TouchableOpacity>
+      </TouchableOpacity>}
     </View>
   );
 
-  if (moments.length === 0) {
+  if (moments.length === 0 && !assistant) {
     return (
-      <SafeAreaView style={styles.container} edges={theme.effects.glass.enabled ? ['left', 'right'] : ['top', 'left', 'right']}>
+      <SafeAreaView style={styles.container} edges={safeAreaEdges}>
         {header}
         {renderEmptyState()}
       </SafeAreaView>
@@ -235,7 +256,7 @@ export default function MomentsTab({
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={theme.effects.glass.enabled ? ['left', 'right'] : ['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={safeAreaEdges}>
       {/* 评论弹窗仍在列表项的 React 子树中，按钮点击应直接交给子组件处理。 */}
       <FlatList
         data={moments}
@@ -245,6 +266,7 @@ export default function MomentsTab({
         windowSize={10}
         removeClippedSubviews
         ListHeaderComponent={header}
+        ListEmptyComponent={renderEmptyState()}
         ListFooterComponent={renderFooter}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}

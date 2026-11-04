@@ -1,619 +1,147 @@
-/**
- * 「主动生活」页面：主理 AI 留下的生活轨迹。
- *
- * History-first：主体是自主醒来与日程的历史时间轴，顶部只放轻量的下一次摘要；
- * 本页面只消费统一 read model 与 projection-aware 的 AI Schedule command，
- * 不成为任何 wake / schedule 事实的第二 owner。
- */
-
-import { Ionicons } from '@expo/vector-icons';
+/** 时间碎片只呈现日程事实；Screen 拥有日期、玻璃场景和前台动效生命周期。 */
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, FlatList, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTheme, useThemedStyles } from '@shared/theme';
-import { Button, EmptyState, ModalSheet, NavigationHeader, showAppDialog } from '@shared/ui';
-
-import {
-  cancelAIScheduleWithProjection,
-  getAISchedule,
-  listProactiveLifeFuture,
-  listProactiveLifeHistory,
-  loadCompanionProductState,
-  loadProactiveLifeOverview,
-  type ProactiveLifeFutureCursor,
-  type ProactiveLifeFutureItem,
-  type ProactiveLifeHistoryCursor,
-  type ProactiveLifeHistoryItem,
-  type ProactiveLifeOverview,
-  type ProactiveLifeRunningItem,
-} from '../application';
-import type { AISchedule } from '../domain/AISchedule';
-import {
-  buildProactiveLifeTimelineRows,
-  canCancelAISchedule,
-  proactiveLifeCompletionDispositionLabel,
-  formatProactiveLifeClock,
-  formatProactiveLifeFullDateTime,
-  formatProactiveLifeFutureTime,
-  groupProactiveLifeFuture,
-  mergeProactiveLifePage,
-  proactiveLifeSourceLabel,
-  resolveAIScheduleCommandErrorMessage,
-  type ProactiveLifeTimelineRow,
-} from './proactiveLifeViewModel';
+import { CalendarDays, ChevronLeft } from 'lucide-react-native';
+import { useReducedMotion } from 'react-native-reanimated';
+import { GlassBackdrop, GlassSceneProvider, getThemeById, useTheme, useThemedStyles } from '@shared/theme';
+import { Button, InputField, ModalSheet } from '@shared/ui';
+import { GalaxyBackground, ShootingStars } from '@shared/ui/space';
+import type { ProactiveLifeCalendarItem } from '../application/ProactiveLifeReadQueries';
+import { calendarDate, calendarDay, calendarDayKey, parseCalendarDay } from './proactiveLifeCalendar';
+import { formatProactiveLifeClock, proactiveLifeCompletionDispositionLabel } from './proactiveLifeViewModel';
+import ProactiveLifeCalendarArc from './ProactiveLifeCalendarArc';
+import AIScheduleDetailContent from './AIScheduleDetailContent';
+import useProactiveLifeCalendar from './useProactiveLifeCalendar';
 import { createStyles } from './ProactiveLifeScreen.styles';
 
-const HISTORY_PAGE_SIZE = 25;
-const FUTURE_PAGE_SIZE = 20;
-/** running 是 transient：仅在页面聚焦且存在 running 时低频刷新，没有 running 即停止。 */
-const RUNNING_REFRESH_INTERVAL_MS = 15_000;
-
-type Styles = ReturnType<typeof createStyles>;
-
-interface ProactiveLifeScreenProps {
-  onBack: () => void;
-}
-
-export default function ProactiveLifeScreen({ onBack }: ProactiveLifeScreenProps) {
+export default function ProactiveLifeScreen({ onBack }: { onBack: () => void }) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
-  const hasLoadedRef = useRef(false);
-  const hasFocusedRef = useRef(false);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [hostAIId, setHostAIId] = useState<string | null>(null);
-  const [companionEnabled, setCompanionEnabled] = useState(false);
-  const [overview, setOverview] = useState<ProactiveLifeOverview | null>(null);
-  const [historyItems, setHistoryItems] = useState<ProactiveLifeHistoryItem[]>([]);
-  const [historyCursor, setHistoryCursor] = useState<ProactiveLifeHistoryCursor | null>(null);
-  const [historyHasMore, setHistoryHasMore] = useState(false);
-  const [loadingMoreHistory, setLoadingMoreHistory] = useState(false);
-  const [futureExpanded, setFutureExpanded] = useState(false);
-  const [futureItems, setFutureItems] = useState<ProactiveLifeFutureItem[] | null>(null);
-  const [futureCursor, setFutureCursor] = useState<ProactiveLifeFutureCursor | null>(null);
-  const [futureHasMore, setFutureHasMore] = useState(false);
-  const [loadingFuture, setLoadingFuture] = useState(false);
-  const [detailScheduleId, setDetailScheduleId] = useState<string | null>(null);
-
-  const loadFutureFirstPage = useCallback(async (ownerAIId: string) => {
-    setLoadingFuture(true);
-    try {
-      const page = await listProactiveLifeFuture({
-        ownerAIId,
-        now: new Date().toISOString(),
-        limit: FUTURE_PAGE_SIZE,
-      });
-      setFutureItems(page.items);
-      setFutureCursor(page.nextCursor);
-      setFutureHasMore(page.hasMore);
-    } catch (error) {
-      setErrorMessage(toMessage(error, '无法读取未来安排。'));
-    } finally {
-      setLoadingFuture(false);
-    }
+  const light = getThemeById('default-dark').colors.text.primary;
+  const insets = useSafeAreaInsets();
+  const sceneId = `companion:${useId()}`;
+  const reducedMotion = useReducedMotion();
+  const [focused, setFocused] = useState(false);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  const [today, setToday] = useState(() => calendarDay(new Date()));
+  const [selectedDay, setSelectedDay] = useState(today);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [jumpOpen, setJumpOpen] = useState(false);
+  const [jumpValue, setJumpValue] = useState('');
+  const [jumpError, setJumpError] = useState<string | undefined>();
+  const [arcVisible, setArcVisible] = useState(true);
+  const arcVisibility = useRef({ top: 0, height: 0, scrollY: 0, viewportHeight: 0, visible: true });
+  const active = focused && appActive;
+  // 玻璃弹层透出的是深色星空，弹层里的标题、正文与表单都要改用亮色。
+  const darkSheet = theme.effects.glass.enabled;
+  const calendar = useProactiveLifeCalendar(selectedDay, active);
+  const { snapshot } = calendar;
+  const chooseDay = useCallback((day: number) => setSelectedDay(day), []);
+  const closeDetail = useCallback(() => setDetailId(null), []);
+  const updateArcVisibility = useCallback(() => {
+    const bounds = arcVisibility.current;
+    if (bounds.height === 0 || bounds.viewportHeight === 0) return;
+    const visible = bounds.top + bounds.height > bounds.scrollY && bounds.top < bounds.scrollY + bounds.viewportHeight;
+    if (visible !== bounds.visible) { bounds.visible = visible; setArcVisible(visible); }
   }, []);
 
-  const refresh = useCallback(async () => {
-    if (hasLoadedRef.current) setRefreshing(true);
-    try {
-      const product = await loadCompanionProductState();
-      const ownerAIId = product.hostAI?.id ?? null;
-      setHostAIId(ownerAIId);
-      setCompanionEnabled(product.state.desiredEnabled);
-      if (!ownerAIId) {
-        setOverview(null);
-        setHistoryItems([]);
-        setHistoryCursor(null);
-        setHistoryHasMore(false);
-        setFutureItems(null);
-        setErrorMessage(null);
-        return;
-      }
-      const nextOverview = await loadProactiveLifeOverview({
-        ownerAIId,
-        now: new Date().toISOString(),
-        historyLimit: HISTORY_PAGE_SIZE,
-      });
-      setOverview(nextOverview);
-      setHistoryItems(nextOverview.recentHistory);
-      setHistoryCursor(nextOverview.historyNextCursor);
-      setHistoryHasMore(nextOverview.historyNextCursor !== null);
-      setErrorMessage(null);
-      // 未来列表已展开时同步重载第一页，避免取消日程等操作后残留旧数据。
-      if (futureExpanded) await loadFutureFirstPage(ownerAIId);
-    } catch (error) {
-      setErrorMessage(toMessage(error, '无法读取主动生活记录。'));
-    } finally {
-      hasLoadedRef.current = true;
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [futureExpanded, loadFutureFirstPage]);
-
-  useEffect(() => { void refresh(); }, [refresh]);
-
-  useFocusEffect(useCallback(() => {
-    if (!hasFocusedRef.current) {
-      hasFocusedRef.current = true;
-      return;
-    }
-    void refresh();
-  }, [refresh]));
-
+  useFocusEffect(useCallback(() => { setToday(calendarDay(new Date())); setFocused(true); return () => setFocused(false); }, []));
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && hasLoadedRef.current) void refresh();
-    });
-    return () => subscription.remove();
-  }, [refresh]);
-
-  const runningCount = overview?.runningItems.length ?? 0;
-  useFocusEffect(useCallback(() => {
-    if (runningCount === 0) return undefined;
-    const interval = setInterval(() => { void refresh(); }, RUNNING_REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [refresh, runningCount]));
-
-  const loadMoreHistory = useCallback(async () => {
-    if (!hostAIId || !historyHasMore || !historyCursor || loadingMoreHistory) return;
-    setLoadingMoreHistory(true);
-    try {
-      const page = await listProactiveLifeHistory({
-        ownerAIId: hostAIId,
-        now: new Date().toISOString(),
-        before: historyCursor,
-        limit: HISTORY_PAGE_SIZE,
-      });
-      setHistoryItems((current) => mergeProactiveLifePage(current, page.items));
-      setHistoryCursor(page.nextCursor);
-      setHistoryHasMore(page.hasMore);
-    } catch (error) {
-      setErrorMessage(toMessage(error, '无法读取更多历史记录。'));
-    } finally {
-      setLoadingMoreHistory(false);
-    }
-  }, [hostAIId, historyCursor, historyHasMore, loadingMoreHistory]);
-
-  const loadMoreFuture = useCallback(async () => {
-    if (!hostAIId || !futureHasMore || !futureCursor || loadingFuture) return;
-    setLoadingFuture(true);
-    try {
-      const page = await listProactiveLifeFuture({
-        ownerAIId: hostAIId,
-        now: new Date().toISOString(),
-        after: futureCursor,
-        limit: FUTURE_PAGE_SIZE,
-      });
-      setFutureItems((current) => mergeProactiveLifePage(current ?? [], page.items));
-      setFutureCursor(page.nextCursor);
-      setFutureHasMore(page.hasMore);
-    } catch (error) {
-      setErrorMessage(toMessage(error, '无法读取更多未来安排。'));
-    } finally {
-      setLoadingFuture(false);
-    }
-  }, [hostAIId, futureCursor, futureHasMore, loadingFuture]);
-
-  const toggleFutureExpanded = useCallback(() => {
-    const next = !futureExpanded;
-    setFutureExpanded(next);
-    if (next && futureItems === null && hostAIId) {
-      void loadFutureFirstPage(hostAIId);
-    }
-  }, [futureExpanded, futureItems, hostAIId, loadFutureFirstPage]);
-
-  const openScheduleDetail = useCallback((scheduleId: string) => {
-    setDetailScheduleId(scheduleId);
+    const listener = AppState.addEventListener('change', state => { setAppActive(state === 'active'); if (state === 'active') setToday(calendarDay(new Date())); });
+    return () => listener.remove();
   }, []);
+  useEffect(() => {
+    if (!active) return;
+    const now = new Date();
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const timer = setTimeout(() => setToday(calendarDay(new Date())), midnight.getTime() - now.getTime());
+    return () => clearTimeout(timer);
+  }, [active, today]);
 
-  const closeScheduleDetail = useCallback(() => {
-    setDetailScheduleId(null);
-  }, []);
-
-  const timelineRows = useMemo(
-    () => buildProactiveLifeTimelineRows({
-      runningItems: overview?.runningItems ?? [],
-      historyItems,
-      now: new Date(),
-    }),
-    [overview, historyItems],
-  );
-
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-        <NavigationHeader title="主动生活" onGoBack={onBack} />
-        <View style={styles.loading}>
-          <ActivityIndicator color={theme.colors.brand.primary} />
-          <Text style={styles.muted}>正在读取主动生活记录…</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  if (!hostAIId) {
-    return (
-      <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-        <NavigationHeader title="主动生活" onGoBack={onBack} />
-        <EmptyState
-          title="还没有主理 AI"
-          description="选择主理 AI 后，这里会记录它未来的自主行动机会。"
-          actionText="返回设置"
-          onAction={onBack}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  if (!overview && errorMessage) {
-    return (
-      <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-        <NavigationHeader title="主动生活" onGoBack={onBack} />
-        <EmptyState
-          title="加载失败"
-          description={errorMessage}
-          actionText="重试"
-          onAction={() => void refresh()}
-        />
-      </SafeAreaView>
-    );
-  }
-
-  const nextFuture = overview?.nextFuture ?? null;
-  const futureCount = overview?.futureCount ?? 0;
-  const displayNow = new Date();
-
-  const listHeader = (
-    <View>
-      {!companionEnabled ? (
-        <Text style={styles.nextEmpty}>主动伴随已关闭，日程已暂停；错过的安排不会补跑。</Text>
-      ) : null}
-      {nextFuture ? (
-        <View style={styles.nextCard}>
-          <Text style={styles.nextLabel}>下一次</Text>
-          <Text style={styles.nextTime}>{formatProactiveLifeFutureTime(nextFuture.plannedAt, displayNow)}</Text>
-          {nextFuture.summary ? (
-            <Text style={styles.nextSummary}>{nextFuture.summary}</Text>
-          ) : null}
-          <Text style={styles.nextSource}>{proactiveLifeSourceLabel(nextFuture.sourceType)}</Text>
-        </View>
-      ) : (
-        <Text style={styles.nextEmpty}>暂时没有未来安排</Text>
-      )}
-
-      {futureCount > 1 ? (
-        <TouchableOpacity
-          style={styles.futureToggle}
-          onPress={toggleFutureExpanded}
-          accessibilityRole="button"
-        >
-          <Text style={styles.futureToggleText}>
-            {futureExpanded ? '收起未来安排' : `查看未来安排  ${futureCount}`}
-          </Text>
-          <Ionicons
-            name={futureExpanded ? 'chevron-up' : 'chevron-forward'}
-            size={16}
-            color={theme.colors.text.link}
-          />
-        </TouchableOpacity>
-      ) : null}
-
-      {futureExpanded ? (
-        <View style={styles.futureSection}>
-          {futureItems === null || (loadingFuture && futureItems.length === 0) ? (
-            <ActivityIndicator style={styles.futureLoading} color={theme.colors.brand.primary} />
-          ) : futureItems.length === 0 ? (
-            <Text style={styles.futureEmpty}>暂时没有未来安排</Text>
-          ) : (
-            groupProactiveLifeFuture(futureItems, displayNow).map((group) => (
-              <View key={group.key}>
-                <Text style={styles.dayHeader}>{group.label}</Text>
-                {group.items.map((item) => (
-                  <FutureTimelineEntry
-                    key={`${item.sourceType}:${item.sourceId}`}
-                    item={item}
-                    styles={styles}
-                    onOpenSchedule={openScheduleDetail}
-                  />
-                ))}
-              </View>
-            ))
-          )}
-          {futureItems !== null && futureHasMore ? (
-            <TouchableOpacity
-              style={styles.futureMore}
-              onPress={() => void loadMoreFuture()}
-              disabled={loadingFuture}
-              accessibilityRole="button"
-            >
-              {loadingFuture
-                ? <ActivityIndicator size="small" color={theme.colors.brand.primary} />
-                : <Text style={styles.futureMoreText}>加载更多未来安排</Text>}
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      ) : null}
-
-      {errorMessage ? (
-        <View style={styles.errorCard}><Text style={styles.errorText}>{errorMessage}</Text></View>
-      ) : null}
+  const openJump = () => { setJumpValue(calendarDayKey(selectedDay)); setJumpError(undefined); setJumpOpen(true); };
+  const jump = () => {
+    const day = parseCalendarDay(jumpValue);
+    if (day === null) { setJumpError('请输入有效日期，例如 2026-11-01。'); return; }
+    setSelectedDay(day); setJumpOpen(false);
+  };
+  const date = calendarDate(selectedDay);
+  const dayCount = calendar.counts.find(entry => entry.key === calendarDayKey(selectedDay))?.count;
+  const header = <>
+    <View style={styles.intro}><Text style={styles.eyebrow}>COMPANION · FRAGMENTS OF TIME</Text><Text style={styles.title}>时间碎片</Text><Text style={styles.subtitle}>在时间深处，与你交汇</Text></View>
+    <View onLayout={event => { arcVisibility.current.top = event.nativeEvent.layout.y; arcVisibility.current.height = event.nativeEvent.layout.height; updateArcVisibility(); }}>
+      <ProactiveLifeCalendarArc selectedDay={selectedDay} today={today} counts={calendar.counts} onSelect={chooseDay} enabled={active && detailId === null && !jumpOpen} inViewport={arcVisible} reducedMotion={reducedMotion} />
     </View>
-  );
-
-  return (
-    <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <NavigationHeader title="主动生活" onGoBack={onBack} />
-      <FlatList
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        data={timelineRows}
-        keyExtractor={(row) => row.key}
-        renderItem={({ item }) => (
-          <TimelineRowView row={item} styles={styles} onOpenSchedule={openScheduleDetail} />
-        )}
-        ListHeaderComponent={listHeader}
-        ListEmptyComponent={
-          <Text style={styles.historyEmpty}>还没有留下活动记录。</Text>
-        }
-        ListFooterComponent={
-          loadingMoreHistory ? (
-            <View style={styles.historyFooter}>
-              <ActivityIndicator size="small" color={theme.colors.brand.primary} />
-            </View>
-          ) : historyHasMore ? (
-            <TouchableOpacity
-              style={styles.historyFooter}
-              onPress={() => void loadMoreHistory()}
-              accessibilityRole="button"
-            >
-              <Text style={styles.historyFooterText}>加载更早的记录</Text>
-            </TouchableOpacity>
-          ) : null
-        }
-        onEndReached={() => void loadMoreHistory()}
-        onEndReachedThreshold={0.4}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />
-        }
+    <View style={styles.section}><Text style={styles.sectionDate}>{date.getUTCMonth() + 1} 月 {date.getUTCDate()} 日</Text><Text style={styles.meta}>{dayCount === undefined ? '' : `${dayCount} 项日程`}</Text></View>
+    {snapshot && !snapshot.enabled && snapshot.ownerAIId ? <Text style={styles.notice}>主动伴随已关闭，日程已暂停；错过的安排不会补跑。</Text> : null}
+    {calendar.error ? <Text style={styles.error} accessibilityRole="alert">{calendar.error}</Text> : null}
+  </>;
+  const footer = <View style={styles.footer}>
+    <View style={styles.footerActions}>
+      <Pressable style={styles.footerButton} accessibilityRole="button" onPress={openJump}><CalendarDays size={15} color={light} /><Text style={styles.footerText}>跳转日期</Text></Pressable>
+      {calendar.error ? <Pressable style={styles.footerButton} accessibilityRole="button" onPress={calendar.refresh}><Text style={styles.footerText}>重新读取</Text></Pressable> : null}
+      {snapshot?.cursor ? <Pressable style={styles.footerButton} disabled={calendar.loadingMore || calendar.loading} accessibilityRole="button" onPress={() => void calendar.loadMore()}>{calendar.loadingMore ? <ActivityIndicator color={light} size="small" /> : <Text style={styles.footerText}>更多当天日程</Text>}</Pressable> : null}
+    </View>
+    <Text style={styles.note}>日程时间为计划时间，AI 会根据届时情况决定行动。</Text>
+  </View>;
+  const ambientActive = active && detailId === null && !jumpOpen && !reducedMotion;
+  const sky = viewport.width > 0 ? <>
+    <GalaxyBackground width={viewport.width} height={viewport.height} paused={!ambientActive} />
+    <ShootingStars width={viewport.width} height={viewport.height} active={ambientActive} />
+  </> : null;
+  const content = <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <View style={styles.navigation}>
+        <Pressable style={styles.iconButton} accessibilityRole="button" accessibilityLabel="返回" onPress={onBack}><ChevronLeft size={23} color={light} /></Pressable>
+        <Text style={styles.navTitle}>主动伴随</Text>
+        {/* 「今天」已移到日期导航条中间；这里保留等宽占位，避免标题偏移。 */}
+        <View style={styles.navSpacer} />
+      </View>
+      {/* Android 下拉刷新容器会重新布局内部 ScrollView；可见范围由外层 Yoga 容器拥有。 */}
+      <View style={styles.list} onLayout={event => { arcVisibility.current.viewportHeight = event.nativeEvent.layout.height; updateArcVisibility(); }}>
+      <FlatList style={styles.list} contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 28 }]}
+        onScroll={event => { arcVisibility.current.scrollY = event.nativeEvent.contentOffset.y; updateArcVisibility(); }} scrollEventThrottle={64}
+        data={snapshot?.items ?? []} keyExtractor={entry => entry.item.sourceId}
+        ListHeaderComponent={header} ListFooterComponent={footer}
+        ListEmptyComponent={calendar.loading ? <View style={styles.loading}><ActivityIndicator color={light} /><Text style={styles.meta}>正在读取时间碎片…</Text></View>
+          : calendar.error ? null : <Text style={styles.empty}>{snapshot?.ownerAIId ? '这块时间碎片，还没有留下安排。' : '选择主理 AI 后，这里会留下你们的日程与足迹。'}</Text>}
+        renderItem={({ item, index }) => <CalendarEntry entry={item} featured={index === 0} styles={styles} onPress={() => setDetailId(item.item.sourceId)} />}
+        refreshControl={<RefreshControl tintColor={light} colors={[light]} refreshing={calendar.loading && snapshot !== null} onRefresh={calendar.refresh} />}
+        onEndReached={() => void calendar.loadMore()} onEndReachedThreshold={0.3}
       />
-
-      <ModalSheet
-        visible={detailScheduleId !== null}
-        onClose={closeScheduleDetail}
-        title="日程"
-      >
-        {detailScheduleId ? (
-          <AIScheduleDetailContent
-            scheduleId={detailScheduleId}
-            ownerAIId={hostAIId}
-            styles={styles}
-            onClose={closeScheduleDetail}
-            onCancelled={() => void refresh()}
-          />
-        ) : null}
-      </ModalSheet>
-    </SafeAreaView>
-  );
-}
-
-function TimelineRowView({
-  row,
-  styles,
-  onOpenSchedule,
-}: {
-  row: ProactiveLifeTimelineRow;
-  styles: Styles;
-  onOpenSchedule: (scheduleId: string) => void;
-}) {
-  if (row.kind === 'day-header') {
-    return <Text style={styles.dayHeader}>{row.label}</Text>;
-  }
-  if (row.kind === 'running') {
-    return <TouchableOpacity onPress={() => onOpenSchedule(row.item.sourceId)} accessibilityRole="button">
-      <RunningTimelineEntry item={row.item} styles={styles} />
-    </TouchableOpacity>;
-  }
-  const item = row.item;
-  return (
-    <TouchableOpacity onPress={() => onOpenSchedule(item.sourceId)} accessibilityRole="button" style={styles.timelineRow}>
-      <Text style={styles.timelineTime}>{formatProactiveLifeClock(item.occurredAt)}</Text>
-      <TimelineRail nodeStyle={styles.timelineNode} styles={styles} />
-      <View style={styles.timelineContent}>
-        <Text style={styles.timelineSummary}>{item.summary ?? ''}</Text>
-        <Text style={styles.timelineMeta}>
-          {proactiveLifeSourceLabel(item.sourceType)}
-          <Text>{` · ${proactiveLifeCompletionDispositionLabel(item.completionDisposition, item.modelResponded)}`}</Text>
-        </Text>
       </View>
-    </TouchableOpacity>
-  );
-}
+    </SafeAreaView>;
 
-function RunningTimelineEntry({ item, styles }: { item: ProactiveLifeRunningItem; styles: Styles }) {
-  return (
-    <View style={styles.timelineRow}>
-      <Text style={styles.timelineTime}>{formatProactiveLifeClock(item.startedAt)}</Text>
-      <TimelineRail nodeStyle={styles.timelineNodeRunning} styles={styles} />
-      <View style={styles.timelineContent}>
-        <Text style={styles.timelineSummary}>{item.summary ?? ''}</Text>
-        <Text style={styles.timelineMeta}>
-          {proactiveLifeSourceLabel(item.sourceType)}
-          <Text style={styles.timelineRunningMeta}>{item.modelResponded ? ' · 唤醒成功，AI 已响应 · 正在行动' : ' · 等待 AI 响应'}</Text>
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-function FutureTimelineEntry({
-  item,
-  styles,
-  onOpenSchedule,
-}: {
-  item: ProactiveLifeFutureItem;
-  styles: Styles;
-  onOpenSchedule: ((scheduleId: string) => void) | null;
-}) {
-  const theme = useTheme();
-  const content = (
-    <View style={styles.timelineRow}>
-      <Text style={styles.timelineTime}>{formatProactiveLifeClock(item.plannedAt)}</Text>
-      <TimelineRail nodeStyle={[styles.timelineNode, styles.timelineNodeFuture]} styles={styles} />
-      <View style={styles.timelineContent}>
-        <Text
-          style={[styles.timelineSummary, styles.timelineSummaryFuture]}
-        >
-          {item.summary ?? ''}
-        </Text>
-        <Text style={styles.timelineMeta}>{proactiveLifeSourceLabel(item.sourceType)}</Text>
-      </View>
-      {onOpenSchedule ? (
-        <Ionicons name="chevron-forward" size={16} color={theme.colors.text.tertiary} />
-      ) : null}
-    </View>
-  );
-  if (!onOpenSchedule) return content;
-  return (
-    <TouchableOpacity onPress={() => onOpenSchedule(item.sourceId)} accessibilityRole="button">
+  return <GlassSceneProvider sceneId={sceneId}>
+    <View style={styles.screen} onLayout={event => setViewport(event.nativeEvent.layout)}>
+      {/* 玻璃只采样不透明的星空；正文在源外正常绘制，不能被再次折射进弹层。 */}
+      {theme.effects.glass.enabled ? <GlassBackdrop sceneId={sceneId} style={[styles.screen, StyleSheet.absoluteFill]}>{sky}</GlassBackdrop> : sky}
       {content}
-    </TouchableOpacity>
-  );
-}
-
-function TimelineRail({
-  nodeStyle,
-  styles,
-}: {
-  nodeStyle: object | object[];
-  styles: Styles;
-}) {
-  return (
-    <View style={styles.timelineRail}>
-      <View style={styles.timelineLine} pointerEvents="none" />
-      <View style={nodeStyle} />
+      <ModalSheet visible={detailId !== null && focused} onClose={closeDetail} title="日程" onDark={darkSheet}>
+        {detailId && snapshot?.ownerAIId ? <AIScheduleDetailContent key={`${snapshot.ownerAIId}:${detailId}`} scheduleId={detailId} ownerAIId={snapshot.ownerAIId} onClose={closeDetail} onCancelled={calendar.refresh} /> : null}
+      </ModalSheet>
+      <ModalSheet visible={jumpOpen && focused} onClose={() => setJumpOpen(false)} title="跳转日期" onDark={darkSheet}>
+        <View style={styles.modalBody}><InputField label="日期" value={jumpValue} onChangeText={setJumpValue} placeholder="YYYY-MM-DD" maxLength={10} autoCorrect={false} error={jumpError} onDark={darkSheet} /><Button title="前往这一天" onPress={jump} /></View>
+      </ModalSheet>
     </View>
-  );
+  </GlassSceneProvider>;
 }
 
-/**
- * AI Schedule 轻量详情：读取完整 durable detail；
- * 取消必须走 projection-aware command，业务失败（如已到点）原样展示 Domain 错误。
- */
-function AIScheduleDetailContent({
-  scheduleId,
-  ownerAIId,
-  styles,
-  onClose,
-  onCancelled,
-}: {
-  scheduleId: string;
-  ownerAIId: string;
-  styles: Styles;
-  onClose: () => void;
-  onCancelled: () => void;
+function CalendarEntry({ entry, featured, styles, onPress }: {
+  entry: ProactiveLifeCalendarItem; featured: boolean; styles: ReturnType<typeof createStyles>; onPress: () => void;
 }) {
-  const theme = useTheme();
-  const [schedule, setSchedule] = useState<AISchedule | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [cancelling, setCancelling] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    void getAISchedule({ scheduleId, ownerAIId }).then((outcome) => {
-      if (!active) return;
-      if (outcome.status === 'found') {
-        setSchedule(outcome.schedule);
-      } else {
-        setLoadError(resolveAIScheduleCommandErrorMessage(outcome.code));
-      }
-    }).catch((error: unknown) => {
-      if (active) setLoadError(toMessage(error, '无法读取日程详情。'));
-    });
-    return () => { active = false; };
-  }, [scheduleId, ownerAIId]);
-
-  const confirmCancel = useCallback((scheduleToCancel: AISchedule) => {
-    showAppDialog({ title: '取消这条日程？', message: scheduleToCancel.summary, buttons: [
-      { text: '再想想', style: 'cancel' },
-      {
-        text: '取消日程',
-        style: 'destructive',
-        onPress: () => void (async () => {
-          setCancelling(true);
-          setActionError(null);
-          try {
-            const outcome = await cancelAIScheduleWithProjection({ scheduleId, ownerAIId });
-            if (outcome.status === 'cancelled') {
-              onCancelled();
-              onClose();
-            } else {
-              setActionError(resolveAIScheduleCommandErrorMessage(outcome.code));
-            }
-          } catch (error) {
-            setActionError(toMessage(error, '操作失败，请稍后重试。'));
-          } finally {
-            setCancelling(false);
-          }
-        })(),
-      },
-    ] });
-  }, [scheduleId, ownerAIId, onCancelled, onClose]);
-
-  if (loadError) {
-    return (
-      <View style={styles.detailBody}>
-        <Text style={styles.detailError}>{loadError}</Text>
-      </View>
-    );
-  }
-  if (!schedule) {
-    return (
-      <View style={styles.detailLoading}>
-        <ActivityIndicator color={theme.colors.brand.primary} />
-      </View>
-    );
-  }
-
-  return (
-    <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailBody}>
-      <Text style={styles.detailTime}>计划时间：{formatProactiveLifeFullDateTime(schedule.remindAt)}</Text>
-      <Text style={styles.detailDetails}>创建时间：{formatProactiveLifeFullDateTime(schedule.createdAt)}</Text>
-      <Text style={styles.detailDetails}>实际开始时间：{schedule.claimedAt
-        ? formatProactiveLifeFullDateTime(schedule.claimedAt) : '尚未开始'}</Text>
-      <Text style={styles.detailSummary}>{schedule.summary}</Text>
-      {schedule.details && schedule.details !== schedule.summary ? (
-        <Text style={styles.detailDetails}>{schedule.details}</Text>
-      ) : null}
-      {schedule.sourceExcerpt ? (
-        <>
-          <Text style={styles.detailSourceLabel}>来源对话</Text>
-          <Text style={styles.detailSourceExcerpt}>{schedule.sourceExcerpt}</Text>
-        </>
-      ) : null}
-      {schedule.status !== 'scheduled' ? (
-        <Text style={styles.detailDetails}>{schedule.cancelledReason === 'expired' ? '已跳过：超过原定时间 15 分钟仍未开始，不再补跑。'
-          : schedule.cancelledReason === 'merged_chat' ? '自主执行机会已结束，相关信息已交给正常聊天。'
-          : schedule.cancelledReason === 'merged_schedule' ? '已归并到更新的日程，不单独执行。'
-          : '这条日程已在执行或已结束。'}</Text>
-      ) : null}
-      {actionError ? <Text style={styles.detailError}>{actionError}</Text> : null}
-      {canCancelAISchedule(schedule, new Date()) ? (
-        <View style={styles.detailActions}>
-          <Button
-            title={cancelling ? '正在取消…' : '取消日程'}
-            variant="danger"
-            onPress={() => confirmCancel(schedule)}
-            disabled={cancelling}
-          />
-        </View>
-      ) : null}
-    </ScrollView>
-  );
-}
-
-function toMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
+  const at = entry.kind === 'future' ? entry.item.plannedAt : entry.kind === 'running' ? entry.item.startedAt : entry.item.occurredAt;
+  const status = entry.kind === 'future' ? '计划时间'
+    : entry.kind === 'running' ? entry.item.modelResponded ? 'AI 已响应 · 正在行动' : '等待 AI 响应'
+    : proactiveLifeCompletionDispositionLabel(entry.item.completionDisposition, entry.item.modelResponded);
+  if (featured) return <Pressable style={styles.featured} onPress={onPress} accessibilityRole="button" accessibilityLabel={`${formatProactiveLifeClock(at)}，${entry.item.summary}，${status}，查看日程详情`}>
+    <Text style={styles.featuredLabel}>{entry.kind === 'future' ? '下一次计划' : entry.kind === 'running' ? '正在发生' : '已留下的足迹'}</Text>
+    <Text style={styles.featuredTime}>{formatProactiveLifeClock(at)}</Text>
+    <View style={styles.featuredRow}><Text style={styles.featuredTitle}>{entry.item.summary}</Text><Text style={styles.detailLink}>详情 ↗</Text></View>
+    {entry.kind !== 'future' ? <Text style={styles.entryStatus}>{status}</Text> : null}
+  </Pressable>;
+  return <Pressable style={styles.entry} onPress={onPress} accessibilityRole="button">
+    <Text style={styles.entryTime}>{formatProactiveLifeClock(at)}</Text><View style={styles.entryBody}><Text style={styles.entryTitle}>{entry.item.summary}</Text><Text style={styles.entryStatus}>{status}</Text></View><Text style={styles.detailLink}>↗</Text>
+  </Pressable>;
 }

@@ -1,312 +1,118 @@
-/**
- * 从唯一 AI 日程真值读取主动生活 read model。
- *
- * 这个 adapter 只读 durable truth，不写回状态，也不创建 activity projection table。
- * 日程状态机由 Repository 拥有；这里只映射产品字段并提供稳定分页。
- */
-
+/** 日历只读取唯一日程真值；日期计数和当天第一页来自同一个短事务快照。 */
 import { databaseCoordinator, type DatabaseReadExecutor } from '@platform/persistence';
-import {
-  type ProactiveLifeCompletionDisposition,
-  type ProactiveLifeFutureCursor,
-  type ProactiveLifeFutureRecord,
-  type ProactiveLifeHistoryCursor,
-  type ProactiveLifeHistoryRecord,
-  type ProactiveLifePage,
-  type ProactiveLifeReadRepository,
-  type ProactiveLifeRunningRecord,
-  type ProactiveLifeSourceType,
-  type ProactiveLifeOverviewRecord,
+import type {
+  ProactiveLifeCalendarCursor, ProactiveLifeCalendarQuery, ProactiveLifeCalendarRecord,
+  ProactiveLifeCalendarRecordPage, ProactiveLifeDayCount, ProactiveLifeDayQuery,
+  ProactiveLifePage, ProactiveLifeReadRepository,
 } from '../domain/ProactiveLifeReadRepository';
 
-interface FutureRow {
-  source_type: ProactiveLifeSourceType;
+interface CalendarRow {
+  rank: number;
+  kind: 'future' | 'running' | 'history';
   source_id: string;
   owner_ai_id: string;
   planned_at: string;
   summary: string | null;
-}
-
-interface FutureOverviewRow extends FutureRow {
-  future_count: number;
-}
-
-interface RunningRow {
-  source_type: ProactiveLifeSourceType;
-  source_id: string;
-  owner_ai_id: string;
-  planned_at: string;
-  summary: string | null;
-  started_at: string;
-  run_id: string;
-}
-
-interface HistoryRow {
-  source_type: ProactiveLifeSourceType;
-  source_id: string;
-  owner_ai_id: string;
-  planned_at: string;
-  summary: string | null;
-  occurred_at: string;
-  terminal_at: string;
+  display_at: string;
   run_id: string | null;
-  completion_disposition: string;
+  terminal_at: string | null;
+  completion_disposition: string | null;
 }
 
-const FUTURE_ROWS = `
-  SELECT
-    'ai_schedule' AS source_type,
-    schedule_id AS source_id,
-    owner_ai_id,
-    remind_at AS planned_at,
-    summary,
-    julianday(remind_at) AS planned_at_epoch
+const CALENDAR_ROWS = `
+  SELECT 'future' AS kind, schedule_id AS source_id, owner_ai_id,
+    remind_at AS planned_at, summary, remind_at AS display_at,
+    NULL AS run_id, NULL AS terminal_at, NULL AS completion_disposition
   FROM raven_cat_ai_schedules
-  WHERE owner_ai_id = ?
-    AND status = 'scheduled'
-    AND julianday(remind_at) > julianday(?)`;
+  WHERE owner_ai_id = ? AND status = 'scheduled' AND julianday(remind_at) > julianday(?)
+    AND julianday(remind_at) >= julianday(?) AND julianday(remind_at) < julianday(?)
+  UNION ALL
+  SELECT 'running', schedule_id, owner_ai_id, remind_at, summary, claimed_at,
+    claimed_by_run_id, NULL, NULL
+  FROM raven_cat_ai_schedules
+  WHERE owner_ai_id = ? AND status = 'claimed'
+    AND julianday(claimed_at) >= julianday(?) AND julianday(claimed_at) < julianday(?)
+  UNION ALL
+  SELECT 'history', schedule_id, owner_ai_id, remind_at, summary,
+    COALESCE(claimed_at, remind_at), claimed_by_run_id, COALESCE(consumed_at, remind_at),
+    CASE WHEN status IN ('scheduled','cancelled') THEN 'unexecuted' ELSE completion_disposition END
+  FROM raven_cat_ai_schedules
+  WHERE owner_ai_id = ? AND (
+    status = 'consumed'
+    OR (status = 'cancelled' AND cancelled_reason IN ('expired','merged_schedule','merged_chat'))
+    OR (status = 'scheduled' AND julianday(remind_at) <= julianday(?)))
+    AND julianday(COALESCE(claimed_at, remind_at)) >= julianday(?)
+    AND julianday(COALESCE(claimed_at, remind_at)) < julianday(?)`;
 
-const RUNNING_ROWS = `
-  SELECT
-    'ai_schedule' AS source_type,
-    schedule_id AS source_id,
-    owner_ai_id,
-    remind_at AS planned_at,
-    summary,
-    claimed_at AS started_at,
-    claimed_by_run_id AS run_id,
-    julianday(claimed_at) AS started_at_epoch
-  FROM raven_cat_ai_schedules
-  WHERE owner_ai_id = ?
-    AND status = 'claimed'`;
-
-const HISTORY_ROWS = `
-  SELECT
-    'ai_schedule' AS source_type,
-    schedule_id AS source_id,
-    owner_ai_id,
-    remind_at AS planned_at,
-    summary,
-    COALESCE(claimed_at, remind_at) AS occurred_at,
-    COALESCE(consumed_at, remind_at) AS terminal_at,
-    claimed_by_run_id AS run_id,
-    CASE WHEN status IN ('scheduled','cancelled') THEN 'unexecuted' ELSE completion_disposition END AS completion_disposition,
-    julianday(COALESCE(claimed_at, remind_at)) AS occurred_at_epoch
-  FROM raven_cat_ai_schedules
-  WHERE owner_ai_id = ?
-    AND (status = 'consumed' OR (status = 'cancelled' AND cancelled_reason IN ('expired','merged_schedule','merged_chat'))
-      OR (status = 'scheduled' AND julianday(remind_at) <= julianday(?)))`;
+function calendarParams(input: ProactiveLifeDayQuery, from = input.day.from, until = input.day.until): string[] {
+  return [input.ownerAIId, input.now, from, until, input.ownerAIId, from, until, input.ownerAIId, input.now, from, until];
+}
 
 export class SQLiteProactiveLifeReadRepository implements ProactiveLifeReadRepository {
-  async loadOverview(input: {
-    ownerAIId: string;
-    now: string;
-    historyLimit: number;
-  }): Promise<ProactiveLifeOverviewRecord> {
-    const db = this.openExecutor('overview');
-    // future、running、history 必须来自同一个短快照；Chat anchor 在事务提交后由 application 补齐。
-    return db.withExclusiveTransactionAsync(async (tx) => {
-      const future = await tx.getFirstAsync<FutureOverviewRow>(
-        `WITH unified_future AS (${FUTURE_ROWS})
-         SELECT source_type, source_id, owner_ai_id, planned_at, summary,
-                COUNT(*) OVER () AS future_count
-         FROM unified_future
-         ORDER BY planned_at_epoch ASC, source_id ASC
-         LIMIT 1`,
-        [input.ownerAIId, input.now],
+  async loadCalendar(input: ProactiveLifeCalendarQuery): Promise<ProactiveLifeCalendarRecordPage> {
+    return this.openExecutor('calendar').withExclusiveTransactionAsync(async tx => {
+      const rows = await tx.getAllAsync<{ day_key: string; count: number; running_count: number }>(
+        `WITH calendar AS (${CALENDAR_ROWS}),
+         days(day_key, start_at, end_at) AS (VALUES ${input.days.map(() => '(?,?,?)').join(',')})
+         SELECT days.day_key, COUNT(calendar.source_id) AS count,
+           SUM(CASE WHEN calendar.kind = 'running' THEN 1 ELSE 0 END) AS running_count
+         FROM days LEFT JOIN calendar
+           ON julianday(calendar.display_at) >= julianday(days.start_at)
+           AND julianday(calendar.display_at) < julianday(days.end_at)
+         GROUP BY days.day_key ORDER BY days.day_key`,
+        [...calendarParams(input, input.days[0].from, input.days[input.days.length - 1].until), ...input.days.flatMap(day => [day.key, day.from, day.until])],
       );
-      const runningRows = await tx.getAllAsync<RunningRow>(
-        `WITH unified_running AS (${RUNNING_ROWS})
-         SELECT source_type, source_id, owner_ai_id, planned_at, summary,
-                started_at, run_id
-         FROM unified_running
-         ORDER BY started_at_epoch ASC, source_id ASC`,
-        [input.ownerAIId],
-      );
-      const history = await queryHistory(tx, {
-        ownerAIId: input.ownerAIId,
-        now: input.now,
-        limit: input.historyLimit,
-      });
-
-      return {
-        nextFuture: future ? toFutureRecord(future) : null,
-        futureCount: future?.future_count ?? 0,
-        runningItems: runningRows.map(toRunningRecord),
-        recentHistory: history.items,
-        historyNextCursor: history.nextCursor,
-      };
+      const counts: ProactiveLifeDayCount[] = rows.map(row => ({ key: row.day_key, count: row.count, runningCount: row.running_count }));
+      return { counts, page: await queryDay(tx, input) };
     });
   }
 
-  async listFuture(input: {
-    ownerAIId: string;
-    now: string;
-    after?: ProactiveLifeFutureCursor | null;
-    limit: number;
-  }): Promise<ProactiveLifePage<ProactiveLifeFutureRecord, ProactiveLifeFutureCursor>> {
-    const cursor = input.after;
-    const afterSql = cursor
-      ? `WHERE (
-           planned_at_epoch > julianday(?)
-           OR (
-             planned_at_epoch = julianday(?)
-           AND source_id > ?
-           )
-         )`
-      : '';
-    const params: (string | number)[] = [
-      input.ownerAIId,
-      input.now,
-    ];
-    if (cursor) {
-      params.push(cursor.plannedAt, cursor.plannedAt, cursor.sourceId);
-    }
-    params.push(input.limit + 1);
-
-    const rows = await this.openExecutor('future').getAllAsync<FutureRow>(
-      `WITH unified_future AS (${FUTURE_ROWS})
-       SELECT source_type, source_id, owner_ai_id, planned_at, summary
-       FROM unified_future
-       ${afterSql}
-       ORDER BY planned_at_epoch ASC, source_id ASC
-       LIMIT ?`,
-      params,
-    );
-    const hasMore = rows.length > input.limit;
-    const pageRows = hasMore ? rows.slice(0, input.limit) : rows;
-    const items = pageRows.map(toFutureRecord);
-    const last = items[items.length - 1];
-    return {
-      items,
-      hasMore,
-      nextCursor: hasMore && last ? toFutureCursor(last) : null,
-    };
-  }
-
-  async listHistory(input: {
-    now: string;
-    ownerAIId: string;
-    before?: ProactiveLifeHistoryCursor | null;
-    limit: number;
-  }): Promise<ProactiveLifePage<ProactiveLifeHistoryRecord, ProactiveLifeHistoryCursor>> {
-    return queryHistory(this.openExecutor('history'), input);
+  listDay(input: ProactiveLifeDayQuery) {
+    return queryDay(this.openExecutor('day'), input);
   }
 
   private openExecutor(operation: string) {
-    return databaseCoordinator.openTaskExecutor({
-      name: `companion.proactiveLife.${operation}`,
-      feature: 'companion',
-      priority: 'interactive',
-    });
+    return databaseCoordinator.openTaskExecutor({ name: `companion.proactiveLife.${operation}`, feature: 'companion', priority: 'interactive' });
   }
 }
 
-function toFutureRecord(row: FutureRow): ProactiveLifeFutureRecord {
-  return {
-    sourceType: row.source_type,
-    sourceId: row.source_id,
-    ownerAIId: row.owner_ai_id,
-    plannedAt: row.planned_at,
-    summary: row.summary,
-  };
-}
-
-function toRunningRecord(row: RunningRow): ProactiveLifeRunningRecord {
-  return {
-    sourceType: row.source_type,
-    sourceId: row.source_id,
-    ownerAIId: row.owner_ai_id,
-    plannedAt: row.planned_at,
-    summary: row.summary,
-    startedAt: row.started_at,
-    runId: row.run_id,
-  };
-}
-
-function toHistoryRecord(row: HistoryRow): ProactiveLifeHistoryRecord {
-  return {
-    sourceType: row.source_type,
-    sourceId: row.source_id,
-    ownerAIId: row.owner_ai_id,
-    plannedAt: row.planned_at,
-    summary: row.summary,
-    occurredAt: row.occurred_at,
-    terminalAt: row.terminal_at,
-    runId: row.run_id,
-    completionDisposition: toCompletionDisposition(row.completion_disposition),
-  };
-}
-
-function toFutureCursor(item: ProactiveLifeFutureRecord): ProactiveLifeFutureCursor {
-  return {
-    plannedAt: item.plannedAt,
-    sourceType: item.sourceType,
-    sourceId: item.sourceId,
-  };
-}
-
-function toHistoryCursor(item: ProactiveLifeHistoryRecord): ProactiveLifeHistoryCursor {
-  return {
-    occurredAt: item.occurredAt,
-    sourceType: item.sourceType,
-    sourceId: item.sourceId,
-  };
-}
-
-type HistoryQueryExecutor = Pick<DatabaseReadExecutor, 'getAllAsync'>;
-
-async function queryHistory(
-  db: HistoryQueryExecutor,
-  input: {
-    now: string;
-    ownerAIId: string;
-    before?: ProactiveLifeHistoryCursor | null;
-    limit: number;
-  },
-): Promise<ProactiveLifePage<ProactiveLifeHistoryRecord, ProactiveLifeHistoryCursor>> {
-  const cursor = input.before;
-  const beforeSql = cursor
-    ? `WHERE (
-         occurred_at_epoch < julianday(?)
-         OR (
-           occurred_at_epoch = julianday(?)
-           AND source_id < ?
-         )
-       )`
-    : '';
-  const params: (string | number)[] = [input.ownerAIId, input.now];
-  if (cursor) {
-    params.push(cursor.occurredAt, cursor.occurredAt, cursor.sourceId);
-  }
-  params.push(input.limit + 1);
-
-  const rows = await db.getAllAsync<HistoryRow>(
-    `WITH unified_history AS (${HISTORY_ROWS})
-     SELECT source_type, source_id, owner_ai_id, planned_at, summary,
-            occurred_at, terminal_at, run_id, completion_disposition
-     FROM unified_history
-     ${beforeSql}
-     ORDER BY occurred_at_epoch DESC, source_id DESC
-     LIMIT ?`,
-    params,
+async function queryDay(
+  db: Pick<DatabaseReadExecutor, 'getAllAsync'>,
+  input: ProactiveLifeDayQuery,
+): Promise<ProactiveLifePage<ProactiveLifeCalendarRecord, ProactiveLifeCalendarCursor>> {
+  const cursor = input.after;
+  const after = cursor ? `AND (rank > ? OR (rank = ? AND (julianday(display_at) > julianday(?) OR
+    (julianday(display_at) = julianday(?) AND source_id > ?))))` : '';
+  const rows = await db.getAllAsync<CalendarRow>(
+    `WITH calendar AS (${CALENDAR_ROWS}), ranked AS (
+       SELECT *, CASE kind WHEN 'running' THEN 0 WHEN 'future' THEN 1 ELSE 2 END AS rank FROM calendar)
+     SELECT * FROM ranked WHERE julianday(display_at) >= julianday(?) AND julianday(display_at) < julianday(?)
+     ${after} ORDER BY rank ASC, julianday(display_at) ASC, source_id ASC LIMIT ?`,
+    [...calendarParams(input), input.day.from, input.day.until,
+      ...(cursor ? [cursor.rank, cursor.rank, cursor.at, cursor.at, cursor.sourceId] : []), input.limit + 1],
   );
   const hasMore = rows.length > input.limit;
-  const pageRows = hasMore ? rows.slice(0, input.limit) : rows;
-  const items = pageRows.map(toHistoryRecord);
-  const last = items[items.length - 1];
-  return {
-    items,
-    hasMore,
-    nextCursor: hasMore && last ? toHistoryCursor(last) : null,
-  };
+  const pageRows = rows.slice(0, input.limit);
+  const last = pageRows[pageRows.length - 1];
+  return { items: pageRows.map(toCalendarRecord), hasMore,
+    nextCursor: hasMore ? { rank: last.rank, at: last.display_at, sourceId: last.source_id } : null };
 }
 
-function toCompletionDisposition(value: string): ProactiveLifeCompletionDisposition {
-  if (value === 'unexecuted') return 'unexecuted';
-  if (value === 'agent_terminal') return 'completed';
-  if (value === 'interrupted') return 'interrupted';
-  throw new Error(`SQLite AI Schedule completion_disposition 非法：${value}`);
+function toCalendarRecord(row: CalendarRow): ProactiveLifeCalendarRecord {
+  const item = { sourceType: 'ai_schedule' as const, sourceId: row.source_id, ownerAIId: row.owner_ai_id, plannedAt: row.planned_at, summary: row.summary };
+  if (row.kind === 'future') return { kind: 'future', item };
+  // 可空投影列在 SQLite adapter 收口，内部 DTO 保持状态机约束。
+  if (row.kind === 'running') {
+    if (row.run_id === null) throw new Error('运行中日程缺少 runId');
+    return { kind: 'running', item: { ...item, startedAt: row.display_at, runId: row.run_id } };
+  }
+  const disposition = row.completion_disposition;
+  if (disposition !== 'unexecuted' && disposition !== 'agent_terminal' && disposition !== 'interrupted') {
+    throw new Error(`SQLite AI Schedule completion_disposition 非法：${disposition}`);
+  }
+  if (row.terminal_at === null) throw new Error('历史日程缺少终态时间');
+  return { kind: 'history', item: { ...item, occurredAt: row.display_at, terminalAt: row.terminal_at,
+    runId: row.run_id, completionDisposition: disposition === 'agent_terminal' ? 'completed' : disposition } };
 }
 
 export const proactiveLifeReadRepository = new SQLiteProactiveLifeReadRepository();

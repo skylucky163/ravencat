@@ -1,4 +1,5 @@
 package expo.modules.kimiphonenotifications
+import expo.modules.backgroundruntime.ApplicationExecutionHost
 
 import android.content.Context
 import android.content.Intent
@@ -65,30 +66,30 @@ internal object NotificationResponseDispatcher {
   /**
    * reject：先持久化 response —— native action 不得只依赖一次内存事件交付。
    * 前台 notification observer 在线：交 Host 处理（rejectCall + 聊天时间线对账）并出队；
-   * 前台不在线：启动 Headless 立即执行 rejectCall()，但保留 pending response，
+   * 前台不在线：交共享应用宿主执行 rejectCall()，但保留 pending response，
    * Host 下次启动/恢复消费时 rejectCall() 幂等 no-op，并刷新聊天时间线完成跨 runtime 对账。
    */
-  fun recordForHeadless(context: Context, response: Map<String, Any?>) {
+  fun recordCallAction(context: Context, response: Map<String, Any?>) {
     val responseId = NotificationStateStore.enqueueResponse(context, response)
     if (NotificationResponseEvents.emit(response)) {
       NotificationStateStore.removePendingResponse(context, responseId)
       return
     }
-    CallNotificationActionHeadlessTaskService.start(context, response)
+    ApplicationExecutionHost.post(context, "call_action", response, 30_000L)
   }
 
   /**
    * together-listening leave：与来电 reject 同级的 durable 语义。先落 pending 队列，
-   * 保证 startService 失败或 Headless runtime 未执行时用户动作不丢失；
-   * 前台 observer 在线则交付 Host 执行 canonical leave 并出队，否则启动 Together Headless。
-   * Headless 成功后 pending response 保留，Host 下次恢复重放时 canonical leave 幂等 no-op。
+   * 保证运行环境未能建立或请求未执行时用户动作不丢失；
+   * 前台 observer 在线则交付 Host 执行 canonical leave 并出队，否则交共享应用宿主。
+   * 执行成功后 pending response 保留，Host 下次恢复消费时 canonical leave 幂等 no-op。
    */
-  fun recordForTogetherListeningHeadless(context: Context, response: Map<String, Any?>) {
+  fun recordTogetherListeningAction(context: Context, response: Map<String, Any?>) {
     val responseId = NotificationStateStore.enqueueResponse(context, response)
     if (NotificationResponseEvents.emit(response)) {
       NotificationStateStore.removePendingResponse(context, responseId)
       return
     }
-    TogetherListeningNotificationActionHeadlessTaskService.start(context, response)
+    ApplicationExecutionHost.post(context, "together_action", response, 30_000L)
   }
 }

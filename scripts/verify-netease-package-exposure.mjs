@@ -159,6 +159,7 @@ const registration = loadTypeScriptModule(
     '@features/media': featureProxy,
     './ApplicationSettingsTools': { applicationSettingsTools: [] },
     './GroupManagementTools': { groupManagementTools: [] },
+    './ShareMomentTool': { ShareMomentTool: { name: 'share_moment', definition: { name: 'share_moment', description: '', parameters: { type: 'object' } }, execute: async () => ({ status: 'success', modelContent: 'prepared' }) } },
     '@shared/aiTools': {},
     '@features/assistants': new Proxy({
       assistantToolPermissionRepository,

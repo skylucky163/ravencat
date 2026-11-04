@@ -25,7 +25,7 @@ import {
 import { createStyles } from './styles';
 import { createCommonStyles } from '@shared/ui/commonStyles';
 import { useTheme, useThemedStyles } from '@shared/theme';
-import GeneralModelPrefill from '../auxiliaryModels/GeneralModelPrefill';
+import ServiceConnectionPicker from '../auxiliaryModels/ServiceConnectionPicker';
 
 const STEPS = ['基本信息', '选择模型', '测试连接'];
 
@@ -69,8 +69,7 @@ export default function AddAIScreen({ onBack, onAdded }: AddAIScreenProps) {
     handleFetchModels,
     handleSelectModel,
     handleTestConnection,
-    handleSave,
-    handleFillModelConfig,
+    handleSave, handleFillServiceConnection,
   } = useAddAIForm({ onAdded, onBack });
 
   useEffect(() => {
@@ -141,7 +140,7 @@ export default function AddAIScreen({ onBack, onAdded }: AddAIScreenProps) {
           <NameInput value={name} onChangeText={setName} />
 
           <View style={styles.section}>
-            <GeneralModelPrefill onFill={handleFillModelConfig} disabled={isTesting || isLoadingModels} />
+            <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} onFill={handleFillServiceConnection} disabled={isTesting || isLoadingModels} />
           </View>
 
           {/* API 地址 */}

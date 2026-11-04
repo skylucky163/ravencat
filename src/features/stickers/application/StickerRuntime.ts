@@ -42,6 +42,7 @@ export interface StickerAuxiliaryModelsGateway {
  * 不缓存第二份连接配置；调用方负责先通过 resolver 得到有效模型引用。
  */
 export interface StickerEmbeddingGateway {
+  /** 外部边界保证每个输入对应一个有限非零向量，数量、顺序与批内维度均合法。 */
   embedTexts(
     texts: readonly string[],
     model: StickerModelConfigRef,
@@ -54,6 +55,7 @@ export interface StickerRuntimeDependencies {
   media: StickerMediaGateway;
   auxiliaryModels: StickerAuxiliaryModelsGateway;
   embeddings: StickerEmbeddingGateway;
+  withEmbeddingMaintenance<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T>;
   generateId: () => string;
   now: () => string;
   aiProcessing: {
@@ -72,16 +74,6 @@ export function configureStickersRuntime(
   stickerRuntimeSlot.configure(dependencies);
 }
 
-export function configureStickerRuntimeDependencies(
-  dependencies: StickerRuntimeDependencies,
-): void {
-  configureStickersRuntime(dependencies);
-}
-
 export function getStickersRuntimeDependencies(): StickerRuntimeDependencies {
   return stickerRuntimeSlot.get();
-}
-
-export function getStickerRuntimeDependencies(): StickerRuntimeDependencies {
-  return getStickersRuntimeDependencies();
 }

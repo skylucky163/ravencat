@@ -11,6 +11,7 @@ import type {
   StickerMetadataPatch,
 } from './Sticker';
 import type { StickerEmbedding } from './StickerEmbedding';
+import type { StickerProcessingRow } from './StickerProcessing';
 import type { StickerSystemConfig } from './StickerSystemConfig';
 import type { StickerGroupPageCursor } from './StickerSearch';
 
@@ -43,6 +44,19 @@ export interface StickerEmbeddingModelContext {
   dimension: number | null;
 }
 
+export interface StickerEmbeddingIndexControl {
+  revision: number;
+  buildId: string | null;
+  publishedModelId: string | null;
+  publishedModelUpdatedAt: string | null;
+}
+
+export interface StickerEmbeddingRebuild {
+  id: string;
+  revision: number;
+  stickers: Sticker[];
+}
+
 /**
  * 语义检索候选集的结构化过滤条件：只有 ready + 分组 / tags / emotion。
  * 刻意不包含文本 query 与 limit——语义召回需要覆盖过滤条件下的全部 ready
@@ -56,8 +70,17 @@ export interface StickerSemanticSearchInput {
 }
 
 export interface StickerRepository {
+  setAutomaticRecognitionEnabled(enabled: boolean, updatedAt: string): Promise<void>;
+  restoreEmbeddingIndexPublication(context: StickerEmbeddingModelContext, expectedRevision: number): Promise<void>;
+  listUserStickerProcessing(context: StickerEmbeddingModelContext | null): Promise<StickerProcessingRow[]>;
+  retryAnnotation(stickerId: string, updatedAt: string): Promise<void>;
+  saveEmbeddingFailures(stickers: Sticker[], context: StickerEmbeddingModelContext, revision: number,
+    buildId: string | null, error: string, updatedAt: string, signal: AbortSignal): Promise<void>;
+  clearEmbeddingFailures(context: StickerEmbeddingModelContext, stickerId?: string): Promise<void>;
   getStickerById(id: string, assistantId?: string): Promise<Sticker | null>;
   getStickerByMediaAssetId(mediaAssetId: string): Promise<Sticker | null>;
+  /** 在同一事务内按所属收藏库与素材复用，或提交新收藏；容量检查沿用创建契约。 */
+  createStickerIfAbsent(sticker: Sticker): Promise<{ sticker: Sticker; reused: boolean }>;
   listGroups(): Promise<StickerGroup[]>;
   listStickers(input?: ListStickersInput): Promise<Sticker[]>;
   searchStickers(input: SearchStickersInput): Promise<Sticker[]>;
@@ -111,13 +134,16 @@ export interface StickerRepository {
 
   // -- 语义向量索引 --
 
-  upsertStickerEmbedding(embedding: StickerEmbedding): Promise<void>;
+  syncEmbeddingModel(context: StickerEmbeddingModelContext | null, expectedRevision: number): Promise<number | null>;
+  getEmbeddingIndexControl(): Promise<StickerEmbeddingIndexControl>;
+  beginEmbeddingRebuild(id: string, context: StickerEmbeddingModelContext, expectedRevision: number): Promise<StickerEmbeddingRebuild>;
+  publishEmbeddingRebuild(build: StickerEmbeddingRebuild, embeddings: StickerEmbedding[], context: StickerEmbeddingModelContext, signal: AbortSignal): Promise<void>;
+  finishEmbeddingRebuild(id: string): Promise<void>;
+  commitEmbeddingBatch(embeddings: StickerEmbedding[], revision: number, signal: AbortSignal): Promise<number>;
   listStickerEmbeddingsByStickerIds(
     stickerIds: readonly string[],
     modelConfigId: string,
   ): Promise<StickerEmbedding[]>;
-  /** 只删除指定模型的向量；切换模型时旧向量保留以备未来切回复用。 */
-  deleteStickerEmbeddingsByModel(modelConfigId: string): Promise<number>;
   countReadyStickers(): Promise<number>;
   countValidStickerEmbeddings(context: StickerEmbeddingModelContext): Promise<number>;
   /** ready 且当前模型向量缺失 / stale 的 Sticker，供 embedding worker 领取。 */

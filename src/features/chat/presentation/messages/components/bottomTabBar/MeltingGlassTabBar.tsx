@@ -51,7 +51,7 @@ export default function MeltingGlassTabBar(props: BottomTabBarVariantProps) {
         </>
       )}
       <View pointerEvents="box-none" style={styles.items}>
-        <TabBarItems {...props} height={HEADROOM + FLOATING_TAB_BAR_HEIGHT} iconOffset={HEADROOM / 2} />
+        <TabBarItems {...props} height={HEADROOM + FLOATING_TAB_BAR_HEIGHT} headroom={HEADROOM} />
       </View>
     </View>
   );

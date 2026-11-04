@@ -41,7 +41,7 @@ export async function getCurrentUserProfile(): Promise<UserProfile> {
   return userProfileRepository.ensureDefault();
 }
 
-// 姓名资料更新
+// 文字资料与 legacy 头像更新
 //
 // 改名只写 user_profile：Moments V2 的作者身份是 authorId，历史朋友圈/评论/点赞
 // 保留写入时的 name snapshot，展示时按 authorId 解析当前名称，因此改名不重写任何历史行。
@@ -49,7 +49,7 @@ export async function updateCurrentUserProfile(
   updates: UpdateUserProfileInput
 ): Promise<UserProfile> {
   // 头像替换会清掉旧的 avatar_media_asset_id：替换前读一次旧引用作为 targeted release 候选。
-  const replacesAvatar = updates.avatar !== undefined || updates.avatarMediaAssetId !== undefined;
+  const replacesAvatar = updates.avatar !== undefined;
   let previousAvatarMediaAssetId: string | null = null;
   if (replacesAvatar) {
     const previous = await userProfileRepository.getAvatarMediaAssetReference(SELF_USER_PROFILE_ID);
@@ -60,20 +60,6 @@ export async function updateCurrentUserProfile(
   if (replacesAvatar) {
     await releaseMediaAssetCandidates([previousAvatarMediaAssetId]);
   }
-  emitUserProfileUpdated(updatedProfile);
-  return updatedProfile;
-}
-
-// 头像更新
-export async function updateCurrentUserAvatar(
-  avatar: string | null
-): Promise<UserProfile> {
-  // 写 legacy avatar 会把 avatar_media_asset_id 置 NULL，旧资产引用随之消失。
-  const previous = await userProfileRepository.getAvatarMediaAssetReference(SELF_USER_PROFILE_ID);
-  const updatedProfile =
-    await userProfileRepository.updateAvatar(avatar);
-  await releaseMediaAssetCandidates([previous?.avatarMediaAssetId ?? null]);
-
   emitUserProfileUpdated(updatedProfile);
   return updatedProfile;
 }
@@ -163,13 +149,6 @@ export function listUserAvatarMediaAssetMigrationCandidates(): Promise<
   UserAvatarMediaAssetMigrationCandidate[]
 > {
   return userProfileRepository.listAvatarMediaAssetMigrationCandidates();
-}
-
-/** Host-only M3b maintenance：读取提交前的当前头像状态，供 CAS 形成 expected state。 */
-export function getUserAvatarMediaAssetMigrationCandidate(
-  ownerId: string,
-): Promise<UserAvatarMediaAssetMigrationCandidate | null> {
-  return userProfileRepository.getAvatarMediaAssetMigrationCandidate(ownerId);
 }
 
 /** Host-only M3b maintenance：与 MediaAsset 行在同一事务内提交 owner 引用。 */

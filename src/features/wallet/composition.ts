@@ -23,11 +23,6 @@ import {
   type WalletChatReplyGateway,
 } from './application/TriggerLedgerAIReply';
 import {
-  addWalletQuickAction as addWalletQuickActionUseCase,
-  deleteWalletQuickAction as deleteWalletQuickActionUseCase,
-  deleteWalletRecord as deleteWalletRecordUseCase,
-  updateWalletRecord as updateWalletRecordUseCase,
-  getLedgerRangeSummary as getLedgerRangeSummaryUseCase,
   getWalletScreenData as getWalletScreenDataUseCase,
   getWalletCategories as getWalletCategoriesUseCase,
 } from './application/WalletPresentation';
@@ -88,17 +83,16 @@ export const getWalletScreenData = (date = new Date()) =>
 
 export const getWalletCategories = () => getWalletCategoriesUseCase(presentationDeps);
 
-export const deleteWalletRecord = (recordId: string) =>
-  deleteWalletRecordUseCase(recordId, presentationDeps);
+// 这些操作没有额外的应用编排，校验与写入由仓储负责，装配后直接调用即可。
+export const deleteWalletRecord = (recordId: string) => ledgerRepository.deleteRecord(recordId);
 
 export const updateWalletRecord = (recordId: string, updates: UpdateWalletRecordInput) =>
-  updateWalletRecordUseCase(recordId, updates, presentationDeps);
+  ledgerRepository.updateRecord(recordId, updates);
 
 export const addWalletQuickAction = (action: Partial<QuickAction>) =>
-  addWalletQuickActionUseCase(action, presentationDeps);
+  ledgerRepository.insertQuickAction(action);
 
-export const deleteWalletQuickAction = (id: string) =>
-  deleteWalletQuickActionUseCase(id, presentationDeps);
+export const deleteWalletQuickAction = (id: string) => ledgerRepository.deleteQuickAction(id);
 
 export const getLedgerRangeSummary = (startDate: string, endDate: string) =>
-  getLedgerRangeSummaryUseCase(startDate, endDate, presentationDeps);
+  ledgerRepository.getRangeSummary(startDate, endDate);

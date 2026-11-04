@@ -5,7 +5,6 @@ import { validateTranslationModelConfig } from '@features/integrations';
 
 export function getAuxiliaryModelUnavailableReason(config: AuxiliaryModelConfig | null, kind: CapabilityKind): string | null {
   if (!config) return '模型已删除';
-  if (!config.enabled) return '模型已停用';
   if (config.capabilityKind !== kind) return '模型类型不匹配';
   if (kind === 'translation') {
     const errors = validateTranslationModelConfig({ baseURL: config.baseUrl, apiKey: config.apiKey ?? '', model: config.model, metadataJson: config.metadataJson });

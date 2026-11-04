@@ -1,25 +1,25 @@
 /** 通用模型选择展示；选择与可用性由调用方所属业务系统提供。 */
 import { showAppDialog } from './appDialogStore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Check, ChevronRight } from 'lucide-react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ChevronRight } from 'lucide-react-native';
 import { ThemedSurface, useTheme, useThemedStyles, type PresentationTheme } from '@shared/theme';
-import ModalSheet from './ModalSheet';
+import ModelPickerModal from './ModelPickerModal';
 import type { ModelSelectionSettings } from './modelSelectionTypes';
 
 interface Props {
   title: string;
-  description: string;
+  /** 只在选择弹窗内需要解释时提供；页面顶部已有说明时留空，弹窗不显示问号。 */
+  description?: string;
   unconfiguredLabel?: string;
   clearSelectionLabel?: string;
   getSettings(): Promise<ModelSelectionSettings>;
   onSelect(modelConfigId: string | null): Promise<void>;
   subscribeChanged(listener: () => void): () => void;
-  onManageModels?: () => void;
   disabled?: boolean;
 }
 
-export default function ConfiguredModelPicker({ title, description, unconfiguredLabel = '未选择模型', clearSelectionLabel = '取消选择', getSettings, onSelect, subscribeChanged, onManageModels, disabled = false }: Props) {
+export default function ConfiguredModelPicker({ title, description, unconfiguredLabel = '未选择模型', clearSelectionLabel = '取消选择', getSettings, onSelect, subscribeChanged, disabled = false }: Props) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
   const [settings, setSettings] = useState<ModelSelectionSettings | null>(null);
@@ -28,6 +28,7 @@ export default function ConfiguredModelPicker({ title, description, unconfigured
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef({ revision: 0 });
+  const selection = useRef({ active: false, changed: false });
   const reload = useCallback(async () => {
     const revision = ++request.current.revision;
     setLoading(true);
@@ -43,15 +44,31 @@ export default function ConfiguredModelPicker({ title, description, unconfigured
   useEffect(() => {
     void reload();
     const requests = request.current;
-    const unsubscribe = subscribeChanged(() => { void reload(); });
+    const unsubscribe = subscribeChanged(() => {
+      // 选择期间的通知由随后一次显式刷新覆盖；失败时补读，避免重复请求。
+      if (selection.current.active) { selection.current.changed = true; return; }
+      void reload();
+    });
     return () => { unsubscribe(); requests.revision++; };
   }, [reload, subscribeChanged]);
 
   const select = async (modelConfigId: string | null) => {
     setSaving(true);
-    try { await onSelect(modelConfigId); await reload(); setVisible(false); }
-    catch (failure) { showAppDialog({ title: '选择失败', message: failure instanceof Error ? failure.message : '保存模型选择失败', tone: 'error' }); }
-    finally { setSaving(false); }
+    selection.current = { active: true, changed: false };
+    let refreshed = false;
+    try {
+      await onSelect(modelConfigId);
+      await reload();
+      refreshed = true;
+      setVisible(false);
+    } catch (failure) {
+      showAppDialog({ title: '选择失败', message: failure instanceof Error ? failure.message : '保存模型选择失败', tone: 'error' });
+    } finally {
+      const shouldReload = !refreshed && selection.current.changed;
+      selection.current.active = false;
+      if (shouldReload) void reload();
+      setSaving(false);
+    }
   };
   const selectionLabel = settings?.status === 'active' ? `${settings.selectedModelName} · 配置可用`
     : settings?.status === 'unavailable' ? `${settings.selectedModelName ?? '所选模型'} · ${settings.unavailableReason}`
@@ -66,28 +83,11 @@ export default function ConfiguredModelPicker({ title, description, unconfigured
         {error && <Text style={styles.danger}>{error}</Text>}
       </Pressable>
     </ThemedSurface>
-    <ModalSheet visible={visible} onClose={() => { if (!saving) setVisible(false); }} title={`选择${title}`}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-        {!loading && !error && <Text style={styles.hint}>{description}选择后立即保存。</Text>}
-        {loading ? <ActivityIndicator color={theme.colors.brand.primary} /> : error ? <>
-          <Text style={styles.danger}>{error}</Text><Pressable onPress={() => { void reload(); }}><Text style={styles.action}>重新读取</Text></Pressable>
-        </> : settings && <>
-          {settings.status === 'unavailable' && <Text style={styles.danger}>{selectionLabel}，请检查配置或重新选择。</Text>}
-          {settings.models.map((model) => <ThemedSurface key={model.id} variant="card" style={styles.card}><Pressable disabled={disabled || saving} style={styles.button} onPress={() => { void select(model.id); }}>
-            <View style={styles.row}>
-              <View style={styles.grow}><Text style={styles.label}>{model.name}</Text><Text style={styles.subtitle}>{model.model}</Text></View>
-              {settings.selectedModelId === model.id && <Check size={20} color={theme.colors.brand.primary} />}
-            </View>
-          </Pressable></ThemedSurface>)}
-          {settings.models.length === 0 && <Text style={styles.subtitle}>暂无配置可用的模型，请先新增或完善模型配置。</Text>}
-          <ThemedSurface variant="card" style={styles.card}><Pressable disabled={disabled || saving} style={styles.button} onPress={() => { void select(null); }}>
-            <View style={styles.row}><Text style={styles.label}>{clearSelectionLabel}</Text>{settings.selectedModelId === null && <Check size={20} color={theme.colors.brand.primary} />}</View>
-          </Pressable></ThemedSurface>
-        </>}
-        {saving && <Text style={styles.subtitle}>正在保存选择…</Text>}
-        {onManageModels && <Pressable disabled={saving} onPress={() => { setVisible(false); onManageModels(); }}><Text style={styles.action}>管理模型配置</Text></Pressable>}
-      </ScrollView>
-    </ModalSheet>
+    <ModelPickerModal visible={visible} onClose={() => setVisible(false)} title={`选择${title}`}
+      description={description} models={settings?.models ?? []} selectedModel={settings?.selectedModelId}
+      loading={loading} error={error} disabled={disabled || saving} onRetry={() => { void reload(); }}
+      onSelect={id => { void select(id); }} onClear={settings ? () => { void select(null); } : undefined}
+      clearSelectionLabel={clearSelectionLabel} />
   </>;
 }
 
@@ -100,9 +100,5 @@ const createStyles = (theme: PresentationTheme) => StyleSheet.create({
   grow: { flex: 1 },
   label: { fontSize: 16, fontWeight: '600', color: theme.colors.text.primary },
   subtitle: { fontSize: 13, lineHeight: 20, marginTop: theme.spacing.xs, color: theme.colors.text.secondary },
-  hint: { fontSize: 13, lineHeight: 20, marginBottom: theme.spacing.sm, color: theme.colors.text.secondary },
   danger: { fontSize: 13, color: theme.colors.feedback.error },
-  action: { fontSize: 15, color: theme.colors.brand.primary, paddingVertical: theme.spacing.md },
-  scroll: { maxHeight: 420 },
-  content: { padding: theme.spacing.lg },
 });

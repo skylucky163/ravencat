@@ -1,3 +1,4 @@
+import { chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionSql, chatMessageMutations, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /** 验证有限 SQLite 查询及 Host 消息同步，不读取用户数据库，也不锁定源码形状。 */
 import assert from 'node:assert/strict';
@@ -23,7 +24,7 @@ db.exec(`
 installChatTimelineSchema(db);
 const messagesRoot = 'src/features/chat/messages/';
 const metadata = load(`${messagesRoot}domain/chatMessageMetadata.ts`, {
-  './SharedChatRecord': load(`${messagesRoot}domain/SharedChatRecord.ts`),
+  ...chatSharingDependencies,
   './ChatSticker': load(`${messagesRoot}domain/ChatSticker.ts`),
 });
 const { MessageRepository } = load(`${messagesRoot}infrastructure/SQLiteMessageRepository.ts`, {

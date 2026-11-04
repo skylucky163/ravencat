@@ -14,7 +14,7 @@ export interface StickerEmbedding {
   updatedAt: string;
 }
 
-/** 向量索引状态在查询模型配置后的即时快照；失败向量不持久化，不计入 failed。 */
+/** 向量索引有效数量的即时快照；逐张请求错误由处理进度查询单独提供。 */
 export interface StickerEmbeddingIndexStatus {
   /** annotationStatus = ready 且可被 AI 消费的 Sticker 总数。 */
   readyStickers: number;

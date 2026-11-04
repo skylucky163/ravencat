@@ -2,7 +2,7 @@
 
 Speech 拥有语音能力调用和 Provider client，不拥有 Chat 消息、媒体资产或播放状态。
 
-Chat 语音消息通过 `startVoiceMessageTranscription` 建立单段转写会话。Chat 与 Calls 都使用 `startRealtimeSpeechToText`，支持腾讯实时 ASR、阿里百炼 Fun-ASR / Paraformer：采集期间接收 16 kHz 单声道 PCM，finish 后等待提供方最终完成事件。没有文件转写或自动换提供方的路径。调用方消费中间结果、最终结果或稳定失败码。
+Chat 语音消息通过 `startVoiceMessageTranscription` 建立单段转写会话。Chat 与 Calls 都使用 `startRealtimeSpeechToText`，支持腾讯实时 ASR、阿里百炼 Fun-ASR / Paraformer、火山引擎豆包实时 ASR 与阶跃星辰实时 ASR：采集期间接收 16 kHz 单声道 PCM，结束录音后等待最终识别结果。没有文件转写或自动换提供方的路径。调用方消费中间结果、最终结果或稳定失败码。
 
 Speech 的启动错误、会话错误和聊天录音结果保留具体原因，不经过聊天模型的通用错误文案替换。
 
@@ -11,6 +11,17 @@ AI 语音继续复用 `synthesizeTextToSpeech`，consumer 为 `chatVoiceMessage`
 ## 提供方与参数
 
 `SpeechProviderCatalog` 持有提供方、官方地址、模型参数和表单校验契约。Assistants 持有模型资产及编辑草稿，负责按提供方渲染下拉选择和参数。新建官方服务不要求填写 URL；自定义 OpenAI 兼容服务保留地址输入。旧配置中的自定义地址保持不变，用户可明确改用官方地址。
+
+火山与阶跃共用 `RealtimeRecognitionSocket` 的握手、取消、错误脱敏和连接释放，具体消息协议仍归各自 adapter；初始化确认前不开始采集，主动取消后不再交付迟到结果。React Native 的网络失败先触发不含详情的 `error`，再通过 `close.reason` 返回原生原因；错误收口由后者负责，不能在前者提前关闭并丢失 HTTP 握手失败信息。
+
+| 实时识别提供方 | 配置与协议 |
+| --- | --- |
+| 火山引擎（豆包） | 使用语音控制台的 API Key，开通豆包流式语音识别 2.0，选择按时长或按并发规格；无需填写方舟 Endpoint ID。固定 v3 `bigmodel_async` 地址，资源标识由所选规格映射为请求头。PCM 与 JSON 使用官方二进制无压缩协议，每个分句只定稿一次；客户端负序号包结束音频输入，服务端负包才是最后结果屏障。支持按需关闭句末二遍识别纠错。 |
+| 阶跃星辰 | API Key 与 `stepaudio-2.5-asr-stream`，固定实时 WebSocket 地址；可配置语言、识别提示与句末二遍纠错。等待 `session.updated` 后发送 PCM；当前模型的 delta 全文替换，定稿使用 transcript，字级时间戳转换为毫秒供通话录音归档。通话启用服务端 VAD 持续断句；单段录音与设置测试使用手动 commit，等实际转写片段的 completed 后完成。created/committed 的提交项 ID 与实际转写片段 ID 不相同，不能把提交项加入待转写集合，也不能将提交确认当作最终文字的额外完成条件。 |
+
+上述接入只增加语音提供方，不增加模型选择层、消息提交路径或文件转写。火山语音 API Key 与方舟文本模型配置属于不同服务，不能根据 `/v3` 路径判断凭据可共用。
+
+协议依据：[火山实时识别 v3](https://docs.volcengine.com/docs/doubao-voice/bidirectional-streaming-automatic-speech-recognition-websocket?lang=zh)、[火山二进制帧说明](https://docs.volcengine.com/docs/doubao-voice/large-model-streaming-automatic-speech-recognition-api-1?lang=zh)、[阶跃双向实时 ASR](https://platform.stepfun.com/docs/zh/api-reference/audio/asr-stream.md)。
 
 TTS 支持 OpenAI、MiniMax、ElevenLabs、Fish Audio、OpenRouter 与自定义 OpenAI 兼容服务。正式调用与设置测试共用 `synthesizeConfiguredSpeech` 和 `SpeechSynthesisGateway`。OpenRouter 的风格指令使用当前官方顶层 `instructions`，只为已声明支持该能力的模型开放。OpenRouter 模型目录与 ElevenLabs 模型/音色目录可从官方接口加载。
 

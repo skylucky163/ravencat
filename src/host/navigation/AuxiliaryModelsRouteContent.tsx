@@ -19,6 +19,7 @@ export default function AuxiliaryModelsRouteContent({ route }: { route: Auxiliar
   const navigate = (target: AuxiliaryModelRoute) => {
     const targetsParent =
       target.screen === 'center'
+      || (route.screen === 'service-edit' && target.screen === 'services')
       || (
         route.screen === 'edit'
         && target.screen === 'pool'
@@ -28,6 +29,9 @@ export default function AuxiliaryModelsRouteContent({ route }: { route: Auxiliar
       router.back();
       return;
     }
+
+    if (target.screen === 'services') { router.push('/auxiliary-models/services' as Href); return; }
+    if (target.screen === 'service-edit') { router.push(`/auxiliary-models/services/${target.serviceId ?? 'new'}` as Href); return; }
 
     if (target.screen === 'pool') {
       router.push(`/auxiliary-models/capabilities/${target.kind}` as Href);

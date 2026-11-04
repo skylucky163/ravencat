@@ -249,7 +249,7 @@ Headless execution host 已显式装配 MCP：
 - src/host/composition/agent/registerMcpToolsForHostRun.ts
 - src/host/composition/agent/index.ts
 - src/host/composition/configureChatRuntime.ts
-- src/host/composition/configureCompanionHeadlessRuntime.ts
+- src/host/composition/configureBackgroundExecutionRuntime.ts
 - src/shared/aiTools/AgentToolInputSchema.ts
 - src/platform/agentRuntime/AgentToolExecutor.ts
 
@@ -294,7 +294,7 @@ Prompt：
 - selected 非空时 Registry 只有固定两个 MCP meta-tool，task 中没有具体 MCP 名称。
 - selected 为空时不注册 meta-tool，普通工具任务继续按原契约运行。
 - MCP-only 任务仍开启工具 policy，并使用统一 Chat 工具预算。
-- 群聊和图片上下文不会暴露 MCP。
+- 群聊和图片输入不额外取消已授权的 MCP；是否暴露仍由当前 AI、Server、快照与工具授权共同裁决。
 - 前台与 Headless 都能完成 MCP runtime 装配；run 结束会 dispose 连接池。
 
 ### 8.4 自动化验证

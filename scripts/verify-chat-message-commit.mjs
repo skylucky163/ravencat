@@ -1,3 +1,4 @@
+import { chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl } from './chat-timeline-fixture.mjs';
 import { loadTypeScriptModule } from './helpers/load-typescript-module.mjs';
 /**
@@ -371,7 +372,7 @@ for (const sessionId of ['direct-delete', 'group-delete']) {
 // ============================================================================
 const messageMetadata = loadTypeScriptModule('src/features/chat/messages/domain/chatMessageMetadata.ts', {
   './ChatSticker': loadTypeScriptModule('src/features/chat/messages/domain/ChatSticker.ts'),
-  './SharedChatRecord': loadTypeScriptModule('src/features/chat/messages/domain/SharedChatRecord.ts'),
+  ...chatSharingDependencies,
 });
 const { MessageRepository } = loadTypeScriptModule('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts', {
   '@platform/persistence': { databaseCoordinator: {

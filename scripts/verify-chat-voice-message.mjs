@@ -1,3 +1,4 @@
+import { sharedMomentIntent, chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 /**
  * Chat 语音消息链路行为验证（lifecycle / 失败清理 / provider 契约 / 播放状态）。
  *
@@ -220,10 +221,6 @@ function createSpeechMock({
         },
       };
     },
-    async transcribeVoiceMessageRecording(session) {
-      calls.finish += 1;
-      return session.finish({ uri: 'file:///tmp/x.wav', mimeType: 'audio/wav' });
-    },
     __calls: calls,
   };
   return speech;
@@ -391,7 +388,7 @@ function loadChatMessageMetadataModule() {
   return loadTypeScriptModule(
     'src/features/chat/messages/domain/chatMessageMetadata.ts',
     { './ChatSticker': { buildStickerMessagePreviewText: () => '[表情包]' },
-      './SharedChatRecord': loadTypeScriptModule('src/features/chat/messages/domain/SharedChatRecord.ts', {}) },
+      ...chatSharingDependencies },
   );
 }
 
@@ -1835,6 +1832,7 @@ function loadChatAgentTimelineModule() {
       resolveToolCallDisplayName: () => '',
     },
     './SendVoiceMessageTool': voiceToolModule,
+    './SharedMomentSendIntent': sharedMomentIntent,
     './SendImageTool': { isImageSendIntent: () => false },
     '../../messages/domain/chatMessageMetadata': metadataModule,
   });

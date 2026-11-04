@@ -10,7 +10,6 @@ import android.os.PowerManager
 import android.provider.Settings
 import expo.modules.androidoverlayruntime.OverlayPermissionGateway
 import expo.modules.androidoverlayruntime.OverlayPositionStore
-import expo.modules.ravencatfloatinglayer.BubbleSkinAssetResolver
 import expo.modules.ravencatfloatinglayer.BubbleSkinStore
 import expo.modules.ravencatfloatinglayer.retireLegacySelfWakeProjection
 import expo.modules.ravencatfloatinglayer.RavenCatCompanionWakeStore
@@ -20,7 +19,7 @@ import expo.modules.ravencatfloatinglayer.RavenCatAIScheduleStore
 import expo.modules.ravencatfloatinglayer.RavenCatFloatingMessageTaskStore
 import expo.modules.ravencatfloatinglayer.RavenCatTogetherListeningPresentationStore
 import expo.modules.ravencatfloatinglayer.companion.RavenCatCompanionExecutionHost
-import expo.modules.ravencatfloatinglayer.companion.RavenCatCompanionExecutionService
+import expo.modules.backgroundruntime.BackgroundRuntime
 import expo.modules.ravencatfloatinglayer.companion.RavenCatCompanionWakeDispatcher
 import expo.modules.ravencatfloatinglayer.model.RavenCatTogetherListeningPresentation
 import expo.modules.ravencatfloatinglayer.runtime.RavenCatOverlayRuntime
@@ -215,8 +214,7 @@ class RavenCatFloatingLayerModule : Module() {
         // 不得再被读成「本地伴随前台服务」。
         "overlayForegroundServiceRunning" to RavenCatOverlayService.isForegroundRunning,
         "visibleLivenessIndicatorRunning" to RavenCatOverlayService.isRunning,
-        "companionExecutionForegroundRunning" to
-          RavenCatCompanionExecutionService.isForegroundRunning,
+        "applicationBackgroundRunning" to BackgroundRuntime.isRunning,
         "companionRuntimeRunning" to schedulerActive,
         "companionSchedulerActive" to schedulerActive,
         "companionSchedulerDriver" to if (schedulerActive) "alarm_manager+one_time_work" else "none",
@@ -433,12 +431,6 @@ class RavenCatFloatingLayerModule : Module() {
       RavenCatOverlayRuntime.refreshBubbleSkin()
       skin.toMap(store.selectedId())
     }
-
-    /** 解析 native-bubble-skin 的 backing-relative storageKey，不改变任何装扮业务状态。 */
-    AsyncFunction("resolveBubbleSkinAsset") { storageKey: String ->
-      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
-      BubbleSkinAssetResolver.resolve(context, storageKey)
-    }.runOnQueue(Queues.DEFAULT)
 
     AsyncFunction("expand") {
       RavenCatOverlayRuntime.expand()

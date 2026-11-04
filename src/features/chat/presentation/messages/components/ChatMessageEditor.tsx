@@ -44,7 +44,7 @@ export default function ChatMessageEditor({ message, onClose, onSaved }: ChatMes
   };
 
   return (
-    <ModalSheet visible title="改写消息" avoidKeyboard onClose={() => { if (!saving) onClose(); }}>
+    <ModalSheet visible title="改写消息" onClose={() => { if (!saving) onClose(); }}>
       <View style={{ padding: theme.spacing.lg }}>
         <InputField
           value={text}

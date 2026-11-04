@@ -23,7 +23,7 @@ create_ai_schedule / update_ai_schedule / cancel_ai_schedule
 → RavenCatAIScheduleWorker
 → native projection gate
 → RavenCatCompanionExecutionHost
-→ CompanionWakeHeadlessTask / RunHeadlessAISchedule
+→ ExecuteCompanionWake / RunHeadlessAISchedule
 → 15 分钟有效期与到期计划归并
 → Host 会话执行权协调（聊天优先，日程取最新）
 → Assistants Host Authority + SQLite claim
@@ -110,155 +110,38 @@ native gate 原子检查开关、remindAt 与 projectionToken 并消费镜像；
 
 投影故障不能回滚已提交的日程。现有 bounded projection repair 只同步镜像，不重放模型或工具。关闭后持久化开关已经阻止新的 claim，镜像故障不会越过业务边界。
 
-### 6.3 Background Execution / Headless Execution Host
+### 6.3 后台执行宿主与应用持续运行
 
-四个 owner 必须显式分开，不能靠「进程恰好活着」把责任推给别的组件：
-
-```text
-schedule ownership
-= Proactive Companion
-  SQLite durable truth + AlarmManager / WorkManager projection
-
-execution ownership
-= Companion execution host（`RavenCatCompanionExecutionHost`）
-  取得 native dispatch 权后接管一次 wake delivery 的执行生命周期，
-  直到 autonomous run 到达终态，或宿主按有界等待以明确结果收口
-
-foreground execution ownership
-= 同一次 wake 的执行
-  只在真正执行时按需建立有界前台执行，执行收口立即释放；
-  它不是 `proactiveCompanionEnabled` 的 lifetime，
-  Companion ON 但没有执行时不得存在任何常驻 foreground service
-
-Headless completion ownership
-= JS runner 的终态回执（`recordCompanionRunnerCompletion`）
-  execution host 以它作为唯一完成信号；没有回执就不算完成
-```
-
-正式链路：
+主动伴随只拥有日程投影和本次 delivery 的执行，不拥有应用级保活开关。通用后台保障由
+`modules/background-runtime` 的独立总开关控制；聊天、日程完成与悬浮窗开关都不能停止它。
+日程请求进入同一 ApplicationExecutionHost，不创建逐日程 Service 或 RN task。总开关关闭时，Worker 仍按系统授予的执行窗口尽力执行。
 
 ```text
-wake due
-→ Worker 取得 native dispatch 权（consumeDueTriggerIfCurrent）
-→ companion_execution_host_started
-→ 请求建立有界前台执行（start 请求投递 ≠ 前台已建立）
-→ headless_task_start_requested / accepted
-→ application claim → autonomous Host Agent Run → consume
-→ runner 回执终态
-→ companion_execution_host_stopped（前台执行与执行生命周期同时释放）
+Alarm / WorkManager → native gate
+→ RavenCatCompanionExecutionHost
+→ ExecuteCompanionWake
+→ SQLite claim → 正常 Agent Runtime → consume → 终态回执
 ```
 
-收口语义（`TIMED_OUT` 与 `WORKER_STOPPED` 都不是「run 已结束」的证据）：
+Worker 等待本次 delivery 的回执，不能把任务交给 JS 后立即返回成功。等待上界十分钟；
+超时或 Worker 被系统停止时，先按 deliveryEventId 将取消事实保存到 native，再通知 JS，
+最多等待六十秒取消宽限。得到回执记为 COMPLETED，否则分别记为 TIMED_OUT 或 WORKER_STOPPED。
+这些结果不表示 JS 已经停止，也不表示同一 delivery 可以重跑。共享前台服务不会延长 Worker 的系统预算。
 
-```text
-有界等待耗尽（runner 未回执）             → TIMED_OUT 路径
-Worker 被 WorkManager 停止（interrupt）   → WORKER_STOPPED 路径
-```
+runner 先注册 AbortController，再消费 native 取消标记，覆盖晚注册与事件夹缝。
+取消不能只存在 JS 内存，也不能在同一 delivery 重投时清除。回执身份与取消身份均为
+`scheduleId@projectionToken`，SQLite CAS / consume 继续承担业务正确性。
 
-两条路径之后是同一段收口，且**取消事实必须先落 native 再发事件**：
+CPU 执行锁由共享原生 owner 管理；业务结束或到期只归还本次登记，不释放其他请求的资源。
+日程执行收口仅清理本次执行，不停止应用级前台服务，不改变总开关或 Floating Interaction。
 
-```text
-→ RavenCatCompanionWakeStore.markExecutionCancellationRequested(deliveryEventId)
-→ companion_execution_cancel_requested
-→ native 事件 onCompanionExecutionCancel → 已注册 runner 的 AbortSignal
-→ 晚注册的 runner：启动后 consumeExecutionCancellation(deliveryEventId) 追平 abort
-→ Agent Runtime 既有 cancellation → terminal → consume → 终态回执
-→ 宿主在取消宽限（CANCELLATION_GRACE_MS）内等待收口
-→ 收口后释放前台执行与执行生命周期
-```
+诊断分别展示 `applicationBackgroundRunning` 与 `overlayForegroundServiceRunning`。
+`lastCompanionExecutionForegroundRunning` 记录本次宿主收口时应用持续运行的真实状态；
+历史阶段记录仍可读取，不能将旧执行期服务的记录误认为当前还在创建日程保活任务。
 
-没有这条取消链路，宿主会比它启动的 Headless autonomous run 更早结束，
-重新制造「无 owner 的后台 JS 执行」。
-
-取消**不能只放在 JS 内存里**：runner 可能晚于取消请求才注册自己的 `AbortController`
-（JS 冷启动 / runtime 重建 / 任务尚未派发），此时事件叫不到任何 controller。
-所以取消事实由 native 按 `deliveryEventId` 持有（跨进程重建也不丢），
-runner 启动后主动消费一次；事件只是「已经在跑的 runner」的快路径。
-
-runner initialization 的顺序是语义的一部分，写错会让取消静默丢失：
-
-```text
-创建 AbortController
-→ 注册到本 runtime 的 registry
-→ 消费 native 取消标记（命中则立刻 abort）
-→ 运行 autonomous run
-→ 回执终态
-→ finally 释放 registry 项
-```
-
-覆盖关系：
-
-```text
-取消落在 register 之前   → native 标记接住，consume 命中后 abort
-取消落在 register 之后   → 取消事件直接命中 controller
-取消落在两者之间         → 事件命中 controller；consume 也可能同时命中 → abort 幂等
-native consume 读不到（抛异常）→ 不得当成「没有被取消」，本次 execution 以失败回执收口
-```
-
-也就是说 **register 必须早于 native consume**：先 consume 再 register 会留下
-「consume 返回 false → 取消到达（无人注册）→ register」这一段无人接管的夹缝。
-取消标记只有两种消亡方式：被 runner 消费一次，或 TTL 剪枝——**任何层都不主动删除它**，
-包括执行宿主收口；`deliveryEventId` 就是 delivery identity，同一个 id 的再次执行是同一个
-delivery，不是「全新执行」。
-
-硬约束：
-
-- **禁止 fire-and-forget execution**：Worker 不得在把 wake 交给 JS 之后立即返回成功，把 Headless 生命周期留给系统或另一个 foreground service 维持。执行宿主要么等到 runner 终态回执，要么按「超时 → 显式取消 → 有界宽限」以明确结果收口。
-- **禁止对 Overlay FGS 的隐式依赖**：Companion 调度与执行链不得读取 `RavenCatOverlayService` 状态、Overlay 授权或 `floatingInteractionEnabled`。`Floating Interaction OFF + Proactive Companion ON` 必须独立工作。
-- **只有 native gate 的 winner 能进入 execution host**：统一走 `consumeDueTriggerIfCurrent`，只有 `CONSUMED` 能 dispatch；`STALE` / `ABSENT` 直接收口。SQLite claim 再裁决业务执行权。
-- `START_REJECTED` / `TIMED_OUT` / `WORKER_STOPPED` 都**不重跑**同一个 wake：native projection 已消费，业务幂等边界仍是 SQLite 的 `scheduled → claimed` CAS 与 consume 语义。
-- **不得宣称「收口后 run 已不可能继续产生副作用」**：`TIMED_OUT` / `WORKER_STOPPED` 只表示「宿主在等待上界内没有收到 runner 终态」。宿主释放执行保障后，autonomous run 是否还在跑取决于进程是否存活与 Agent Runtime 自己的取消语义，代码不保证它已经停止；业务幂等仍只由 SQLite 的 CAS / consume 兜底。
-- 执行期的前台执行属于 Companion，通知必须与本次 delivery 绑定、执行结束即消失；Companion 空闲时不得存在常驻 foreground service，也不得为它多挂一条常驻通知。
-- 平台拒绝后台建立前台执行（Android 后台启动限制）只降级执行质量，不得让本次 wake 失败：宿主仍须完成本次交付与收口。
-- **correctness 的承重结构**是「Worker 阻塞到 runner 终态（有界）+ 收口时显式取消」。前台执行**不延长任何系统执行预算**：JobScheduler 单次 job 约 10 分钟的上限由系统强制，WorkManager 在中断那一刻就 `resolve()` 掉本次 work（2.8.0 `WorkerWrapper.interrupt()`：`mInterrupted=true` → `tryCheckForInterruptionAndResolve()` → `future.cancel(true)` → `worker.stop()`，`doWork()` 之后返回的 Result 被丢弃）。前台服务只做两件事：提高进程优先级、降低被冻结/回收的概率。前台执行被拒绝时，长 run 退化为尽力执行，并以诊断记录，不伪装成受保障执行。
-
-诊断要求：健康快照必须区分 `overlayForegroundServiceRunning`（Floating Interaction 的 Overlay FGS）与 `companionExecutionForegroundRunning`（Companion 执行期临时前台）；执行收口诊断必须区分
-`foregroundStartRequested`（`startForegroundService` 请求已投递）与 `foregroundRunning`（`startForeground` 真实建立，
-Android 12+ 可能在后者才被拒绝），并持久化 `lastCompanionExecution{Outcome,ForegroundRunning}`。**不允许把 Overlay FGS 显示成「本地伴随前台服务」，也不允许把「请求已投递」报成「前台执行已建立」。**
-
-进程死亡时无法继续提交终态；下次启动／回前台由 §5 的 owner 结算旧 claim，Chat 保留已存档过程并记录故障中断。当前进程仍在运行的句柄不参与结算；不依靠时间阈值猜测，也不补跑原机会。
-
-#### Worker 被停止之后，Headless run 归谁
-
-| 阶段 | owner | 说明 |
-|---|---|---|
-| Worker 运行中 | Companion execution host | 阻塞等待 runner 终态，持有有界前台执行 |
-| WorkManager 中断 Worker | **无系统 owner** | WM 已 `resolve()` 本次 work，不再接受 Result；宿主只保留自己那份前台执行 |
-| 取消宽限内 | Companion execution host | 仍有机会收到 cancellation → terminal → consume → 回执，记为 `COMPLETED` |
-| 宽限耗尽 | **无 owner** | 宿主记 `WORKER_STOPPED` 并释放前台执行；autonomous run 若仍在跑，只能靠 Agent Runtime 自己的 cancel / consume 与 SQLite 幂等收口，代码不保证它已经停止 |
-
-#### Current implementation：Companion 自有的执行期前台服务
-
-当前实现是 `RavenCatCompanionExecutionService`（自定义 FGS，类型 `specialUse`），
-按 `deliveryEventId` 引用计数，随一次 delivery 的执行开始、随终态结束释放。
-
-当前 foreground execution 提高执行期进程优先级，降低被冻结/回收的概率，但不延长普通 Worker 的 WorkManager 执行窗口，也不保证终态之后 Agent run 已停止。平台拒绝 foreground start 时只降低执行保障，仍按当前交付与有界收口契约处理。
-
-当前没有迁移为 WorkManager long-running foreground Worker。替代执行方案的调查与版本字节码核对保留在本地历史，不作为当前运行协议或新的实施指令。
-
-#### 真机验收 checklist
-
-- [ ] 关闭悬浮层后安排 AI 日程；
-- [ ] App 切后台并熄屏，验证 5–10 分钟 wake；
-- [ ] App 切后台并熄屏，验证 30–60 分钟 wake；
-- [ ] App 长时间后台，验证 2–4 小时 wake；
-- [ ] 设备进入 Doze / 长时间 idle 后验证 delivery；
-- [ ] Floating Interaction OFF + Companion ON，且进程已被系统回收（冷启动）后仍按时收到主动消息；
-- [ ] Floating Interaction ON + Companion ON，同一个 wake 不产生第二次 autonomous delivery；
-- [ ] wake 执行过程中开关悬浮球，正在执行的 Companion run 不受影响；
-- [ ] Companion ON 但当前没有执行时，不存在常驻 foreground service 与常驻执行通知（`companionExecutionForegroundRunning=false`）；
-- [ ] 执行期 `companionExecutionForegroundRunning=true`，执行收口后立即回到 false；
-- [ ] `lastCompanionExecutionOutcome` 在正常执行后为 `COMPLETED`（而不是 `TIMED_OUT` / `START_REJECTED`）；
-- [ ] replacement 后旧 event 不执行；
-- [ ] cancel 后旧 event 不执行；
-- [ ] 杀进程后验证 future wake；
-- [ ] reboot 后验证 future Alarm 恢复；
-- [ ] 到期时无网络，确认不会重复启动同一 event；
-- [ ] 恢复网络后确认现有业务终态与后续调度语义；
-- [ ] 最终确认同一个 event 没有重复发送。
-
-以上真机项需人工执行，不能用本地 verifier 代替验收。进程被杀后的原文保留与不补跑终态结算也需纳入设备回归。
-
+真机验收覆盖：总开关开启后连续多次日程不闪退后台通知；关闭总开关不关闭主动伴随，
+日程终态不关闭总服务；悬浮窗 OFF / ON、熄屏、Doze、OEM 回收、无网络、进程死亡、重启、
+日程更新与取消仍按同一版本 gate 执行。设备证据不能用本地测试代替。
 
 ## 7. 单聊上下文与行动记录
 
@@ -280,7 +163,7 @@ AI 不想再发送文字时，最终正文只输出 `[[NO_MESSAGE]]`。`finalAss
 
 ## 8. 主动生活与历史
 
-主动生活只读取 AI 日程及 Chat 响应证据，提供 future / running / history，不建立第二份业务状态。时间轴按实际 claimedAt 排序；未执行按原定时间排序。分页使用时间与稳定 identity，不再区分两种来源。
+主动生活只读取 AI 日程及 Chat 响应证据，提供 future / running / history，不建立第二份业务状态。时间碎片通过开放日期弧线查看任意本地日历日，固定回收九个照片节点，不累计无限日期元素。日期计数和当天首屏共用一个 Repository 快照；运行中按 startedAt、历史按实际 claimedAt、未执行按原定时间归属日期。当日先展示运行中及下一次安排，再展示历史，各组内按时间与稳定 identity 分页。Chat 响应证据在事务提交后补齐。共享星空背景与记忆模块解耦，前台生命周期和手势仍由各自页面拥有。
 
 未来、运行中与历史条目均可打开详情，展示创建时间、计划时间和实际开始时间；实际开始使用持久 `claimedAt`，未领取显示尚未开始，不用计划时间或投影版本代替创建事实。
 

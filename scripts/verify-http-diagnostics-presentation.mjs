@@ -17,14 +17,43 @@ const record = {
 };
 let dialog;
 let copyFailure = false;
+let diagnosticsListener = null;
+let diagnosticsEnabled = true;
+let diagnosticsRecords = [record, { ...record, id: 'empty', model: 'empty-model', requestBody: '', responseBody: 'data: [DONE]\n' }];
+let snapshotReads = 0;
 const copied = [];
+// 记录行复用 ListItem，测试只关心它把标题内容和点击透出。
+const ListItemStub = ({ titleContent, rightContent, onPress, style }) =>
+  React.createElement('TouchableOpacity', { onPress, style }, titleContent ?? null, rightContent ?? null);
 const mocks = {
-  'react-native': { ScrollView: 'ScrollView', Text: 'Text', TouchableOpacity: 'TouchableOpacity', View: 'View' },
-  'lucide-react-native': { ChevronDown: 'ChevronDown', ChevronRight: 'ChevronRight' },
+  'react-native': {
+    ScrollView: 'ScrollView', Text: 'Text', TouchableOpacity: 'TouchableOpacity', View: 'View',
+    Animated: {
+      View: 'AnimatedView',
+      Value: class { setValue() {} interpolate() { return '0deg'; } },
+      timing: () => ({ start() {} }),
+    },
+    Easing: { linear: value => value },
+  },
+  'lucide-react-native': { ChevronDown: 'ChevronDown', ChevronRight: 'ChevronRight', RefreshCw: 'RefreshCw' },
   'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
   '@platform/ai': { aiHttpDiagnostics: {
-    getSnapshot: async () => ({ enabled: true, error: null, records: [record, { ...record, id: 'empty', model: 'empty-model', requestBody: '', responseBody: 'data: [DONE]\n' }] }),
-    subscribe: () => () => {},
+    getSnapshot: async () => {
+      snapshotReads += 1;
+      return { enabled: diagnosticsEnabled, error: null, records: diagnosticsRecords };
+    },
+    subscribe: listener => {
+      diagnosticsListener = listener;
+      return () => { diagnosticsListener = null; };
+    },
+    setEnabled: async enabled => {
+      diagnosticsEnabled = enabled;
+      diagnosticsListener();
+    },
+    clear: async () => {
+      diagnosticsRecords = [];
+      diagnosticsListener();
+    },
   } },
   '@platform/device': {
     TextSelectionScrollView: 'TextSelectionScrollView',
@@ -33,9 +62,10 @@ const mocks = {
       copied.push(value);
     },
   },
-  '@shared/theme': { useTheme: () => ({ colors: { text: { secondary: 'gray' } } }) },
+  '@shared/theme': { useTheme: () => ({ colors: { text: { secondary: 'gray' } } }), ThemedSurface: 'ThemedSurface' },
   '@shared/ui': {
-    Button: 'Button', ToggleField: 'ToggleField', showAppDialog: value => { dialog = value; },
+    Button: 'Button', ToggleField: 'ToggleField', EmptyState: 'EmptyState', ListItem: ListItemStub,
+    showAppDialog: value => { dialog = value; },
     ModalSheet: ({ visible, children }) => visible ? React.createElement('ModalSheet', null, children) : null,
   },
   '@shared/ui/NavigationHeader': { __esModule: true, default: 'NavigationHeader' },
@@ -130,7 +160,24 @@ try {
   await press(toggle('响应正文（原文）'));
   assert.deepEqual(rawTexts(), ['data: [DONE]\n'], '短正文完整展示且不附加分页内容');
   assert.equal(button(toggle('响应正文（原文）').parent, '下一页'), undefined);
-  console.log('通过：大正文有界阅读、原文逐页无损、代理对边界、独立全文复制、失败反馈和重开复位。');
+
+  await act(async () => { screen.root.findByType(mocks['@shared/ui'].ModalSheet).props.onClose(); });
+  await act(async () => { screen.root.findByType('ToggleField').props.onValueChange(false); });
+  assert.equal(diagnosticsEnabled, false);
+  assert.equal(snapshotReads, 2, '关闭记录只应由平台通知触发一次快照刷新');
+  await openRecord('large');
+  await copy('请求正文');
+  assert.equal(copied.at(-1), requestBody, '关闭采集后仍可查看、复制已有记录');
+  await act(async () => { screen.root.findByType(mocks['@shared/ui'].ModalSheet).props.onClose(); });
+  await act(async () => { screen.root.findByType('ToggleField').props.onValueChange(true); });
+  await act(async () => { await dialog.buttons.find(item => item.text === '开启记录').onPress(); });
+  assert.equal(diagnosticsEnabled, true);
+  assert.equal(snapshotReads, 3, '开启记录只应由平台通知触发一次快照刷新');
+  await press(button(screen.root, '清空记录'));
+  await act(async () => { await dialog.buttons.find(item => item.text === '清空').onPress(); });
+  assert.equal(snapshotReads, 4, '清空记录只应由平台通知触发一次快照刷新');
+  assert.equal(diagnosticsRecords.length, 0);
+  console.log('通过：大正文有界阅读、原文逐页无损、独立全文复制、失败反馈、重开复位和操作后单次刷新。');
 } finally {
   await act(async () => { screen?.unmount(); });
 }

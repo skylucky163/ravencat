@@ -185,10 +185,16 @@ async function loadGroupChatRepository() {
     read('src/features/chat/group/domain/GroupChat.ts'),
   );
   const profileUrl = transpileToModuleUrl('export async function removeConversationWallpaperInTransaction() { return []; }');
+  const servicesUrl = transpileToModuleUrl(`
+    export async function bindModelServiceInTransaction() { return null; }
+    export function getModelServiceConnection(baseUrl, apiKey) { return { baseUrl, apiKey }; }
+    export async function readModelServiceConnection() { throw new Error('此群仓储用例不设置服务引用'); }
+  `);
   const repositorySource = read(
     'src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts',
   )
     .replace(/from ['"]@features\/profile['"]/g, `from '${profileUrl}'`)
+    .replace(/from ['"]@features\/assistants['"]/g, `from '${servicesUrl}'`)
     .replace(/from ['"]@features\/media['"]/g, `from '${mediaUrl}'`)
     .replace(/from ['"]@platform\/persistence['"]/g, `from '${persistenceUrl}'`)
     .replace(/from ['"]\.\.\/domain\/GroupChat['"]/g, `from '${domainUrl}'`)
@@ -335,6 +341,7 @@ function createAdminConfigDatabase() {
   const db = new DatabaseSync(':memory:');
   db.exec(`
     CREATE TABLE group_chat_admin_configs (
+      service_config_id TEXT,
       group_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       model TEXT NOT NULL,

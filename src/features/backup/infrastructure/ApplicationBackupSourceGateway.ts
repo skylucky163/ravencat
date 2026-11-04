@@ -47,7 +47,6 @@ export class ApplicationBackupSourceGateway implements BackupSourceGateway {
   private async validateDatabaseMedia(databaseUri: string, rootUri: string): Promise<void> {
     const assets = await this.dependencies.readMediaInventory(databaseUri);
     for (const asset of assets) {
-      if (asset.storageBackend === MEDIA_ASSET_STORAGE_BACKEND.nativeBubbleSkin) continue;
       const info = asset.storageBackend === MEDIA_ASSET_STORAGE_BACKEND.persistentImage
         ? await getPersistentImageInfoInRoot(rootUri, asset.storageKey)
         : asset.storageBackend === MEDIA_ASSET_STORAGE_BACKEND.persistentMedia

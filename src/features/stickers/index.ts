@@ -7,8 +7,9 @@ export type {
   StickerMessageSnapshot,
   StickerListMode,
 } from './domain/Sticker';
-export { STICKER_LIST_LIMIT, StickerLibraryFullError, StickerNotFoundError } from './domain/Sticker';
+export { STICKER_LIST_LIMIT, StickerLibraryFullError, StickerNotFoundError, StickerAnnotationClaimLostError } from './domain/Sticker';
 export {
+  addStickerFromMessage,
   createStickerGroup,
   completeStickerAnnotation,
   completeStickerAnnotationManually,
@@ -24,9 +25,11 @@ export {
   renameStickerGroup,
   toggleStickerFavorite,
   claimStickerAnnotation,
+  retryStickerAnnotation,
 } from './application/StickerCommands';
 export {
   getStickerById,
+  isStickerInUserLibrary,
   listStickerGroups,
   listStickers,
   listStickersInGroupForAI,
@@ -35,14 +38,13 @@ export {
 } from './application/StickerQueries';
 export { STICKER_AI_SEARCH_DEFAULT_LIMIT, searchStickersForAI } from './application/StickerSearch';
 export {
-  emitStickerAnnotationPending,
   subscribeStickerAnnotationPending,
+  subscribeStickerAutomaticRecognitionChanged,
 } from './application/StickerAnnotationPendingSignal';
 export {
   subscribeStickerAnnotationChanged,
 } from './application/StickerAnnotationChangedSignal';
 export {
-  emitStickerEmbeddingPending,
   subscribeStickerEmbeddingPending,
 } from './application/StickerEmbeddingPendingSignal';
 export {
@@ -57,6 +59,7 @@ export {
   resolveStickerRecognitionModel,
   setStickerEmbeddingModel,
   setStickerRecognitionModel,
+  setStickerAutomaticRecognitionEnabled,
 } from './application/StickerSystemModels';
 export {
   isStickerSendIntent,
@@ -67,12 +70,14 @@ export {
   listStickerGroupsDefinition,
   searchStickersDefinition,
 } from './aiTools/StickerAgentTools';
-export type { StickerEmbedding } from './domain/StickerEmbedding';
-export {
-  buildStickerSemanticText,
-  cosineSimilarity,
-  isStickerEmbeddingValid,
-} from './domain/StickerEmbedding';
 export type { StickerSystemConfig } from './domain/StickerSystemConfig';
 export { StickerSystemScreen } from './presentation/stickerSystem';
 export { AddOwnStickerTool, MaintainOwnStickerTool } from './aiTools/AIStickerLibraryTools';
+export { getStickerProcessingProgress } from './application/StickerProcessing';
+export { subscribeStickerProcessingChanged } from './application/StickerProcessingSignal';
+export type { StickerProcessingProgress, StickerProcessingItem, StickerVectorStatus } from './domain/StickerProcessing';
+export { default as StickerProcessingScreen } from './presentation/stickerSystem/StickerProcessingScreen';
+export { StickerProcessingSummary } from './presentation/stickerSystem/StickerProcessingSummary';
+export { StickerAnnotationStatus } from './presentation/stickerSystem/StickerAnnotationStatus';
+export { useStickerProcessingProgress } from './presentation/stickerSystem/useStickerProcessingProgress';
+export { StickerProgressNavigationProvider, useStickerProgressNavigation } from './presentation/stickerSystem/StickerProgressNavigation';

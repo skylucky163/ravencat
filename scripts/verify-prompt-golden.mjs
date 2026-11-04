@@ -27,6 +27,7 @@ for (const relativePath of [
   'src/features/chat/group/application/GroupAdminReplyParser.ts',
   'src/features/chat/group/application/GroupMentionModelText.ts',
   'src/features/chat/messages/domain/ChatSticker.ts',
+  'src/features/chat/messages/domain/SharedMoment.ts',
   'src/features/chat/messages/domain/SharedChatRecord.ts',
   'src/features/chat/messages/domain/chatMessageMetadata.ts',
   'src/features/chat/group/application/GroupTaskPromptBlocks.ts',

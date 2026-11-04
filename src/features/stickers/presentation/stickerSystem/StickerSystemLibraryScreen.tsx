@@ -1,10 +1,10 @@
 /** 表情包图库：全部收藏项的浏览与基础 metadata 管理。 */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { FlatList, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { FlatList, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemedSurface, useTheme } from '@shared/theme';
-import { EmptyState, ModalSheet, showAppDialog } from '@shared/ui';
+import { EmptyState, InputField, ModalSheet, showAppDialog } from '@shared/ui';
 import {
   deleteStickerFromLibrary,
   editStickerMetadata,
@@ -13,36 +13,18 @@ import {
 import { listStickerGroups, listStickers } from '../../application/StickerQueries';
 import type { Sticker, StickerGroup } from '../../domain/Sticker';
 import { useStickerSystemStyles } from './styles';
+import { StickerAnnotationStatus } from './StickerAnnotationStatus';
+import { StickerThumbnail } from './StickerThumbnail';
+import { useStickerProcessingProgress } from './useStickerProcessingProgress';
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-interface TextInputRowProps {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  multiline?: boolean;
-}
-
-function TextInputRow({ label, value, onChange, multiline = false }: TextInputRowProps) {
-  const styles = useStickerSystemStyles();
-  return (
-    <View>
-      <Text style={styles.formLabel}>{label}</Text>
-      <TextInput
-        style={multiline ? [styles.input, { minHeight: 72, textAlignVertical: 'top' }] : styles.input}
-        value={value}
-        onChangeText={onChange}
-        multiline={multiline}
-      />
-    </View>
-  );
-}
-
 export default function StickerSystemLibraryScreen() {
   const styles = useStickerSystemStyles();
   const theme = useTheme();
+  const { progress } = useStickerProcessingProgress();
   const [stickers, setStickers] = useState<Sticker[]>([]);
   const [groups, setGroups] = useState<StickerGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,6 +33,8 @@ export default function StickerSystemLibraryScreen() {
   const [draftDescription, setDraftDescription] = useState('');
   const [draftTags, setDraftTags] = useState('');
   const [draftEmotion, setDraftEmotion] = useState('');
+  const [showErrors, setShowErrors] = useState(false);
+  const nameError = draftName.trim() ? undefined : '请填写表情名称';
 
   const reload = useCallback(async () => {
     const [items, groupRows] = await Promise.all([
@@ -82,10 +66,13 @@ export default function StickerSystemLibraryScreen() {
     setDraftDescription(sticker.description ?? '');
     setDraftTags(sticker.tags.join('、'));
     setDraftEmotion(sticker.emotion ?? '');
+    setShowErrors(false);
   }, []);
 
   const handleSaveMetadata = useCallback(async () => {
     if (!editing) return;
+    setShowErrors(true);
+    if (nameError) return;
     try {
       await editStickerMetadata(editing.id, {
         name: draftName,
@@ -98,7 +85,7 @@ export default function StickerSystemLibraryScreen() {
     } catch (error) {
       showAppDialog({ title: '保存失败', message: getErrorMessage(error), tone: 'error' });
     }
-  }, [draftDescription, draftEmotion, draftName, draftTags, editing, reload]);
+  }, [draftDescription, draftEmotion, draftName, draftTags, editing, nameError, reload]);
 
   const handleDelete = useCallback((sticker: Sticker) => {
     showAppDialog({
@@ -132,11 +119,23 @@ export default function StickerSystemLibraryScreen() {
           contentContainerStyle={{ paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.sm }}
           renderItem={({ item }) => (
             <ThemedSurface variant="card" nativeGlass={false} style={[styles.card, { marginHorizontal: 0, marginBottom: theme.spacing.sm }]}>
-              <View style={[styles.row, { borderBottomWidth: 0 }]}>
-                <View style={{ flex: 1 }}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={`编辑「${item.name}」`}
+                activeOpacity={0.7}
+                style={[styles.row, { borderBottomWidth: 0 }]}
+                onPress={() => openEditor(item)}
+              >
+                <StickerThumbnail sticker={item} style={styles.thumbnail} />
+                <View style={{ flex: 1, marginLeft: theme.spacing.md }}>
                   <Text style={styles.rowTitle} numberOfLines={1}>
                     {item.name}
                   </Text>
+                  <StickerAnnotationStatus
+                    status={progress?.items.find(row => row.sticker.id === item.id)?.sticker.annotationStatus ?? item.annotationStatus}
+                    automaticRecognitionEnabled={progress?.automaticRecognitionEnabled ?? null}
+                    manuallyRequested={progress?.items.find(row => row.sticker.id === item.id)?.manuallyRequested ?? false}
+                    style={styles.rowSubtitle} />
                   <Text style={styles.rowSubtitle} numberOfLines={1}>
                     {[
                       item.groupId ? groupNameById.get(item.groupId) ?? '未知分组' : '未分组',
@@ -145,39 +144,22 @@ export default function StickerSystemLibraryScreen() {
                     ].filter(Boolean).join(' · ')}
                   </Text>
                 </View>
-                <View style={styles.rowRight}>
-                  <TouchableOpacity
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    onPress={() => {
-                      toggleStickerFavorite(item.id).then(reload).catch((error) => {
-                        showAppDialog({ title: '操作失败', message: getErrorMessage(error), tone: 'error' });
-                      });
-                    }}
-                  >
-                    <Ionicons
-                      name={item.isFavorite ? 'star' : 'star-outline'}
-                      size={20}
-                      color={theme.colors.text.secondary}
-                    />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    onPress={() => openEditor(item)}
-                  >
-                    <Ionicons
-                      name="create-outline"
-                      size={20}
-                      color={theme.colors.text.secondary}
-                    />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    onPress={() => handleDelete(item)}
-                  >
-                    <Ionicons name="trash-outline" size={20} color={theme.colors.text.secondary} />
-                  </TouchableOpacity>
-                </View>
-              </View>
+                <TouchableOpacity
+                  accessibilityLabel={item.isFavorite ? '取消收藏' : '收藏'}
+                  style={styles.rowIconButton}
+                  onPress={() => {
+                    toggleStickerFavorite(item.id).then(reload).catch((error) => {
+                      showAppDialog({ title: '操作失败', message: getErrorMessage(error), tone: 'error' });
+                    });
+                  }}
+                >
+                  <Ionicons
+                    name={item.isFavorite ? 'star' : 'star-outline'}
+                    size={20}
+                    color={theme.colors.text.secondary}
+                  />
+                </TouchableOpacity>
+              </TouchableOpacity>
             </ThemedSurface>
           )}
         />
@@ -188,12 +170,30 @@ export default function StickerSystemLibraryScreen() {
         onClose={() => setEditing(null)}
         title="编辑表情信息"
       >
-        <Text style={styles.hint}>修改名称 / 描述 / 标签 / 情绪会递增语义版本并重建该表情的向量。</Text>
-        <TextInputRow label="名称" value={draftName} onChange={setDraftName} />
-        <TextInputRow label="描述" value={draftDescription} onChange={setDraftDescription} multiline />
-        <TextInputRow label="标签（用顿号分隔）" value={draftTags} onChange={setDraftTags} />
-        <TextInputRow label="情绪" value={draftEmotion} onChange={setDraftEmotion} />
+        <ScrollView style={styles.editorScroll} keyboardShouldPersistTaps="handled">
+          <Text style={styles.hint}>名称必填，其他信息选填。修改含义后，原向量需要更新。</Text>
+          <View style={{ paddingHorizontal: theme.spacing.lg }}>
+            {editing && <StickerThumbnail sticker={editing} style={styles.preview} />}
+            <InputField label="名称（必填）" value={draftName} onChangeText={setDraftName} maxLength={120} error={showErrors ? nameError : undefined} />
+            <InputField label="含义/描述（选填）" value={draftDescription} onChangeText={setDraftDescription} multiline autoGrow
+              hint={editing?.annotationStatus !== 'ready' ? '留空仅保存其他信息；补充含义后可完成手动标注。' : undefined} />
+            <InputField label="标签（选填，用顿号分隔）" value={draftTags} onChangeText={setDraftTags} />
+            <InputField label="情绪（选填）" value={draftEmotion} onChangeText={setDraftEmotion} />
+          </View>
+        </ScrollView>
         <View style={styles.actionRow}>
+          <TouchableOpacity
+            accessibilityLabel={`从收藏库删除「${editing?.name ?? ''}」`}
+            style={styles.actionButton}
+            onPress={() => {
+              if (!editing) return;
+              const target = editing;
+              setEditing(null);
+              handleDelete(target);
+            }}
+          >
+            <Text style={[styles.actionButtonText, styles.dangerActionText]}>删除</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.actionButton} onPress={() => setEditing(null)}>
             <Text style={styles.actionButtonText}>取消</Text>
           </TouchableOpacity>

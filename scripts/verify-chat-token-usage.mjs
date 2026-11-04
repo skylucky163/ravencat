@@ -1,3 +1,4 @@
+import { chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 /** 验证 API 缓存用量在各传输、模型事件、消息持久载荷及提示文案中的真实行为。 */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -113,7 +114,7 @@ const { buildAssistantTurnItems } = load('src/features/chat/reply/application/As
   './ChatReplyUtils': { buildLogicalMessageId: () => 'logical-message', formatMessageTime: () => '12:00' },
 });
 const metadata = load('src/features/chat/messages/domain/chatMessageMetadata.ts', {
-  './SharedChatRecord': load('src/features/chat/messages/domain/SharedChatRecord.ts'),
+  ...chatSharingDependencies,
   './ChatSticker': { isStickerMessageMetadata: () => true },
 });
 const react = { memo: (component) => component, createElement: (type, props, ...children) => ({ type, props, children }) };

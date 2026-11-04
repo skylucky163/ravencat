@@ -86,7 +86,10 @@ export async function runChatVisibleAgent(params: RunChatVisibleAgentParams): Pr
         bubbleDeliveryMode: params.aiConfig.allowMultipleBubbles === false ? 'single-bubble' : 'multi-bubble',
         modelTransport: prepared.request.task.modelTransport, enableTools: prepared.request.task.allowedToolNames.length > 0,
       },
-      projection: { kind: 'canonical', commit: { commitAgentTimeline: input => persistence.commitAgentTimeline!(input) } },
+      projection: { kind: 'canonical', commit: {
+        commitAgentTimeline: input => persistence.commitAgentTimeline!(input),
+        commitAgentOutput: persistence.commitAgentOutput,
+      } },
       stopRuntime: cancellation.stop, replyRunId: params.runId,
       finalAssistantPolicy: params.finalAssistantPolicy, timelineSink: presentation.sink,
     });

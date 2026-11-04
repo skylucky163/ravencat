@@ -9,7 +9,7 @@ export default function ChatSummaryEditorRoute() {
   const segmentId = Array.isArray(params.segmentId) ? params.segmentId[0] : params.segmentId;
   const taskId = Array.isArray(params.taskId) ? params.taskId[0] : params.taskId;
   const view = Array.isArray(params.view) ? params.view[0] : params.view;
-  return aiId ? <ChatSummaryEditorRouteScreen aiId={aiId} segmentId={segmentId} taskId={taskId} secondary={view === 'secondary'}
+  return aiId ? <ChatSummaryEditorRouteScreen key={aiId} aiId={aiId} onBack={() => router.back()} segmentId={segmentId} taskId={taskId} secondary={view === 'secondary'}
     onEditSecondary={() => router.push({ pathname: `/chat/${encodeURIComponent(aiId)}/summary/edit`, params: { view: 'secondary' } } as Href)}
     onSettings={() => router.push(`/chat/${encodeURIComponent(aiId)}/summary/settings` as Href)}
     onEditSource={(id) => router.push({ pathname: `/chat/${encodeURIComponent(aiId)}/summary/edit`, params: { segmentId: id } } as Href)} />

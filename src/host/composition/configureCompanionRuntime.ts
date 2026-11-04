@@ -22,7 +22,6 @@ import {
   getCanonicalChatConversation,
   resolveCanonicalConversation,
   resolveCanonicalChatSourceMessages,
-  findFirstVisibleTimelineAnchorsByRunIds,
   runChatVisibleAgent,
   listChatAgentActivityEvidence,
   listChatTurnStates,
@@ -71,7 +70,6 @@ export function configureCompanionRuntime(): void {
       getCanonicalConversation: getCanonicalChatConversation,
       resolveCanonicalConversation,
       resolveCanonicalSourceMessages: resolveCanonicalChatSourceMessages,
-      findFirstVisibleTimelineAnchorsByRunIds,
       runVisibleAgent: runChatVisibleAgent,
       findCommittedAssistantMessageIdByRelatedSource,
       sendUserMessageFromExecutionHost: async ({
@@ -79,9 +77,12 @@ export function configureCompanionRuntime(): void {
         aiConfig,
         correlationId,
         replyCallbacks,
+        execution,
       }) => sendUserMessageInternal(message, aiConfig, {
-        // Companion Headless task 本身会等待 terminal，才能持有 inline execution 生命周期。
+        // 应用宿主内的悬浮发送用例等待 terminal，不再转交第二个执行请求。
         executionMode: 'inline_current_host',
+        signal: execution.signal,
+        executionDeadlineAt: execution.executionDeadlineAt,
         deliveryTiming: 'immediate',
         correlationId,
         replyCallbacks: {

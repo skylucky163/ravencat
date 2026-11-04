@@ -3,21 +3,15 @@ import { randomUUID } from 'expo-crypto';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { getMemoryRuntimeDependencies, MemoryEmbeddingError } from './MemoryRuntimeDependencies';
 import { emitMemoryChanged } from './MemorySignals';
-import { memorySearchText } from '../domain/Memory';
-export async function synchronizeMemoryEmbeddingModel(): Promise<void> {
-  const runtime = getMemoryRuntimeDependencies();
-  await runtime.repository.syncEmbeddingModel(await runtime.resolveEmbeddingModel());
-  emitMemoryChanged();
-}
-
+import { MEMORY_EMBEDDING_MAX_ATTEMPTS, memorySearchText } from '../domain/Memory';
+import { synchronizeMemoryEmbeddingModel } from './MemoryEmbeddingModels';
 export async function processNextMemoryEmbedding(signal: AbortSignal): Promise<{ processed: boolean; nextWakeAt: string | null; failedMemoryId: string | null }> {
   const runtime = getMemoryRuntimeDependencies();
-  const model = await runtime.resolveEmbeddingModel();
+  const { model, revision } = await synchronizeMemoryEmbeddingModel();
   throwIfAbortSignalAborted(signal);
-  await runtime.repository.syncEmbeddingModel(model);
-  if (!model) return { processed: false, nextWakeAt: null, failedMemoryId: null };
+  if (!model || revision === null) return { processed: false, nextWakeAt: null, failedMemoryId: null };
   const now = new Date();
-  const claim = await runtime.repository.claimEmbedding(model.fingerprint, randomUUID(), now.toISOString(), new Date(now.getTime() + 120_000).toISOString());
+  const claim = await runtime.repository.claimEmbedding(model.fingerprint, randomUUID(), now.toISOString(), new Date(now.getTime() + 120_000).toISOString(), revision);
   if (!claim) return { processed: false, nextWakeAt: await runtime.repository.getNextEmbeddingWakeAt(model.fingerprint), failedMemoryId: null };
   let failedMemoryId: string | null = null;
   try {
@@ -31,7 +25,7 @@ export async function processNextMemoryEmbedding(signal: AbortSignal): Promise<{
     const finished = new Date();
     const recorded = await runtime.repository.failEmbedding(claim, error.message, error.terminal, finished.toISOString(),
       new Date(finished.getTime() + (claim.attempts === 0 ? 30_000 : 120_000)).toISOString());
-    if (recorded && (error.terminal || claim.attempts + 1 >= 3)) failedMemoryId = claim.memoryId;
+    if (recorded && (error.terminal || claim.attempts + 1 >= MEMORY_EMBEDDING_MAX_ATTEMPTS)) failedMemoryId = claim.memoryId;
   }
   emitMemoryChanged();
   return { processed: true, nextWakeAt: null, failedMemoryId };

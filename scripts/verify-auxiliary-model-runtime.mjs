@@ -81,16 +81,17 @@ function configureInitialSelections(persistence) {
     ...mocks, '@shared/prompt': { estimateTextTokens: (text) => text.length },
   });
   const summaryRepository = new SQLiteChatSummaryRepository(async () => []);
+  const { SQLiteStickerRepository } = owner('src/features/stickers/infrastructure/SQLiteStickerRepository.ts');
   const notifications = [];
   loadCommonJS('src/host/composition/configureAuxiliaryModelInitialization.ts', {
     '@features/assistants/composition': { ...initialization, ...owner('src/features/assistants/infrastructure/SQLiteAssistantVoiceSettingsRepository.ts') },
     '@features/chat/composition': { ...owner('src/features/chat/reply/infrastructure/SQLiteChatImageSettingsRepository.ts'),
       invalidateChatSummaryModelReferencesInTransaction: (transaction, id) => summaryRepository.invalidateModelReferencesInTransaction(transaction, id) },
-    '@features/memory/composition': owner('src/features/memory/infrastructure/SQLiteMemoryEntryRepository.ts'),
     '@features/speech/composition': owner('src/features/speech/infrastructure/SQLiteSpeechSettingsRepository.ts'),
     '@features/integrations/composition': owner('src/features/integrations/infrastructure/SQLiteTranslationSettingsRepository.ts'),
     '@features/moments/composition': owner('src/features/moments/infrastructure/SQLiteMomentRepository.ts'),
-    '@features/stickers/composition': { ...owner('src/features/stickers/infrastructure/SQLiteStickerRepository.ts'),
+    '@features/memory/composition': owner('src/features/memory/infrastructure/SQLiteMemoryEntryRepository.ts'),
+    '@features/stickers/composition': { stickerRepository: new SQLiteStickerRepository(),
       emitStickerAnnotationPending: () => notifications.push('ocr'), emitStickerEmbeddingPending: () => notifications.push('embedding') },
   }).configureAuxiliaryModelInitializationRuntime();
   return { mocks, notifications, summaryRepository };
@@ -131,12 +132,12 @@ function initialModelRuntime(db) {
   return { ...initial, persistence, commands, repository, assistants, create, createAssistant };
 }
 
-// 配置资产与摘要资格在同一事务交接；修改、停用、删除保留引用和已提交进度。
+// 配置资产与摘要资格在同一事务交接；修改、清空凭据、删除保留引用和已提交进度。
 {
   const db = await createDatabase();
   const runtime = initialModelRuntime(db);
   await runtime.createAssistant('summary-owner');
-  const model = await runtime.create('general');
+  const model = await runtime.create('summary');
   const summary = runtime.summaryRepository;
   const now = '2026-10-13T01:00:00.000Z';
   db.exec(`INSERT INTO chat_conversations VALUES ('model-ref','direct');
@@ -146,7 +147,7 @@ function initialModelRuntime(db) {
       VALUES (1,'model-ref','first',1,'user','09:00','${now}','${now}','sent','delivered'),
       (2,'model-ref','second',0,'assistant','09:00','${now}','${now}','sent','delivered');`);
   await summary.updateSettings('model-ref', { modelConfigId: model.id });
-  const claim = (id) => summary.claim('model-ref', 1, id, now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai');
+  const claim = (id) => summary.claim('model-ref', 1, id, now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0);
   const append = (task, id) => summary.appendClaim(task, [{ id, content: 'summary', messages: task.messages }], now);
   const first = await claim('first');
   await runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: { name: 'new label' } });
@@ -163,7 +164,7 @@ function initialModelRuntime(db) {
   await assert.rejects(runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: { model: 'rolled-back' } }), /invalidation rejected/);
   assert.equal((await runtime.repository.getModelConfigById(model.id)).model, 'next-model', '资格失效失败时配置编辑回滚');
   db.exec('DROP TRIGGER deny_summary_invalidation');
-  await runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: { enabled: false } });
+  await runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: { apiKey: null } });
   assert.equal(await append(third, 'disabled'), false);
   await runtime.commands.deleteAuxiliaryModelConfig({ id: model.id });
   assert.equal((await summary.readSettings('model-ref')).modelConfigId, model.id, '删除资产不替换持续引用');
@@ -205,35 +206,35 @@ function initialModelRuntime(db) {
   const secondVoice = await runtime.create('tts');
   db.prepare("UPDATE assistant_voice_settings SET model_config_id = ? WHERE assistant_id = 'after'").run(secondVoice.id);
   await runtime.commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { name: '编辑首次模型' } });
-  await runtime.commands.updateAuxiliaryModelConfig({ id: voice.id, settings: { enabled: false } });
-  await runtime.commands.updateAuxiliaryModelConfig({ id: voice.id, settings: { enabled: true } });
+  await runtime.commands.updateAuxiliaryModelConfig({ id: voice.id, settings: { apiKey: null } });
+  await runtime.commands.updateAuxiliaryModelConfig({ id: voice.id, settings: { apiKey: 'test' } });
   assert.equal(db.prepare("SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = 'before'").get().id, null);
   assert.equal(db.prepare("SELECT model_config_id AS id FROM assistant_voice_settings WHERE assistant_id = 'before'").get().id, null);
   assert.equal(db.prepare("SELECT model_config_id AS id FROM assistant_voice_settings WHERE assistant_id = 'after'").get().id, secondVoice.id);
   await runtime.createAssistant('new-default');
   assert.equal(db.prepare("SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = 'new-default'").get().id, vision.id);
   assert.equal(db.prepare("SELECT model_config_id AS id FROM assistant_voice_settings WHERE assistant_id = 'new-default'").get().id, voice.id);
-  await runtime.commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { enabled: false } });
+  await runtime.commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { apiKey: null } });
   await runtime.commands.deleteAuxiliaryModelConfig({ id: voice.id });
   await runtime.createAssistant('unavailable-default');
   assert.equal(db.prepare("SELECT recognition_model_config_id FROM chat_assistant_image_settings WHERE assistant_id = 'unavailable-default'").get(), undefined);
   assert.equal(db.prepare("SELECT model_config_id FROM assistant_voice_settings WHERE assistant_id = 'unavailable-default'").get(), undefined);
   await runtime.create('tts');
   assert.equal(db.prepare("SELECT model_config_id FROM assistant_voice_settings WHERE assistant_id = 'unavailable-default'").get(), undefined, '删除默认后新增资产不能替代它');
-  assert.equal(db.prepare("SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = 'after'").get().id, vision.id, '停用保留已有失效引用');
+  assert.equal(db.prepare("SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = 'after'").get().id, vision.id, '清空凭据保留已有失效引用');
   assert.notEqual(secondVision.id, vision.id);
   db.close();
 }
 
-// 首次资产未填完整或主动停用时先保存；修正后只初始化一次，不能被第二个模型抢占。
+// 首次资产未填完整时先保存；修正后只初始化一次，不能被第二个模型抢占。
 {
   const db = await createDatabase(); await runMigrations(executor(db));
   const runtime = initialModelRuntime(db);
   await runtime.createAssistant('waiting');
-  const vision = await runtime.create('ocr', { apiKey: null, enabled: false });
+  const vision = await runtime.create('ocr', { apiKey: null });
   await runtime.create('ocr');
   assert.equal(db.prepare('SELECT count(*) AS count FROM chat_assistant_image_settings').get().count, 0);
-  await runtime.commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { apiKey: 'complete', enabled: true } });
+  await runtime.commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { apiKey: 'complete' } });
   assert.equal(db.prepare("SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = 'waiting'").get().id, vision.id);
   assert.deepEqual(runtime.notifications, ['ocr']);
   for (const kind of ['embedding', 'translation', 'stt']) {
@@ -242,7 +243,7 @@ function initialModelRuntime(db) {
     } : {});
     const table = kind === 'embedding' ? 'memory_model_settings' : kind === 'stt' ? 'speech_recognition_settings' : 'translation_settings';
     const column = kind === 'embedding' ? 'embedding_model_config_id' : 'model_config_id';
-    assert.equal(db.prepare(`SELECT ${column} AS id FROM ${table}`).get().id, model.id);
+    assert.equal(db.prepare(`SELECT ${column} AS id FROM ${table}`).get().id, kind === 'embedding' ? null : model.id);
     db.prepare(`UPDATE ${table} SET ${column} = NULL`).run();
     await runtime.create(kind);
     await runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: { name: '更名' } });
@@ -358,7 +359,7 @@ function initialModelRuntime(db) {
   const vision = await create('ocr', 'vision');
   const stt = await create('stt', 'stt');
   const voice = await create('tts', 'voice');
-  assert.deepEqual(selectionIds(db), [embedding.id, vision.id, stt.id]);
+  assert.deepEqual(selectionIds(db), [null, vision.id, stt.id], '创建向量模型不自动开启记忆向量化');
   assert.deepEqual(voices(db), ['broken', 'disabled', 'explicit', 'inherited'].map((id) => [id, voice.id]));
   assert.equal(db.prepare("SELECT image_analysis_model_config_id AS id FROM moment_settings WHERE id = 'global'").get().id, vision.id);
   const stickerModels = db.prepare("SELECT recognition_model_config_id, embedding_model_config_id FROM sticker_system_config WHERE id = 'global'").get();
@@ -409,7 +410,7 @@ function initialModelRuntime(db) {
   assert.equal((await translation.resolveTranslationModel()).modelConfigId, translationModel.id);
   let translationRefreshes = 0;
   const unsubscribeTranslation = translation.subscribeTranslationModelsChanged(() => { translationRefreshes++; });
-  await commands.updateAuxiliaryModelConfig({ id: translationModel.id, settings: { enabled: false } });
+  await commands.updateAuxiliaryModelConfig({ id: translationModel.id, settings: { apiKey: null } });
   assert.ok(translationRefreshes > 0, 'Host 转发资产提交后的刷新信号');
   assert.equal((await translation.getTranslationModelSettings()).status, 'unavailable');
   await assert.rejects(() => translation.resolveTranslationModel(), /不可用/);
@@ -425,7 +426,7 @@ function initialModelRuntime(db) {
   const imageRuntime = loadImageRuntime({
     media: { readVisionImage: async () => ({ base64: 'AQID', mimeType: 'image/jpeg' }) },
     vision: { resolveOCRModel: chat.resolveChatRecognitionModel },
-    prompt: { assembleStandalone: async () => ({ systemPrompt: 'vision-system' }) },
+    prompt: { assembleStandalone: async () => ({ systemPrompt: 'vision-system' }), resolveVisionOCRPrompt: async () => '图片任务说明' },
   });
   for (const [assistantId, input, expectedModel] of [
     ['explicit', { mediaAssetId: 'chat-image' }, vision.model],
@@ -461,8 +462,8 @@ function initialModelRuntime(db) {
   assert.equal(await assistantVoice.getAssistantVoiceModelId('explicit'), voice.id);
   await assert.rejects(chat.selectChatImageModel('explicit', embedding.id), /不可用/);
   assert.equal((await chat.getChatImageModelSettings('explicit')).status, 'active');
-  await commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { enabled: false } });
-  assert.equal((await chat.getChatImageModelSettings('explicit')).unavailableReason, '模型已停用');
+  await commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { apiKey: null } });
+  assert.equal((await chat.getChatImageModelSettings('explicit')).unavailableReason, '连接配置不完整');
   assert.deepEqual(await chat.resolveChatRecognitionModel('explicit'), { status: 'unavailable' });
   assert.equal(await chatImageSettingsRepository.getRecognitionModelId('explicit'), vision.id);
   await commands.deleteAuxiliaryModelConfig({ id: vision.id });
@@ -506,7 +507,7 @@ function loadImageRuntime(dependencies, aiClientOverrides = {}) {
           return client;
         },
       },
-      '@shared/prompt': { readAuxiliaryTaskPromptOverride: () => null },
+      '@shared/prompt': {},
       './ChatReplyRuntimeDependencies': { getChatReplyRuntimeDependencies: () => dependencies },
       './ReplyTaskPromptBlocks': { buildVisionOCRPromptBlocks: () => [] },
     },
@@ -521,7 +522,7 @@ const baseDeps = (vision) => ({
   agent: {},
   runPreparation: { prepare: async () => { throw new Error('不应执行'); } },
   tools: {},
-  prompt: { assembleStandalone: async () => ({ systemPrompt: 'vision-system' }) },
+  prompt: { assembleStandalone: async () => ({ systemPrompt: 'vision-system' }), resolveVisionOCRPrompt: async () => '图片任务说明' },
 });
 
 {
@@ -625,4 +626,20 @@ for (const chat of [
   assert.ok(result.parts.some((part) => part.text.includes('OCR 失败，未向主模型提供原图')));
 }
 
+// 模型资产与两个向量消费者的发布资格共享一次提交，不依赖事件是否已送达。
+{
+  const db = await createDatabase();
+  const runtime = initialModelRuntime(db);
+  const model = await runtime.create('embedding');
+  db.prepare('UPDATE memory_model_settings SET embedding_model_config_id = ? WHERE id = 1').run(model.id);
+  db.exec("UPDATE memory_embedding_index_control SET revision = 4, build_id = 'memory-old'; UPDATE sticker_embedding_index_control SET revision = 6, build_id = 'sticker-old';");
+  await runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: { model: 'new-embedding' } });
+  assert.deepEqual({ ...db.prepare('SELECT revision, build_id FROM memory_embedding_index_control').get() }, { revision: 5, build_id: null });
+  assert.deepEqual({ ...db.prepare('SELECT revision, build_id FROM sticker_embedding_index_control').get() }, { revision: 7, build_id: null });
+  db.exec("CREATE TRIGGER reject_vector_fence BEFORE UPDATE ON sticker_embedding_index_control BEGIN SELECT RAISE(ABORT, 'vector fence rejected'); END;");
+  await assert.rejects(runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: { model: 'rejected-embedding' } }), /vector fence rejected/);
+  assert.equal(db.prepare('SELECT model FROM auxiliary_model_configs WHERE id = ?').get(model.id).model, 'new-embedding');
+  assert.equal(db.prepare('SELECT revision FROM memory_embedding_index_control').get().revision, 5, '后一个消费者撤销失败时，前一个消费者和模型资产一起回滚');
+  db.close();
+}
 console.log('辅助模型：首次配置、新角色初始化、手动选择保留、并发、回滚与升级恢复验证通过');

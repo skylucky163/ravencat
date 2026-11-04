@@ -17,7 +17,6 @@ import type {
   AssistantPromptDefinitionState,
   AssistantPromptDefinitionOverride,
   AssistantUserPrompt,
-  PromptMigrationOrphan,
   PromptLanguageMode,
 } from '../domain/Prompting';
 import type { PromptScenarioId } from '@shared/prompt';
@@ -55,10 +54,6 @@ type AssistantUserPromptRow = {
   condition: AssistantUserPrompt['condition']; enabled: number; sort_order: number;
   created_at: string; updated_at: string;
 };
-type MigrationOrphanRow = {
-  id: string; source_type: PromptMigrationOrphan['sourceType']; source_id: string; reason: string; created_at: string;
-};
-
 export class SQLitePromptingRepository implements
   PromptCustomBlockRepository,
   PromptPresetRepository,
@@ -279,13 +274,6 @@ export class SQLitePromptingRepository implements
     return result.changes > 0;
   }
 
-  async listMigrationOrphans(): Promise<PromptMigrationOrphan[]> {
-    const db = databaseCoordinator.openTaskExecutor({ name: 'prompting.listMigrationOrphans', feature: 'prompting', priority: 'runtime' });
-    const rows = await db.getAllAsync<MigrationOrphanRow>(
-      'SELECT * FROM prompt_migration_orphans ORDER BY created_at, id'
-    );
-    return rows.map(mapMigrationOrphan);
-  }
 }
 
 function saveDefinitionOverrideRow(
@@ -354,9 +342,4 @@ function mapAssistantUserPrompt(row: AssistantUserPromptRow): AssistantUserPromp
     condition: row.condition, enabled: row.enabled === 1, sortOrder: row.sort_order,
     createdAt: row.created_at, updatedAt: row.updated_at };
 }
-function mapMigrationOrphan(row: MigrationOrphanRow): PromptMigrationOrphan {
-  return { id: row.id, sourceType: row.source_type, sourceId: row.source_id,
-    reason: row.reason, createdAt: row.created_at };
-}
-
 export const sqlitePromptingRepository = new SQLitePromptingRepository();

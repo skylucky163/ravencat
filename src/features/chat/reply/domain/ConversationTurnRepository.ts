@@ -85,7 +85,7 @@ export interface IConversationTurnRepository {
   ): Promise<ConversationTurnRun | null>;
 
   /**
-   * T3：单事务写入全部 items（turn_run_id + turn_item_index 1..N）、
+   * T3：单事务写入剩余 items 并绑定已提交媒体的 turn_item_index、
    * session preview、run 终态 committed、游标推进与 revision+1。
    * fence（reply_cursor + revision + active_run_id）失败返回 fence_failed，
    * 零事实落库，不抛给调用方当异常重试。
@@ -95,6 +95,13 @@ export interface IConversationTurnRepository {
     items: ConversationTurnCommitItem[],
     toolPackages: ConversationToolPackageCommit,
     execution?: { deadlineAt: number; signal?: AbortSignal },
+  ): Promise<ConversationTurnCommitResult>;
+
+  /** 在同一 run fence 内提交并发布工具输出，不推进输入游标或结束执行；T3 复用其消息身份。 */
+  commitOutput(
+    run: ConversationTurnRun,
+    item: ConversationTurnCommitItem,
+    execution?: { deadlineAt?: number; signal?: AbortSignal },
   ): Promise<ConversationTurnCommitResult>;
 
   /** 当前会话与 AI 尚未过期的包；权限仍由 Host policy 冻结。 */

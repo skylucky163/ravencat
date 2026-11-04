@@ -15,6 +15,7 @@ export type MediaAssetReferenceKind =
   | 'call_snapshot'
   | 'user_avatar'
   | 'assistant_avatar'
+  | 'assistant_profile_cover'
   | 'group_avatar'
   | 'moment_media'
   | 'sticker'
@@ -24,7 +25,9 @@ export type MediaAssetReferenceKind =
   | 'chat_voice'
   | 'chat_sticker'
   | 'chat_favorite'
-  | 'chat_reply_version';
+  | 'chat_reply_version'
+  | 'chat_bubble_skin'
+  | 'chat_bubble_decoration';
 
 /**
  * 一条真实业务引用。ownerId 只用于诊断，不承担级联删除语义。

@@ -8,6 +8,7 @@ import type { ChatReplyQuote } from '../../../messages/domain/chatMessageMetadat
 import AttachmentCard from './AttachmentCard';
 import StickerMessageCard from './StickerMessageCard';
 import VoiceMessageCard from './VoiceMessageCard';
+import SharedMomentCard from '../components/SharedMomentCard';
 
 interface ReplyQuoteProps {
   replyToText?: string | null;
@@ -25,7 +26,9 @@ export const ReplyQuote = memo(function ReplyQuote({ replyToText, quote, message
   const text = quote ? quote.text : replyToText;
 
   return (
-    <View style={[styles.replyContainer, isMe ? styles.myReplyContainer : styles.aiReplyContainer]}>
+    <View style={[styles.replyContainer, isMe ? styles.myReplyContainer : styles.aiReplyContainer, quote?.moment && styles.momentReplyContainer]}>
+      {quote?.authorName ? <Text style={styles.replyAuthorName} numberOfLines={1}>{quote.authorName}</Text> : null}
+      {quote?.moment ? <SharedMomentCard moment={quote.moment} /> : null}
       {quote?.attachments.map((attachment) => (
         <AttachmentCard key={attachment.id} attachment={attachment} isMe={isMe} thumbnail onPreview={onPreviewFile} />
       ))}

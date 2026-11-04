@@ -24,17 +24,18 @@ export function configureChatSummary(): void {
   configured = true;
   configureChatSummaryRuntime({
     repository: chatSummaryRepository,
-    async getBatchSize(conversationId) {
+    async getBatchSettings(conversationId) {
       const settings = await getChatSummarySettings(conversationId);
       const group = await groupChatRepository.getById(conversationId);
       const session = group ? null : await sessionRepository.getSession(conversationId);
       const assistant = session ? await aiAssistantRepository.getById(session.aiAssistantId) : null;
       if (!group && !assistant) return null;
       const model = settings.modelConfigId === null ? group?.adminConfig ?? assistant!
-        : await resolveAuxiliaryModel({ modelConfigId: settings.modelConfigId, capabilityKind: 'general' });
+        : await resolveAuxiliaryModel({ modelConfigId: settings.modelConfigId, capabilityKind: 'summary' });
       if (!model || !model.apiKey || !('baseURL' in model ? model.baseURL : model.apiBaseUrl) || !model.model) return null;
       // 单聊每次整理条数默认跟随主视角上限；用户手动设置后固定，不再跟随。
-      return group ? settings.groupTriggerCount : settings.primaryLimit ?? assistant!.privateContextPrimaryLimit;
+      return group ? { batchSize: settings.groupTriggerCount, recentWindowLimit: 0 }
+        : { batchSize: settings.primaryLimit ?? assistant!.privateContextPrimaryLimit, recentWindowLimit: assistant!.privateContextPrimaryLimit };
     },
     generateAddition: (input, signal, report, settings) => generateSummary(input, signal, report, settings),
     generateSecondary: (input, signal, report, settings) => generateSummary(input, signal, report, settings),
@@ -50,9 +51,9 @@ async function generateSummary(input: ChatSummaryModelInput | SecondaryChatSumma
   const assistant = session ? await aiAssistantRepository.getById(session.aiAssistantId) : null;
   if (!group && !assistant) throw new Error('摘要会话已删除');
   const auxiliary = settings.modelConfigId === null ? null
-    : await resolveAuxiliaryModel({ modelConfigId: settings.modelConfigId, capabilityKind: 'general' });
+    : await resolveAuxiliaryModel({ modelConfigId: settings.modelConfigId, capabilityKind: 'summary' });
   if (settings.modelConfigId !== null && !auxiliary) throw new ChatSummaryGenerationError({
-    kind: 'request', message: '所选通用辅助模型不可用，请检查摘要模型配置。', retryable: false });
+    kind: 'request', message: '所选摘要模型不可用，请检查摘要模型配置。', retryable: false });
   const owner = group?.adminConfig ?? assistant!;
   const model = auxiliary ? { ...auxiliary, apiBaseUrl: auxiliary.baseURL, disableThinking: false } : owner;
   if (!auxiliary && (!model.apiKey || !model.apiBaseUrl || !model.model)) throw new ChatSummaryGenerationError({
@@ -139,7 +140,8 @@ async function generateSummary(input: ChatSummaryModelInput | SecondaryChatSumma
     const content = response.text.trim();
     if (!content) throw new ChatSummaryGenerationError({ kind: 'empty_output',
       message: diagnostics.reasoningCharacters > 0 ? '模型只返回思考内容，没有摘要正文。请检查输出额度与模型配置。' : '模型没有返回摘要正文。', retryable: true });
-    return content;
+    // 固定无新增说明是模型交接信号，不是记忆；仅整句匹配，正文中提到这些词仍完整保留。
+    return /^本批无(?:新增|摘要)[。.]?$/.test(content) ? null : content;
   } catch (error) {
     if (signal.aborted) throw error;
     if (timedOut) throw new ChatSummaryGenerationError({ kind: 'timeout', message: `摘要请求超过 ${settings.requestTimeoutSeconds} 秒，已中止。`, retryable: true });

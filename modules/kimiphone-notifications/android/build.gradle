@@ -19,6 +19,7 @@ android {
 }
 
 dependencies {
+  implementation project(':background-runtime')
   implementation project(':call-ringtone')
   implementation project(':android-overlay-runtime')
   compileOnly "com.facebook.react:react-android"

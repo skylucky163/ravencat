@@ -1,5 +1,7 @@
 /** 渲染聊天消息气泡，组合头像、正文、附件、翻译、思维链与工具状态。 */
 
+import type { SharedMoment } from '../../../messages/domain/SharedMoment';
+import SharedMomentCard from '../components/SharedMomentCard';
 import React, { memo, useCallback, useMemo, useRef } from 'react';
 import { useRecyclingState } from '@shopify/flash-list';
 import { useReasoningExpansion } from '../components/reasoningExpansionState';
@@ -11,13 +13,17 @@ import {
   type LayoutChangeEvent,
 } from 'react-native';
 import { createMessageBubbleStyles, USER_TEXT_COLLAPSE_THRESHOLD } from './styles';
-import { GlassSurface, isMoonKimiTheme, isPaperNoteTheme, useTheme } from '@shared/theme';
+import { GlassSurface, isMoonKimiTheme, isPaperNoteTheme, supportsChatBubbleSkins, useTheme } from '@shared/theme';
 import { Avatar } from './Avatar';
 import { ReplyQuote } from './ReplyQuote';
 import { TokenInfo } from './TokenInfo';
 import { ReasoningHeader } from './ReasoningHeader';
 import OfficialReplicaProcessCard from './OfficialReplicaProcessCard';
 import PaperNoteMessageFrame from './PaperNoteMessageFrame';
+import { useChatBubbleSkins } from '../../../appearance/presentation/useChatBubbleSkins';
+import { BubbleSkinDrawing, bubbleSkinFrameStyle } from '../../../appearance/presentation/BubbleSkinDrawing';
+import type { BubbleAppearancePreview } from '../../../appearance/presentation/BubbleSkinDrawing';
+import { BubbleDecorationLayer } from '../../../appearance/presentation/BubbleDecorationLayer';
 import type {
   ChatAttachment,
   StickerMessageSnapshot,
@@ -51,7 +57,9 @@ import type { SharedChatRecord } from '../../../messages/domain/SharedChatRecord
 import SharedChatRecordCard from '../components/SharedChatRecordView';
 
 interface MessageBubbleProps {
+  appearancePreview?: BubbleAppearancePreview;
   sharedRecord?: SharedChatRecord | null;
+  sharedMoment?: SharedMoment | null;
   sharedComment?: string;
   text: string;
   isMe: boolean;
@@ -62,6 +70,7 @@ interface MessageBubbleProps {
   cachedTokens?: number;
   replyToText?: string | null;
   replyQuote?: ChatReplyQuote | null;
+  onOpenAssistantProfile?: (aiId: string) => void;
   avatar?: string | null;
   userAvatar?: string | null;
   aiId?: string | null;
@@ -74,6 +83,7 @@ interface MessageBubbleProps {
   attachments?: ChatAttachment[];
   sticker?: StickerMessageSnapshot | null;
   messageId: number;
+  clientMessageId?: string | null;
   voice?: ChatVoiceMessageMetadata['voice'] | null;
   voicePlayedAt?: string | null;
   isVoiceTranscriptExpanded?: boolean;
@@ -143,6 +153,7 @@ function areRenderStatesEquivalent(
 }
 
 function MessageBubble({
+  appearancePreview,
   text,
   isMe,
   senderType,
@@ -153,6 +164,7 @@ function MessageBubble({
   replyToText,
   replyQuote,
   avatar,
+  onOpenAssistantProfile,
   userAvatar,
   aiId,
   agentId,
@@ -162,9 +174,11 @@ function MessageBubble({
   messageStatus = 'sent',
   attachments = [],
   sharedRecord = null,
+  sharedMoment = null,
   sharedComment = '',
   sticker = null,
   messageId,
+  clientMessageId,
   voice = null,
   voicePlayedAt,
   isVoiceTranscriptExpanded = false,
@@ -186,6 +200,14 @@ function MessageBubble({
   const bubbleStyles = useMemo(() => createMessageBubbleStyles(theme), [theme]);
   const isMoonKimi = isMoonKimiTheme(theme);
   const isPaperNote = isPaperNoteTheme(theme);
+  const isSharedCard = sharedMoment !== null || sharedRecord !== null;
+  const supportsBubbleSkins = supportsChatBubbleSkins(theme);
+  const customSkins = useChatBubbleSkins(supportsBubbleSkins && !appearancePreview);
+  // 临时数据库 ID 换成正式 ID 仍是同一条消息，不能在交接时撤掉已测量的装饰占位。
+  const [decorationOverflow, setDecorationOverflow] = useRecyclingState({ top: 0, bottom: 0 }, [clientMessageId ?? messageId]);
+  const onDecorationOverflow = useCallback((value: { top: number; bottom: number }) => {
+    setDecorationOverflow(before => before.top === value.top && before.bottom === value.bottom ? before : value);
+  }, [setDecorationOverflow]);
   const shouldRenderOfficialReplicaReasoning = reasoningSurface === 'official-replica';
   const shouldRenderToolProcessCard = Boolean(
     processCard && processCardSurface === 'official-replica'
@@ -226,9 +248,9 @@ function MessageBubble({
   const fallbackHasTextContent = Boolean(String(text || '').trim());
   const fallbackHasAttachments = Array.isArray(attachments) && attachments.length > 0;
   const fallbackHasSticker = sticker !== null;
-  const fallbackShouldUseMarkdown = !sharedRecord && fallbackHasTextContent && shouldRenderMarkdownText(text);
+  const fallbackShouldUseMarkdown = !sharedRecord && !sharedMoment && fallbackHasTextContent && shouldRenderMarkdownText(text);
   const fallbackIsStandaloneAttachmentMessage =
-    !sharedRecord &&
+    !sharedRecord && !sharedMoment &&
     !fallbackIsReasoning &&
     !fallbackIsSystem &&
     !fallbackHasTextContent &&
@@ -258,14 +280,12 @@ function MessageBubble({
     && shouldUseMarkdown
     && shouldUseWideMarkdownLayout(text)
   );
+  const useFullWidthLayout = useWideMarkdownLayout || sharedMoment !== null;
   const bubbleStyle = isToolStatusMessage
     ? [bubbleStyles.bubble, bubbleStyles.systemBubble, bubbleStyles.toolStatusBubble]
     : useWideMarkdownLayout
-      ? [bubbleStyleByVariant[variant], bubbleStyles.wideMarkdownBubble]
+      ? [bubbleStyleByVariant[variant], bubbleStyles.fullWidthBubble]
     : bubbleStyleByVariant[variant];
-  const plainTextStyle = isToolStatusMessage
-    ? [bubbleStyles.systemText, COMMON_PLAIN_TEXT_STYLE, bubbleStyles.toolStatusText]
-    : plainTextStyleByVariant[variant];
   const paragraphSpacing =
     isMoonKimi && (variant === 'ai' || variant === 'reasoning')
       ? MOON_KIMI_AI_PARAGRAPH_SPACING
@@ -275,11 +295,21 @@ function MessageBubble({
     : isToolStatusMessage
       ? bubbleStyles.toolStatusContainer
       : containerStyleByVariant[variant];
+  const customSkin = appearancePreview ? appearancePreview.skin : supportsBubbleSkins && !isSystem && !isReasoning && !isToolStatusMessage
+    && !isSharedCard && !isStandaloneAttachmentMessage && !isStandaloneStickerMessage ? customSkins[isMe ? 'user' : 'ai'] : null;
+  const drawableSkin = customSkin?.uri ? { ...customSkin, uri: customSkin.uri } : null;
+  const skinTextColor = customSkin?.textColor;
+  const plainTextStyle = isToolStatusMessage
+    ? [bubbleStyles.systemText, COMMON_PLAIN_TEXT_STYLE, bubbleStyles.toolStatusText]
+    : [plainTextStyleByVariant[variant], skinTextColor && { color: skinTextColor }];
+  const hasCustomBackground = !!drawableSkin;
   const markdownStyles = useMemo(() => {
     if (!shouldUseMarkdown) return null;
-    return createMarkdownStylePreset(variant, theme, bubbleStyles, useWideMarkdownLayout);
-  }, [shouldUseMarkdown, useWideMarkdownLayout, variant, theme, bubbleStyles]);
+    return createMarkdownStylePreset(variant, theme, bubbleStyles, useWideMarkdownLayout, hasCustomBackground, skinTextColor);
+  }, [shouldUseMarkdown, useWideMarkdownLayout, variant, theme, bubbleStyles, hasCustomBackground, skinTextColor]);
   const shouldRenderBubbleArrow =
+    !isSharedCard &&
+    !drawableSkin &&
     !isMoonKimi &&
     !theme.effects.glass.enabled &&
     !isStandaloneAttachmentMessage &&
@@ -288,8 +318,9 @@ function MessageBubble({
   const shouldUseMoonKimiUserWidth = isMoonKimi && isMe && !isSystem;
   // 仅用户自己的长文本默认折叠；AI 回复有分段展示，系统/思维链不走这里。
   // 语音消息的 transcript 由 VoiceMessageCard 自己承担，不参与折叠。
+  // 外观编辑预览需要检查完整底图的拉伸与装饰落点，不套用聊天长正文的折叠。
   const shouldCollapseUserText =
-    isMe && !isReasoning && !isSystem && !voice && hasTextContent
+    !appearancePreview && isMe && !isReasoning && !isSystem && !voice && hasTextContent
     && text.length > USER_TEXT_COLLAPSE_THRESHOLD;
   const shouldUseMoonKimiAssistantWidth = isMoonKimi && !isMe && (!isSystem || shouldRenderToolProcessCard);
   const isReasoningInProgress =
@@ -364,7 +395,7 @@ function MessageBubble({
     />
   ) : null;
 
-  const bubbleContent = sharedRecord ? <SharedChatRecordCard messageId={messageId} record={sharedRecord} comment={sharedComment} onPreviewFile={onPreviewFile} onLongPress={onAttachmentLongPress} /> : (
+  const bubbleContent = sharedMoment ? <SharedMomentCard moment={sharedMoment} onLongPress={onAttachmentLongPress} /> : sharedRecord ? <SharedChatRecordCard messageId={messageId} record={sharedRecord} comment={sharedComment} onPreviewFile={onPreviewFile} onLongPress={onAttachmentLongPress} /> : (
     <>
       {hasAttachments ? (
         <BubbleAttachmentList
@@ -412,7 +443,7 @@ function MessageBubble({
     </>
   );
 
-  if (isPaperNote) {
+  if (isPaperNote && !isSharedCard) {
     const speakerName = isSystem
       ? '系统'
       : isReasoning
@@ -466,13 +497,14 @@ function MessageBubble({
       style={[
         bubbleStyles.container,
         containerStyle,
-        useWideMarkdownLayout ? bubbleStyles.wideMarkdownContainer : undefined,
+        useFullWidthLayout && !isMoonKimi ? bubbleStyles.fullWidthContainer : undefined,
       ]}
       onLayout={layoutProbeHandlers?.container}
     >
       {!isMe && !isReasoning && !isSystem && !isMoonKimi && (
         <View style={bubbleStyles.avatarWrapper}>
           <Avatar
+            onPress={aiId && onOpenAssistantProfile ? () => onOpenAssistantProfile(aiId) : undefined}
             avatarContent={avatar}
             isUser={false}
             userName={userName}
@@ -485,7 +517,7 @@ function MessageBubble({
         style={isSystem && !shouldRenderToolProcessCard ? undefined : [
           bubbleStyles.bubbleWrapper,
           isMe ? bubbleStyles.myBubbleWrapper : bubbleStyles.aiBubbleWrapper,
-          useWideMarkdownLayout ? bubbleStyles.wideMarkdownBubbleWrapper : undefined,
+          useFullWidthLayout ? bubbleStyles.fullWidthBubbleWrapper : undefined,
           shouldUseMoonKimiUserWidth ? bubbleStyles.moonKimiUserBubbleWrapper : undefined,
           shouldUseMoonKimiAssistantWidth ? bubbleStyles.moonKimiAssistantBubbleWrapper : undefined,
         ]}
@@ -532,7 +564,8 @@ function MessageBubble({
 
         {(!shouldRenderToolProcessCard && (!isReasoning || (isReasoning && !shouldRenderOfficialReplicaReasoning && isExpanded))) && (
           <View
-            style={isSelected ? { position: 'relative' } : undefined}
+            // 卡片需要从消息行取得明确宽度，不能在这里重新按短正文收缩。
+            style={[isSelected && { position: 'relative' }, sharedMoment && bubbleStyles.fullWidthBubble]}
             onLayout={layoutProbeHandlers?.middleView}
           >
             <View
@@ -541,11 +574,11 @@ function MessageBubble({
             >
               {!isMe && shouldRenderBubbleArrow && <View style={bubbleStyles.arrowLeft} />}
 
-              {shouldUseNativeBubbleGlass ? (
+              {isSharedCard && !theme.effects.glass.enabled ? bubbleContent : shouldUseNativeBubbleGlass ? (
                 <GlassSurface
                   bordered={false}
                   material={{ cornerRadius: theme.radius.lg }}
-                  style={bubbleStyle}
+                  style={[bubbleStyle, isSharedCard && bubbleStyles.sharedCardGlassSurface, sharedMoment && bubbleStyles.fullWidthBubble]}
                   onLayout={layoutProbeHandlers?.bubble}
                 >
                   {bubbleContent}
@@ -557,10 +590,14 @@ function MessageBubble({
                   collapsable={false}
                   style={(isStandaloneAttachmentMessage || isStandaloneStickerMessage)
                     ? bubbleStyles.framelessAttachmentBubble
-                    : bubbleStyle}
+                    : [bubbleStyle, drawableSkin && bubbleSkinFrameStyle(drawableSkin.config),
+                      drawableSkin && drawableSkin.decorations.length > 0 && { marginTop: decorationOverflow.top, marginBottom: decorationOverflow.bottom }]}
                   onLayout={layoutProbeHandlers?.bubble}
                 >
+                  {drawableSkin && <BubbleSkinDrawing skin={drawableSkin} />}
                   {bubbleContent}
+                  {drawableSkin && <BubbleDecorationLayer decorations={drawableSkin.decorations} editing={appearancePreview?.editing} onOverflowChange={onDecorationOverflow} />}
+                  {drawableSkin && appearancePreview?.guides}
                 </View>
               )}
 
@@ -612,6 +649,7 @@ function areEqual(prevProps: MessageBubbleProps, nextProps: MessageBubbleProps):
     prevProps.cachedTokens === nextProps.cachedTokens &&
     prevProps.replyToText === nextProps.replyToText &&
     prevProps.replyQuote === nextProps.replyQuote &&
+    prevProps.onOpenAssistantProfile === nextProps.onOpenAssistantProfile &&
     prevProps.avatar === nextProps.avatar &&
     prevProps.userAvatar === nextProps.userAvatar &&
     prevProps.aiId === nextProps.aiId &&
@@ -622,9 +660,11 @@ function areEqual(prevProps: MessageBubbleProps, nextProps: MessageBubbleProps):
     prevProps.messageStatus === nextProps.messageStatus &&
     prevProps.attachments === nextProps.attachments &&
     prevProps.sharedRecord === nextProps.sharedRecord &&
+    prevProps.sharedMoment === nextProps.sharedMoment &&
     prevProps.sharedComment === nextProps.sharedComment &&
     prevProps.sticker === nextProps.sticker &&
     prevProps.messageId === nextProps.messageId &&
+    prevProps.clientMessageId === nextProps.clientMessageId &&
     prevProps.voice === nextProps.voice &&
     prevProps.voicePlayedAt === nextProps.voicePlayedAt &&
     prevProps.isVoiceTranscriptExpanded === nextProps.isVoiceTranscriptExpanded &&
@@ -642,7 +682,8 @@ function areEqual(prevProps: MessageBubbleProps, nextProps: MessageBubbleProps):
     prevProps.processCardSurface === nextProps.processCardSurface &&
     prevProps.onNestedScrollActiveChange === nextProps.onNestedScrollActiveChange &&
     prevProps.onPreviewFile === nextProps.onPreviewFile &&
-    prevProps.isSelected === nextProps.isSelected
+    prevProps.isSelected === nextProps.isSelected &&
+    prevProps.appearancePreview === nextProps.appearancePreview
   );
 }
 

@@ -27,14 +27,13 @@ export {
 export {
   createAssistantUserPrompt,
   deleteAssistantUserPrompt,
-  getAssistantPromptAdvancedSnapshot,
   getAssistantPromptEditorDetails,
   getAssistantToolPermissions,
-  getInitialAssistantPromptEditorSnapshot,
   reorderAssistantUserPrompts,
   resetAssistantDefinitionOverride,
   resolveAssistantPromptConfiguration,
   resolveImageGroundingPrompt,
+  resolveVisionOCRPrompt,
   resolveChatSummaryPromptOverride,
   saveAssistantDefinitionOverride,
   saveAssistantDefinitionState,
@@ -43,9 +42,7 @@ export {
   setAssistantDirectToolExposure,
   listAssistantDirectToolNames,
   updateAssistantUserPrompt,
-  type AssistantPromptAdvancedSnapshot,
   type AssistantPromptEditorDetails,
-  type AssistantPromptEditorSnapshot,
   type ResolvedAssistantPromptConfiguration,
 } from './application/ManageAssistantPrompts';
 export type {

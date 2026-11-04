@@ -45,7 +45,7 @@ Self Wake 已合并到 AI 日程。用户提醒与 AI 自己安排未来行动�
 | `features/togetherListening` | 邀请、Activity 与一起听产品规则 |
 | Host | 跨 Feature 工具、Prompt、通知和 Android 执行组合 |
 
-Floating OFF 与 Companion ON 必须独立工作：没有悬浮球和 Overlay FGS，AI 日程仍可后台执行并由统一消息交付路径决定通知。Companion 的前台执行只属于一次任务，终态释放，开关开启但空闲时没有 Companion 常驻服务。关闭任意产品开关不撤销系统权限或停止无关 Feature。
+Floating OFF 与 Companion ON 必须独立工作：没有悬浮球和 Overlay FGS，AI 日程仍可后台执行并由统一消息交付路径决定通知。通用保活由「持续后台运行」独立总开关拥有，开启后跨聊天和日程持续运行；Companion 只管理一次任务的有界等待与取消，不创建临时保活服务。关闭任意产品开关不撤销系统权限或停止无关 Feature。
 
 Device Observer 只提供事实；Device Control 执行动作，不决定 AI 行为或写 Chat 消息。屏幕采集不决定 Companion 何时截图。Permission Center 展示系统能力并引导用户授权，不理解业务流程，也不成为权限真值的缓存副本。
 

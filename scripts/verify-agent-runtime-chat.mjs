@@ -1,3 +1,4 @@
+import { sharedMomentIntent } from './helpers/chat-sharing-fixture.mjs';
 import { agentToolSchemaDependencies } from './helpers/agent-tool-schema-dependencies.mjs';
 import assert from 'node:assert/strict';
 import { loadTypeScriptModule, readRepoFile as read } from './helpers/load-typescript-module.mjs';
@@ -178,6 +179,7 @@ const timelineModule = loadTypeScriptModule(
     './SendVoiceMessageTool': {
       isVoiceMessageSendIntent: (value) => value?.discriminator === 'ravencat.chat.voice_message.send.v1',
     },
+    './SharedMomentSendIntent': sharedMomentIntent,
     './SendImageTool': imageToolModule,
     '../../messages/domain/chatMessageMetadata': {
       buildChatVoiceMessageMetadata: (voice) => ({ kind: 'voice', voice }),
@@ -1384,6 +1386,46 @@ assert.deepEqual(imageItems.slice(1, 3).map(({ message }) => {
 }), ['asset-0', 'asset-1']);
 imageTimeline.clear('superseded');
 assert.deepEqual(imageTimeline.buildCommitItems(imageCommitParams), [], '失去回合资格后不能提交旧图片 intent');
+
+// 分享工具只取得可见快照；卡片与其他工具输出按原时间线顺序交给同一个提交 owner。
+const sharedMomentSnapshot = { schemaVersion: 1, momentId: 'moment-1',
+  author: { actorType: 'ai', actorId: 'agent-1', name: 'Kimi', displayName: '宝宝', avatar: null },
+  content: '一张傍晚的照片', locationLabel: null, createdAt: '2026-11-01T10:00:00.000Z',
+  images: [{ mediaAssetId: 'asset-0', analysisText: '傍晚的天空' }] };
+const { MomentDomainError } = loadTypeScriptModule('src/features/moments/domain/MomentErrors.ts');
+let unavailableMoment = false;
+const { ShareMomentTool } = loadTypeScriptModule('src/host/composition/agent/ShareMomentTool.ts', {
+  '@features/assistants': { getAIAssistantById: async id => ({ id, agentId: 'agent-1' }) },
+  '@features/moments': { MomentDomainError, createAgentMomentShare: async (id, agentId) => {
+    assert.equal(id, 'moment-1'); assert.equal(agentId, 'agent-1');
+    if (unavailableMoment) throw new MomentDomainError('moment_not_visible', '不可见', id);
+    return sharedMomentSnapshot;
+  } },
+  '@features/chat/composition': sharedMomentIntent,
+  '@shared/runtime/abortSignal': loadTypeScriptModule('src/shared/runtime/abortSignal.ts'),
+});
+const shareContext = { runId: 'moment-run', task: { assistantId: 'assistant-1' }, toolCallId: 'moment-call', abortSignal: new AbortController().signal };
+const shareOutcome = await ShareMomentTool.execute({ momentId: 'moment-1' }, shareContext);
+assert.equal(shareOutcome.status, 'success'); assert.equal(shareOutcome.metadata.fulfillsUserVisibleOutput, true);
+assert.deepEqual(ShareMomentTool.definition.parameters.required, ['momentId']);
+const momentTimeline = new timelineModule.ChatAgentTimeline('moment-run');
+momentTimeline.startStep(1);
+momentTimeline.reconcileModelTurn(1, createTimelineTurn({ toolCalls: [modelToolCall('image-call', 'send_image'), modelToolCall('moment-call', 'share_moment')], finishReason: 'tool_calls' }));
+momentTimeline.startToolStatus(1);
+momentTimeline.completeToolCall(1, 'image-call', await imageToolModule.SendImageTool.execute({ media_asset_id: 'asset-0', on_success: 'continue' }, { ...shareContext, toolCallId: 'image-call' }));
+momentTimeline.completeToolCall(1, 'moment-call', shareOutcome);
+const momentCommitParams = { ...imageCommitParams, runtimeContext: { replyRunId: 'moment-run' }, finalStepIndex: 1 };
+const momentItems = momentTimeline.buildCommitItems(momentCommitParams);
+assert.deepEqual(momentItems.slice(1).map(item => JSON.parse(item.message.metadataJson).kind), ['image', 'shared_moment']);
+assert.deepEqual(JSON.parse(momentItems[2].message.metadataJson).sharedMoment, sharedMomentSnapshot);
+assert.equal(momentItems[2].message.senderType, 'assistant');
+assert.equal(momentItems[2].message.agentId, 'agent-1', '分享消息发送者与原帖作者是独立事实');
+momentTimeline.clear('superseded');
+assert.deepEqual(momentTimeline.buildCommitItems(momentCommitParams), []);
+unavailableMoment = true;
+assert.equal((await ShareMomentTool.execute({ momentId: 'moment-1' }, shareContext)).code, 'MOMENT_NOT_VISIBLE');
+const shareAbort = new AbortController(); shareAbort.abort(new Error('分享已取消'));
+await assert.rejects(ShareMomentTool.execute({ momentId: 'moment-1' }, { ...shareContext, abortSignal: shareAbort.signal }), /分享已取消/);
 
 const orderedTimeline = new timelineModule.ChatAgentTimeline(
   'canonical-run',

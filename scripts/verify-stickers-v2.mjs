@@ -4,7 +4,7 @@
  * 覆盖设计文档（docs/sticker-system-v2-implementation-plan.md 第 14 节）：
  * - sticker_annotation capability 已从代码与数据库清理；
  * - Sticker System 只保存模型引用，不复制 API Key / Base URL；
- * - recognition 只接受 enabled ocr 配置、embedding 只接受 enabled embedding 配置；
+ * - recognition 只接受 连接完整的 ocr 配置、embedding 只接受 连接完整的 embedding 配置；
  * - 迁移 84 建立 semantic_revision / sticker_system_config / sticker_embeddings
  *   并删除旧 sticker_annotation binding / model config；
  * - 语义文本、向量有效性、hybrid rerank 与分组浏览分页的纯函数契约；
@@ -118,8 +118,8 @@ const validOcr = {
 
 assert.ok(evaluateStickerModelConfig(null, 'ocr') === null, '未配置模型必须返回 null');
 assert.ok(
-  evaluateStickerModelConfig({ ...validOcr, enabled: false }, 'ocr') === null,
-  'disabled 模型必须被判不可用',
+  evaluateStickerModelConfig({ ...validOcr, apiKey: null }, 'ocr') === null,
+  '凭据缺失的模型必须被判不可用',
 );
 assert.ok(
   evaluateStickerModelConfig(validOcr, 'embedding') === null,
@@ -127,14 +127,14 @@ assert.ok(
 );
 assert.ok(
   evaluateStickerModelConfig({ ...validOcr, capabilityKind: 'embedding' }, 'embedding') !== null,
-  'embedding 可以选择 enabled 的 embedding 配置',
+  'embedding 可以选择连接完整的 embedding 配置',
 );
 assert.ok(
   evaluateStickerModelConfig(
-    { ...validOcr, capabilityKind: 'embedding', enabled: false },
+    { ...validOcr, capabilityKind: 'embedding', apiKey: null },
     'embedding',
   ) === null,
-  'embedding 不得选择 disabled 配置',
+  'embedding 不得选择凭据缺失的配置',
 );
 
 // Sticker System 配置实体只保存模型引用；字段面不含任何连接信息。
@@ -191,6 +191,34 @@ function createCurrentDatabase() {
   return db;
 }
 
+// 160 升级保留完整旧索引，且不把未完成的历史索引授权为自动全量重建。
+for (const complete of [true, false]) {
+  const db = createCurrentDatabase();
+  db.exec(`INSERT INTO auxiliary_model_configs (id, capability_kind, name, base_url, model, created_at, updated_at)
+    VALUES ('cfg-vector', 'embedding', '向量', 'https://example.invalid', 'embed', '2026-09-01', '2026-09-01');
+    INSERT INTO sticker_system_config (id, embedding_model_config_id, created_at, updated_at) VALUES ('global', 'cfg-vector', '2026-09-01', '2026-09-01');
+    INSERT INTO sticker_embeddings VALUES ('sticker-1', 'cfg-vector', '${complete ? '2026-09-01' : 'old-version'}', 1, 3, '[1,0,0]', '2026-09-01', '2026-09-01');
+    DROP TABLE memory_embedding_index_control; DROP TABLE sticker_embedding_index_control; PRAGMA user_version = 159;`);
+  const retained = db.prepare('SELECT * FROM sticker_embeddings').all();
+  await runMigrations(createAdapter(db));
+  assert.deepEqual(db.prepare('SELECT * FROM sticker_embeddings').all(), retained);
+  assert.equal(db.prepare('SELECT published_model_id FROM sticker_embedding_index_control').get().published_model_id, complete ? 'cfg-vector' : null);
+  db.close();
+}
+
+// 从实际缺少失败表的 160 库升级，保留原表情与完整向量。
+{
+  const db = createCurrentDatabase();
+  db.exec(`INSERT INTO sticker_embeddings VALUES ('sticker-1', 'vector-160', '2026-09-01', 1, 2, '[1,0]', '2026-09-01', '2026-09-01');
+    DROP TABLE sticker_embedding_failures; PRAGMA user_version = 160;`);
+  const retained = db.prepare('SELECT * FROM sticker_embeddings').all();
+  await runMigrations(createAdapter(db));
+  assert.deepEqual(db.prepare('SELECT * FROM sticker_embeddings').all(), retained);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sticker_embedding_failures').get().n, 0);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, DATABASE_SCHEMA_VERSION);
+  db.close();
+}
+
 {
   const db = createCurrentDatabase();
   await runMigrations(createAdapter(db));
@@ -203,11 +231,8 @@ function createCurrentDatabase() {
   assert.equal(revisionRow.semantic_revision, 1, '现有 Sticker 的 semantic_revision 必须初始化为 1');
 
   const configColumns = db.prepare(`PRAGMA table_info('sticker_system_config')`).all().map((c) => c.name);
-  assert.deepEqual(
-    configColumns.sort(),
-    ['created_at', 'embedding_model_config_id', 'id', 'recognition_model_config_id', 'updated_at'],
-    'sticker_system_config 只允许模型引用与时间列，不得保存 Base URL / API Key / model name',
-  );
+  assert.ok(!configColumns.some(column => ['base_url', 'api_key', 'model'].includes(column)),
+    '表情系统只保存业务开关与模型引用，不复制模型连接配置');
 
   const embeddingColumns = db.prepare(`PRAGMA table_info('sticker_embeddings')`).all().map((c) => c.name);
   for (const required of [
@@ -403,23 +428,6 @@ assert.ok(
 assert.ok(
   !/必须来自 search_stickers/.test(agentToolsSource),
   'select_sticker 不得再限制 ID 必须来自搜索',
-);
-
-// ---------------------------------------------------------------------------
-// 7. searchStickersForAI 的 fallback 结构（未配置模型 / 请求失败退回词面）
-// ---------------------------------------------------------------------------
-const searchApplicationSource = read('src/features/stickers/application/StickerSearch.ts');
-assert.ok(
-  searchApplicationSource.includes('lexicalFallback'),
-  '词面 fallback 必须是独立结构化路径',
-);
-assert.ok(
-  /catch \(error\)/.test(searchApplicationSource),
-  'query embedding 请求失败必须退回词面搜索',
-);
-assert.ok(
-  searchApplicationSource.includes('resolveStickerEmbeddingModel()'),
-  '语义搜索必须通过 Sticker-owned embedding resolver',
 );
 
 // ---------------------------------------------------------------------------
@@ -627,17 +635,16 @@ function countStickerRows(db) {
 const EMBEDDING_MODEL_ID = 'cfg-embed';
 const EMBEDDING_MODEL_ALT_ID = 'cfg-embed-alt';
 const RECOGNITION_MODEL_ID = 'cfg-ocr';
-const DISABLED_RECOGNITION_MODEL_ID = 'cfg-ocr-disabled';
+const INCOMPLETE_RECOGNITION_MODEL_ID = 'cfg-ocr-incomplete';
 const MODEL_UPDATED_AT = '2026-09-15T00:00:00.000Z';
 
-function buildModelConfig(id, capabilityKind, name, enabled = true) {
+function buildModelConfig(id, capabilityKind, name, complete = true) {
   return {
     id,
     capabilityKind,
     name,
-    enabled,
     baseUrl: 'https://example.com/v1',
-    apiKey: 'verify-key',
+    apiKey: complete ? 'verify-key' : null,
     model: `${capabilityKind}-demo`,
     temperature: null,
     topP: null,
@@ -651,8 +658,8 @@ const modelConfigs = new Map([
   [EMBEDDING_MODEL_ALT_ID, buildModelConfig(EMBEDDING_MODEL_ALT_ID, 'embedding', '语义向量模型 B')],
   [RECOGNITION_MODEL_ID, buildModelConfig(RECOGNITION_MODEL_ID, 'ocr', '视觉识别模型 A')],
   [
-    DISABLED_RECOGNITION_MODEL_ID,
-    buildModelConfig(DISABLED_RECOGNITION_MODEL_ID, 'ocr', '已停用视觉模型', false),
+    INCOMPLETE_RECOGNITION_MODEL_ID,
+    buildModelConfig(INCOMPLETE_RECOGNITION_MODEL_ID, 'ocr', '连接未填完整的视觉模型', false),
   ],
 ]);
 
@@ -693,6 +700,7 @@ function createStickerHarness({ maxEmbeddingBatchSize = Infinity } = {}) {
   function activate() {
     runtimeModule.configureStickersRuntime({
       repository,
+      withEmbeddingMaintenance: (operation, signal) => operation(signal ?? new AbortController().signal),
       media: {
         async createMediaAssetWithReference(input, commitReference) {
           const known = mediaAssetsByUri.get(input.sourceUri) ?? null;
@@ -724,6 +732,7 @@ function createStickerHarness({ maxEmbeddingBatchSize = Infinity } = {}) {
           assert.ok(texts.length <= maxEmbeddingBatchSize, '向量请求必须满足服务的单次输入上限');
           embeddingRequests.calls += 1;
           embeddingRequests.batchSizes.push(texts.length);
+          if (embeddingRequests.beforeReply) await embeddingRequests.beforeReply(texts);
           // 固定返回同向向量，让语义排序的胜负完全由库里存的向量决定。
           return texts.map(() => [1, 0, 0]);
         },
@@ -846,6 +855,7 @@ assert.equal(countStickerRows(capacity.db), 500);
 // ---------------------------------------------------------------------------
 const revision = createStickerHarness();
 revision.activate();
+await systemModelsModule.setStickerAutomaticRecognitionEnabled(true);
 
 seedMediaAsset(revision.db, 'asset-edit');
 seedSticker(revision.db, {
@@ -1002,15 +1012,15 @@ function bindRecognitionRaw(modelConfigId) {
     .run(modelConfigId);
 }
 
-bindRecognitionRaw(DISABLED_RECOGNITION_MODEL_ID);
+bindRecognitionRaw(INCOMPLETE_RECOGNITION_MODEL_ID);
 selection = await systemModelsModule.getStickerSystemModelSelection();
-assert.equal(selection.recognition.status, 'disabled', 'disabled 模型必须被判不可用');
+assert.equal(selection.recognition.status, 'incomplete', '凭据缺失的模型必须被判不可用');
 assert.equal(selection.recognition.name, null);
 assert.equal(selection.embedding.status, 'active', 'recognition 失效不得污染 embedding 的展示');
 
 bindRecognitionRaw('cfg-does-not-exist');
 selection = await systemModelsModule.getStickerSystemModelSelection();
-assert.equal(selection.recognition.status, 'deleted', '被删除的模型必须与 disabled 区分开');
+assert.equal(selection.recognition.status, 'deleted', '被删除的模型必须与连接未填完整区分开');
 
 bindRecognitionRaw(EMBEDDING_MODEL_ID);
 selection = await systemModelsModule.getStickerSystemModelSelection();
@@ -1027,7 +1037,7 @@ assert.equal(selection.recognition.status, 'unconfigured', '未配置必须与�
 assert.equal(selection.recognition.modelConfigId, null);
 
 // ---------------------------------------------------------------------------
-// 13. 模型切换后必须立刻唤醒对应 worker（信号发生在持久化成功之后）
+// 13. 向量模型切换不授权重建；识别队列仍由自己的配置提交唤醒。
 // ---------------------------------------------------------------------------
 let embeddingWakes = 0;
 let annotationWakes = 0;
@@ -1048,11 +1058,11 @@ const unsubscribeAnnotation = annotationPendingModule.subscribeStickerAnnotation
 });
 
 await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ALT_ID);
-assert.equal(embeddingWakes, 1, '设置 embedding 模型必须立刻发出 embedding 队列唤醒信号');
+assert.equal(embeddingWakes, 0, '设置 embedding 模型不得自动授权重建');
 assert.equal(
   embeddingPersistedAtWake,
-  EMBEDDING_MODEL_ALT_ID,
-  '唤醒信号必须发生在 embedding 配置持久化成功之后',
+  null,
+  '切换模型不发起向量队列信号',
 );
 
 await systemModelsModule.setStickerRecognitionModel(RECOGNITION_MODEL_ID);
@@ -1065,7 +1075,7 @@ assert.equal(
 
 await systemModelsModule.setStickerEmbeddingModel(null);
 await systemModelsModule.setStickerRecognitionModel(null);
-assert.equal(embeddingWakes, 1, '清空 embedding 模型不得制造额外唤醒');
+assert.equal(embeddingWakes, 0, '清空 embedding 模型不得制造额外唤醒');
 assert.equal(annotationWakes, 1, '清空识别模型不得制造额外唤醒');
 assert.equal(await systemModelsModule.resolveStickerEmbeddingModel(), null, '清空后 resolver 必须返回 null');
 assert.equal(await systemModelsModule.resolveStickerRecognitionModel(), null, '清空后 resolver 必须返回 null');
@@ -1272,6 +1282,45 @@ assert.notDeepEqual(
   'Case C 存在 valid 向量时结果不得等于纯词面排序',
 );
 
+try {
+  fallback.embeddingRequests.beforeReply = async () => { throw new Error('模拟查询向量服务失败'); };
+  assert.deepEqual(
+    stickerIds(await aiSearchModule.searchStickersForAI({ query: FALLBACK_QUERY })),
+    lexicalExpectation,
+    '查询向量请求失败仍必须退回词面搜索',
+  );
+} finally {
+  fallback.embeddingRequests.beforeReply = null;
+}
+
+const validVectorJson = fallback.db.prepare("SELECT vector_json FROM sticker_embeddings WHERE sticker_id = 'sticker-0006'").get().vector_json;
+try {
+  fallback.db.prepare("UPDATE sticker_embeddings SET vector_json = '{broken' WHERE sticker_id = 'sticker-0006'").run();
+  await assert.rejects(
+    aiSearchModule.searchStickersForAI({ query: FALLBACK_QUERY }),
+    /Sticker 向量数据损坏/,
+    '本地向量损坏不能被吞成普通词面结果',
+  );
+} finally {
+  fallback.db.prepare("UPDATE sticker_embeddings SET vector_json = ? WHERE sticker_id = 'sticker-0006'").run(validVectorJson);
+}
+
+const searchAbortController = new AbortController();
+try {
+  fallback.embeddingRequests.beforeReply = async () => {
+    const reason = new Error('模拟查询请求取消');
+    searchAbortController.abort(reason);
+    throw reason;
+  };
+  await assert.rejects(
+    aiSearchModule.searchStickersForAI({ query: FALLBACK_QUERY }, { signal: searchAbortController.signal }),
+    /模拟查询请求取消/,
+    '取消信号不能转换成词面搜索成功结果',
+  );
+} finally {
+  fallback.embeddingRequests.beforeReply = null;
+}
+
 // ---------------------------------------------------------------------------
 // 16. 向量批次查询与空索引重建：真实联表必须返回 Sticker 自身的字段
 // ---------------------------------------------------------------------------
@@ -1343,16 +1392,19 @@ assert.deepEqual(
   '批次查询必须遵守数量上限',
 );
 
+const indexRequestsBefore = indexing.embeddingRequests.calls;
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 0 }, '新选择的模型不得自动批量重建');
+assert.equal(indexing.embeddingRequests.calls, indexRequestsBefore);
 await embeddingsModule.rebuildStickerEmbeddingIndex();
 assert.deepEqual(
   await embeddingsModule.getStickerEmbeddingIndexStatus(),
-  { readyStickers: 6, validEmbeddings: 0, pendingEmbeddings: 6 },
-  '重建后从空索引开始，待建数量应覆盖全部 ready Sticker',
+  { readyStickers: 6, validEmbeddings: 6, pendingEmbeddings: 0 },
+  '重建整批成功后才发布全部索引',
 );
 assert.deepEqual(
   await embeddingsModule.generateStickerEmbeddingBatch(),
-  { embeddedCount: 6 },
-  '空索引必须能通过真实批次查询、模型网关和 Repository 写入完成建索引',
+  { embeddedCount: 0 },
+  '完整发布后不重复请求模型',
 );
 assert.deepEqual(
   await embeddingsModule.getStickerEmbeddingIndexStatus(),
@@ -1380,6 +1432,298 @@ while (embeddedTotal < 15) {
 }
 assert.equal(embeddedTotal, 15);
 assert.equal((await embeddingsModule.getStickerEmbeddingIndexStatus()).pendingEmbeddings, 0);
+
+// 整批发布的失败不会暴露半套新索引，也不会先删除旧向量。
+const storedVectors = () => indexing.db.prepare('SELECT * FROM sticker_embeddings ORDER BY sticker_id, model_config_id').all();
+const retainedVectors = storedVectors();
+let rebuildCalls = 0;
+indexing.embeddingRequests.beforeReply = async () => {
+  rebuildCalls++;
+  assert.deepEqual(storedVectors(), retainedVectors, '生成各批次期间旧索引保持完整');
+  if (rebuildCalls === 2) throw new Error('模拟表情向量服务失败');
+};
+await assert.rejects(embeddingsModule.rebuildStickerEmbeddingIndex(), /模拟表情向量服务失败/);
+assert.deepEqual(storedVectors(), retainedVectors);
+const cancelledRebuild = new AbortController();
+indexing.embeddingRequests.beforeReply = async () => { cancelledRebuild.abort(); };
+await assert.rejects(embeddingsModule.rebuildStickerEmbeddingIndex(cancelledRebuild.signal));
+assert.deepEqual(storedVectors(), retainedVectors);
+indexing.embeddingRequests.beforeReply = null;
+indexing.db.exec("CREATE TRIGGER reject_sticker_publish BEFORE INSERT ON sticker_embeddings WHEN NEW.sticker_id = 'stale-model' BEGIN SELECT RAISE(ABORT, '模拟表情整批发布失败'); END;");
+await assert.rejects(embeddingsModule.rebuildStickerEmbeddingIndex(), /模拟表情整批发布失败/);
+assert.deepEqual(storedVectors(), retainedVectors, '删除旧行并写入部分新行之后发生异常，也必须恢复整套旧索引');
+indexing.db.exec('DROP TRIGGER reject_sticker_publish');
+
+const buildEmbeddings = build => build.stickers.map(sticker => ({
+  stickerId: sticker.id, modelConfigId: EMBEDDING_MODEL_ID, modelConfigUpdatedAt: MODEL_UPDATED_AT,
+  semanticRevision: sticker.semanticRevision, dimension: 3, vector: [0, 1, 0], createdAt: MODEL_UPDATED_AT, updatedAt: MODEL_UPDATED_AT,
+}));
+const staleIndexBuild = await indexing.repository.beginEmbeddingRebuild('before-edit', indexContext, (await indexing.repository.getEmbeddingIndexControl()).revision);
+await indexing.repository.updateStickerMetadata(staleIndexBuild.stickers[0].id, { name: '重建期间编辑' }, MODEL_UPDATED_AT);
+await assert.rejects(indexing.repository.publishEmbeddingRebuild(staleIndexBuild, buildEmbeddings(staleIndexBuild), indexContext, new AbortController().signal), /表情包发生变化/);
+assert.deepEqual(storedVectors(), retainedVectors);
+await indexing.repository.finishEmbeddingRebuild(staleIndexBuild.id);
+
+const beforeConfigurationRead = await indexing.repository.getEmbeddingIndexControl();
+await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ALT_ID);
+assert.equal(await indexing.repository.syncEmbeddingModel(indexContext, beforeConfigurationRead.revision), null, '配置读取期间切换模型，不能用旧配置重新取得发布资格');
+await assert.rejects(indexing.repository.beginEmbeddingRebuild('stale-config', indexContext, beforeConfigurationRead.revision), /模型已变化/);
+await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ID);
+
+const oldIndexBuild = await indexing.repository.beginEmbeddingRebuild('old-build', indexContext, (await indexing.repository.getEmbeddingIndexControl()).revision);
+const newIndexBuild = await indexing.repository.beginEmbeddingRebuild('new-build', indexContext, (await indexing.repository.getEmbeddingIndexControl()).revision);
+await assert.rejects(indexing.repository.publishEmbeddingRebuild(oldIndexBuild, buildEmbeddings(oldIndexBuild), indexContext, new AbortController().signal), /重建任务已变化/);
+await indexing.repository.finishEmbeddingRebuild(oldIndexBuild.id);
+assert.equal((await indexing.repository.getEmbeddingIndexControl()).buildId, newIndexBuild.id, '旧任务不能清掉新任务的发布所有权');
+await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ALT_ID);
+await assert.rejects(indexing.repository.publishEmbeddingRebuild(newIndexBuild, buildEmbeddings(newIndexBuild), indexContext, new AbortController().signal), /重建任务已变化/);
+assert.deepEqual(storedVectors(), retainedVectors, '切换模型保留原向量及其模型信息');
+const noImplicitRequests = indexing.embeddingRequests.calls;
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 0 });
+indexing.activate();
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 0 }, '重新进入运行时也不得偷偷为新模型重建');
+assert.equal(indexing.embeddingRequests.calls, noImplicitRequests);
+await embeddingsModule.rebuildStickerEmbeddingIndex();
+assert.ok(storedVectors().every(row => row.model_config_id === EMBEDDING_MODEL_ALT_ID), '新模型整批成功后才替换旧模型向量');
 indexing.db.close();
+
+// 处理进度覆盖完整用户库；识别和向量失败由用户显式恢复。
+const processingModule = await loader.load('src/features/stickers/application/StickerProcessing.ts');
+const processingSignals = await loader.load('src/features/stickers/application/StickerProcessingSignal.ts');
+const progressHarness = createStickerHarness();
+progressHarness.activate();
+await systemModelsModule.setStickerAutomaticRecognitionEnabled(true);
+await systemModelsModule.setStickerRecognitionModel(RECOGNITION_MODEL_ID);
+await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ID);
+for (let index = 0; index < 203; index++) {
+  seedMediaAsset(progressHarness.db, `progress-asset-${index}`);
+  seedSticker(progressHarness.db, { id: `progress-${String(index).padStart(3, '0')}`,
+    mediaAssetId: `progress-asset-${index}`, name: `进度表情 ${index}`,
+    annotationStatus: index < 201 ? 'pending' : 'ready' });
+}
+let processing = await processingModule.getStickerProcessingProgress();
+assert.equal(processing.items.length, 203, '整库进度不能被图库的 200 条分页截断');
+assert.equal(processing.items.at(-1).vectorStatus, 'pending_rebuild', '选好模型不代表已经开始向量化');
+const recognitionClaim = await commandsModule.claimStickerAnnotation();
+processing = await processingModule.getStickerProcessingProgress();
+assert.equal(processing.items.find(item => item.sticker.id === recognitionClaim.sticker.id).annotationStartedAt, recognitionClaim.claimedAt);
+await commandsModule.failStickerAnnotation({ stickerId: recognitionClaim.sticker.id, claimId: recognitionClaim.claimId, error: '模拟识别失败' });
+const nextRecognition = await commandsModule.claimStickerAnnotation();
+assert.notEqual(nextRecognition.sticker.id, recognitionClaim.sticker.id, '自动领取跳过识别失败项');
+await commandsModule.releaseStickerAnnotation({ stickerId: nextRecognition.sticker.id, claimId: nextRecognition.claimId });
+await commandsModule.retryStickerAnnotation(recognitionClaim.sticker.id);
+await assert.rejects(commandsModule.retryStickerAnnotation(recognitionClaim.sticker.id), /只能重试/);
+const retriedClaim = await commandsModule.claimStickerAnnotation();
+assert.equal(retriedClaim.sticker.id, recognitionClaim.sticker.id, '重试复用现有队列');
+assert.notEqual(retriedClaim.claimId, recognitionClaim.claimId);
+await assert.rejects(commandsModule.completeStickerAnnotation({ stickerId: recognitionClaim.sticker.id,
+  claimId: recognitionClaim.claimId, metadata: { description: '旧请求' } }), /claim/);
+await commandsModule.failStickerAnnotation({ stickerId: retriedClaim.sticker.id, claimId: retriedClaim.claimId, error: '手动重试仍失败' });
+const afterRetryFailure = await commandsModule.claimStickerAnnotation();
+assert.notEqual(afterRetryFailure.sticker.id, retriedClaim.sticker.id, '手动重试再次失败后也停止，不循环重试');
+await commandsModule.releaseStickerAnnotation({ stickerId: afterRetryFailure.sticker.id, claimId: afterRetryFailure.claimId });
+await commandsModule.retryStickerAnnotation(retriedClaim.sticker.id);
+const successfulClaim = await commandsModule.claimStickerAnnotation();
+await commandsModule.completeStickerAnnotation({ stickerId: successfulClaim.sticker.id,
+  claimId: successfulClaim.claimId, metadata: { description: '有效识别结果' } });
+await embeddingsModule.rebuildStickerEmbeddingIndex();
+
+for (const id of ['vector-fail-a', 'vector-fail-b']) {
+  seedMediaAsset(progressHarness.db, `asset-${id}`);
+  seedSticker(progressHarness.db, { id, mediaAssetId: `asset-${id}`, name: id });
+}
+progressHarness.embeddingRequests.beforeReply = async () => {
+  const during = await processingModule.getStickerProcessingProgress();
+  assert.equal(during.items.find(item => item.sticker.id === 'vector-fail-a').vectorStatus, 'processing');
+  throw new Error('模拟向量请求失败');
+};
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 0, failedCount: 2 });
+assert.equal(processingSignals.getStickerEmbeddingActivity(), null, '失败后不再显示正在请求');
+processing = await processingModule.getStickerProcessingProgress();
+for (const id of ['vector-fail-a', 'vector-fail-b']) {
+  const item = processing.items.find(value => value.sticker.id === id);
+  assert.equal(item.vectorStatus, 'failed');
+  assert.equal(item.embeddingError, '模拟向量请求失败');
+  assert.equal(item.sticker.annotationStatus, 'ready', '向量失败不改写表情可用性');
+}
+const failureCalls = progressHarness.embeddingRequests.calls;
+progressHarness.activate();
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 0 });
+assert.equal(progressHarness.embeddingRequests.calls, failureCalls, '再次装配运行时不能自动重试持久失败项');
+progressHarness.embeddingRequests.beforeReply = null;
+await embeddingsModule.backfillMissingStickerEmbeddings('vector-fail-a');
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 1 });
+processing = await processingModule.getStickerProcessingProgress();
+assert.equal(processing.items.find(item => item.sticker.id === 'vector-fail-a').vectorStatus, 'ready');
+assert.equal(processing.items.find(item => item.sticker.id === 'vector-fail-b').vectorStatus, 'failed', '单张补齐不清除其他失败项');
+await embeddingsModule.backfillMissingStickerEmbeddings();
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 1 });
+
+const beforeEdit = await progressHarness.repository.getStickerById('vector-fail-a');
+await progressHarness.repository.updateStickerMetadata(beforeEdit.id, { description: '编辑后的语义' }, MODEL_UPDATED_AT);
+await progressHarness.repository.saveEmbeddingFailures([beforeEdit], indexContext,
+  (await progressHarness.repository.getEmbeddingIndexControl()).revision, null, '旧语义请求失败', MODEL_UPDATED_AT, new AbortController().signal);
+processing = await processingModule.getStickerProcessingProgress();
+assert.equal(processing.items.find(item => item.sticker.id === beforeEdit.id).embeddingError, null, '迟到错误不能污染新语义');
+const abortedBatch = new AbortController();
+progressHarness.embeddingRequests.beforeReply = async () => abortedBatch.abort();
+await assert.rejects(embeddingsModule.generateStickerEmbeddingBatch({ signal: abortedBatch.signal }));
+assert.equal(progressHarness.db.prepare('SELECT COUNT(*) AS n FROM sticker_embedding_failures').get().n, 0, '取消不记为请求失败');
+assert.equal(processingSignals.getStickerEmbeddingActivity(), null);
+progressHarness.embeddingRequests.beforeReply = null;
+await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ALT_ID);
+await progressHarness.repository.saveEmbeddingFailures([await progressHarness.repository.getStickerById(beforeEdit.id)],
+  indexContext, 0, null, '旧模型请求失败', MODEL_UPDATED_AT, new AbortController().signal);
+assert.equal(progressHarness.db.prepare('SELECT COUNT(*) AS n FROM sticker_embedding_failures').get().n, 0, '旧模型请求的错误同样受发布 fence 约束');
+assert.equal((await processingModule.getStickerProcessingProgress()).items.find(item => item.sticker.id === beforeEdit.id).vectorStatus, 'pending_rebuild');
+progressHarness.db.close();
+
+// 设备回归：160／161 已有控制表可能缺少后加的模型列，必须先升级再开放 Repository。
+for (const version of [160, 161]) {
+  for (const missing of [
+    ['selected_model_id', 'selected_model_updated_at'],
+    ['selected_model_id', 'selected_model_updated_at', 'published_model_id', 'published_model_updated_at'],
+    [],
+  ]) {
+    const db = createCurrentDatabase();
+    db.exec(`INSERT INTO auxiliary_model_configs (id, capability_kind, name, base_url, model, created_at, updated_at)
+      VALUES ('${EMBEDDING_MODEL_ID}', 'embedding', '旧向量模型', 'https://example.invalid', 'embed', '${MODEL_UPDATED_AT}', '${MODEL_UPDATED_AT}');
+      INSERT INTO sticker_system_config (id, embedding_model_config_id, created_at, updated_at)
+        VALUES ('global', '${EMBEDDING_MODEL_ID}', '${MODEL_UPDATED_AT}', '${MODEL_UPDATED_AT}');
+      INSERT INTO sticker_embeddings VALUES ('sticker-1', '${EMBEDDING_MODEL_ID}', '${MODEL_UPDATED_AT}', 1, 2, '[1,0]', '${MODEL_UPDATED_AT}', '${MODEL_UPDATED_AT}');
+      UPDATE sticker_embedding_index_control SET revision = 7, build_id = 'interrupted-build',
+        selected_model_id = '${EMBEDDING_MODEL_ID}', selected_model_updated_at = '${MODEL_UPDATED_AT}',
+        published_model_id = '${EMBEDDING_MODEL_ID}', published_model_updated_at = '${MODEL_UPDATED_AT}';`);
+    for (const column of missing) db.exec(`ALTER TABLE sticker_embedding_index_control DROP COLUMN ${column};`);
+    db.exec(`PRAGMA user_version = ${version};`);
+    const retained = db.prepare('SELECT * FROM sticker_embeddings').all();
+    if (missing.length > 0) assert.throws(() => db.prepare('SELECT selected_model_id FROM sticker_embedding_index_control'), /no such column/);
+    if (version === 161 && missing.length === 2) {
+      const before = db.prepare('SELECT * FROM sticker_embedding_index_control').get();
+      const adapter = createAdapter(db);
+      await assert.rejects(runMigrations({ ...adapter, execAsync: async sql => {
+        if (sql.includes('ADD COLUMN selected_model_updated_at')) throw new Error('模拟控制表升级失败');
+        await adapter.execAsync(sql);
+      } }), /模拟控制表升级失败/);
+      assert.equal(db.prepare('PRAGMA user_version').get().user_version, version);
+      assert.deepEqual(db.prepare('SELECT * FROM sticker_embedding_index_control').get(), before, '升级失败必须回滚已补的列和控制状态');
+      assert.deepEqual(db.prepare('SELECT * FROM sticker_embeddings').all(), retained);
+    }
+    await runMigrations(createAdapter(db));
+    const upgraded = db.prepare('SELECT * FROM sticker_embedding_index_control').get();
+    const publishedId = missing.includes('published_model_id') ? null : EMBEDDING_MODEL_ID;
+    assert.equal(upgraded.selected_model_id, EMBEDDING_MODEL_ID);
+    assert.equal(upgraded.selected_model_updated_at, MODEL_UPDATED_AT);
+    assert.equal(upgraded.revision, missing.length > 0 ? 8 : 7, '只有补回选择状态才撤销旧执行资格');
+    assert.equal(upgraded.build_id, missing.length > 0 ? null : 'interrupted-build');
+    assert.equal(upgraded.published_model_id, publishedId, '补列不能凭已有向量推断发布资格');
+    await runMigrations(createAdapter(db));
+    assert.deepEqual(db.prepare('SELECT * FROM sticker_embedding_index_control').get(), upgraded, '重新启动不重放结构修复');
+    const repository = new SQLiteStickerRepository(createSqliteExecutor(db));
+    runtimeModule.configureStickersRuntime({ repository, now: () => MODEL_UPDATED_AT,
+      auxiliaryModels: { getModelConfigById: async id => modelConfigs.get(id) ?? null },
+      withEmbeddingMaintenance: (operation, signal) => operation(signal ?? new AbortController().signal),
+    });
+    await systemModelsModule.setStickerEmbeddingModel(null);
+    assert.equal((await repository.getStickerSystemConfig()).embeddingModelConfigId, null, '升级后允许取消向量模型选择');
+    await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ALT_ID);
+    assert.equal((await repository.getStickerSystemConfig()).embeddingModelConfigId, EMBEDDING_MODEL_ALT_ID, '升级后允许切换向量模型');
+    assert.deepEqual(db.prepare('SELECT * FROM sticker_embeddings').all(), retained, '升级和切换均保留旧向量');
+    assert.equal((await repository.getEmbeddingIndexControl()).publishedModelId, publishedId, '切换不能把新选择的模型视为已发布');
+    db.close();
+  }
+}
+
+// 自动开关不影响显式单张操作，手动语义拥有优先于在途识别结果的提交资格。
+const policy = createStickerHarness();
+policy.activate();
+await systemModelsModule.setStickerRecognitionModel(RECOGNITION_MODEL_ID);
+assert.equal((await systemModelsModule.getStickerSystemConfig()).automaticRecognitionEnabled, false);
+for (const id of ['a-manual', 'b-before', 'c-edit', 'd-name', 'e-retry']) {
+  seedMediaAsset(policy.db, `asset-${id}`);
+  seedSticker(policy.db, { id, mediaAssetId: `asset-${id}`, name: id, annotationStatus: 'pending' });
+}
+assert.equal(await commandsModule.claimStickerAnnotation(), null, '配置模型不等于开启自动识别');
+await commandsModule.retryStickerAnnotation('a-manual');
+const manualClaim = await commandsModule.claimStickerAnnotation();
+assert.equal(manualClaim.manual, true, '关闭自动识别时仍允许显式单张请求');
+await commandsModule.completeStickerAnnotation({ stickerId: manualClaim.sticker.id, claimId: manualClaim.claimId, metadata: { description: '手动请求结果' } });
+assert.equal(await commandsModule.claimStickerAnnotation(), null, '单张请求不能连带处理其他 pending');
+await systemModelsModule.setStickerRecognitionModel(null);
+await commandsModule.editStickerMetadata('b-before', { description: '未配置模型时用户手填的描述' });
+await systemModelsModule.setStickerRecognitionModel(RECOGNITION_MODEL_ID);
+await systemModelsModule.setStickerAutomaticRecognitionEnabled(true);
+const disabledClaim = await commandsModule.claimStickerAnnotation();
+assert.equal(disabledClaim.sticker.id, 'c-edit', '重新配置模型和开启自动识别不能覆盖已手填的旧图');
+assert.equal(disabledClaim.manual, false);
+await systemModelsModule.setStickerAutomaticRecognitionEnabled(false);
+await assert.rejects(commandsModule.completeStickerAnnotation({ stickerId: disabledClaim.sticker.id, claimId: disabledClaim.claimId,
+  metadata: { description: '关闭开关后的旧结果' } }), /claim/);
+assert.equal(await commandsModule.claimStickerAnnotation(), null);
+await systemModelsModule.setStickerAutomaticRecognitionEnabled(true);
+const editedClaim = await commandsModule.claimStickerAnnotation();
+await commandsModule.editStickerMetadata(editedClaim.sticker.id, { description: '用户亲自填写的描述' });
+await assert.rejects(commandsModule.completeStickerAnnotation({ stickerId: editedClaim.sticker.id, claimId: editedClaim.claimId,
+  metadata: { description: '迟到的模型描述' } }), /claim/);
+assert.equal((await policy.repository.getStickerById(editedClaim.sticker.id)).description, '用户亲自填写的描述');
+assert.equal((await policy.repository.getStickerById(editedClaim.sticker.id)).annotationStatus, 'ready');
+await commandsModule.editStickerMetadata('d-name', { name: '只改名称也应停止自动覆盖' });
+assert.equal((await policy.repository.getStickerById('d-name')).annotationStatus, 'manual_required');
+const remaining = await commandsModule.claimStickerAnnotation();
+assert.equal(remaining.sticker.id, 'e-retry', '人工修改项不再被自动领取');
+await commandsModule.failStickerAnnotation({ stickerId: remaining.sticker.id, claimId: remaining.claimId, error: '请求失败' });
+await systemModelsModule.setStickerAutomaticRecognitionEnabled(false);
+await commandsModule.retryStickerAnnotation('e-retry');
+const oneRetry = await commandsModule.claimStickerAnnotation();
+await commandsModule.failStickerAnnotation({ stickerId: oneRetry.sticker.id, claimId: oneRetry.claimId, error: '单张仍失败' });
+assert.equal(await commandsModule.claimStickerAnnotation(), null, '手动失败仍需用户再次操作，不自动循环');
+policy.db.close();
+
+// 切回同一模型版本时保留39条有效旧索引，显式补齐只请求新增的第40张。
+const retainedIndex = createStickerHarness();
+retainedIndex.activate();
+await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ID);
+for (let index = 0; index < 40; index++) {
+  const id = `retained-${index}`;
+  seedMediaAsset(retainedIndex.db, `asset-${id}`);
+  seedSticker(retainedIndex.db, { id, mediaAssetId: `asset-${id}`, name: id });
+  if (index < 39) seedEmbedding(retainedIndex.db, { stickerId: id, modelConfigId: EMBEDDING_MODEL_ID,
+    modelConfigUpdatedAt: MODEL_UPDATED_AT, vector: [1, 0, 0] });
+}
+const old39 = retainedIndex.db.prepare("SELECT * FROM sticker_embeddings ORDER BY sticker_id").all();
+await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ALT_ID);
+assert.equal((await processingModule.getStickerProcessingProgress()).embeddingCanBackfill, false, '其他模型的旧索引不能用于补齐');
+await assert.rejects(embeddingsModule.backfillMissingStickerEmbeddings(), /没有可恢复/);
+await systemModelsModule.setStickerEmbeddingModel(null);
+await systemModelsModule.setStickerEmbeddingModel(EMBEDDING_MODEL_ID);
+const backToOriginal = await processingModule.getStickerProcessingProgress();
+assert.equal(backToOriginal.items.filter(item => item.hasEmbedding).length, 39);
+assert.equal(backToOriginal.embeddingCanBackfill, true);
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 0 }, '恢复旧维护资格之前不隐式请求');
+await embeddingsModule.backfillMissingStickerEmbeddings('retained-39');
+assert.deepEqual(await embeddingsModule.generateStickerEmbeddingBatch(), { embeddedCount: 1 });
+assert.deepEqual(retainedIndex.db.prepare("SELECT * FROM sticker_embeddings WHERE sticker_id <> 'retained-39' ORDER BY sticker_id").all(), old39);
+assert.equal(retainedIndex.embeddingRequests.calls, 1);
+const originalModel = modelConfigs.get(EMBEDDING_MODEL_ID);
+modelConfigs.set(EMBEDDING_MODEL_ID, { ...originalModel, updatedAt: '2026-11-01T00:00:00.000Z' });
+assert.equal((await processingModule.getStickerProcessingProgress()).embeddingCanBackfill, false, '同一ID的不同模型版本不能复用旧索引');
+await assert.rejects(embeddingsModule.backfillMissingStickerEmbeddings(), /没有可恢复/);
+modelConfigs.set(EMBEDDING_MODEL_ID, originalModel);
+retainedIndex.db.close();
+
+// 163 升级保护已手填却仍处于 pending 的旧数据，不变更语义版本与已有向量。
+{
+  const db = createCurrentDatabase();
+  db.exec(`UPDATE stickers SET annotation_status = 'pending', description = '升级前已手填', semantic_revision = 2 WHERE id = 'sticker-1';
+    ALTER TABLE stickers DROP COLUMN annotation_requested;
+    ALTER TABLE sticker_system_config DROP COLUMN automatic_recognition_enabled;
+    PRAGMA user_version = 162;`);
+  await runMigrations(createAdapter(db));
+  const protectedRow = db.prepare("SELECT * FROM stickers WHERE id = 'sticker-1'").get();
+  assert.equal(protectedRow.annotation_status, 'ready');
+  assert.equal(protectedRow.description, '升级前已手填');
+  assert.equal(protectedRow.semantic_revision, 2);
+  db.close();
+}
 
 console.log('verify:stickers-v2 全部通过');

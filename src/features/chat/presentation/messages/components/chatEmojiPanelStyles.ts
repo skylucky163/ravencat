@@ -14,7 +14,7 @@ export const STICKER_SIZE = Math.max(
 
 export const createChatEmojiPanelStyles = (theme: PresentationTheme) => ({
   container: {
-    backgroundColor: theme.colors.chat.inputBar,
+    backgroundColor: 'transparent',
     borderTopWidth: 0.5,
     borderTopColor: theme.colors.border.default,
   },
@@ -32,23 +32,30 @@ export const createChatEmojiPanelStyles = (theme: PresentationTheme) => ({
     color: theme.colors.text.primary,
   },
   headerAction: {
-    flexDirection: 'row' as const,
+    width: 30,
+    height: 30,
     alignItems: 'center' as const,
-    gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 5,
+    justifyContent: 'center' as const,
     borderRadius: 6,
     backgroundColor: theme.colors.surface.default,
   },
-  headerActionText: {
+  headerTextAction: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: theme.colors.surface.default,
+  },
+  headerTextActionText: {
     fontSize: 12,
     color: theme.colors.text.secondary,
   },
-  headerActionActive: {
-    backgroundColor: theme.colors.brand.primary,
+  batchDeleteText: {
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: theme.colors.feedback.error,
   },
-  headerActionTextActive: {
-    color: theme.colors.brand.onPrimary,
+  headerActionDisabled: {
+    opacity: 0.4,
   },
   filterScroll: {
     maxHeight: 36,
@@ -128,16 +135,12 @@ export const createChatEmojiPanelStyles = (theme: PresentationTheme) => ({
     right: 3,
     top: 3,
   },
-  manageMark: {
+  selectionMark: {
     position: 'absolute' as const,
-    left: 3,
-    top: 3,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    justifyContent: 'center' as const,
-    alignItems: 'center' as const,
-    backgroundColor: theme.colors.brand.primary,
+    left: 1,
+    top: 1,
+    borderRadius: 11,
+    backgroundColor: theme.colors.surface.default,
   },
   emptyState: {
     paddingVertical: 24,

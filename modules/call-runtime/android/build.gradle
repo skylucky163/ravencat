@@ -10,6 +10,7 @@ android {
   testOptions { unitTests { includeAndroidResources = true } }
 }
 dependencies {
+  implementation project(':background-runtime')
   implementation project(':call-ringtone')
   implementation project(':android-overlay-runtime')
   implementation 'androidx.core:core-telecom:1.0.0'

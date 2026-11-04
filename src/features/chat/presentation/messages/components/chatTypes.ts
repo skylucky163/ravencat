@@ -1,6 +1,8 @@
 /** 定义聊天详情展示层的助手配置、回复引用类型及配置转换。 */
 
-import type { ChatReplyTarget } from '../../../messages/domain/chatMessageMetadata';
+import { createChatReplyTarget as createReplySnapshot, parseMessageMetadata, type ChatReplyTarget } from '../../../messages/domain/chatMessageMetadata';
+import type { ChatMessage } from '../../../messages/domain/ChatMessage';
+import { getAssistantDisplayName } from '@features/assistants';
 import type { AIAssistantConfig } from '../../../messages/application/SendUserMessage';
 
 
@@ -40,6 +42,25 @@ export interface ChatDetailAIAssistantLike {
 }
 
 export type ReplyTarget = ChatReplyTarget;
+
+/** 界面名称在引用时固定；按稳定身份找发送者，不能把助理回复标成当前主聊 AI。 */
+export function createChatReplyTarget(
+  message: ChatMessage,
+  assistants: readonly ChatDetailAIAssistantLike[],
+  userName: string,
+  primaryAssistant?: ChatDetailAIAssistantLike | null,
+): ChatReplyTarget {
+  const metadata = parseMessageMetadata(message);
+  const agentId = message.agentId ?? metadata?.helper?.actorAgentId;
+  const assistantId = metadata?.helper?.actorAIId ?? metadata?.helper?.helperAIId;
+  const sender = agentId || assistantId
+    ? assistants.find(assistant => assistant.agentId === agentId || assistant.id === assistantId)
+    : primaryAssistant;
+  const authorName = message.isMe
+    ? metadata?.groupChat?.actorName ?? userName
+    : sender ? getAssistantDisplayName(sender) : metadata?.actorName ?? metadata?.groupChat?.actorName ?? 'AI';
+  return createReplySnapshot(message, assistants.map(assistant => ({ aiAssistantId: assistant.id, name: assistant.name })), authorName);
+}
 
 /**
  * Chat 用户语音录制的 presentation 状态机。

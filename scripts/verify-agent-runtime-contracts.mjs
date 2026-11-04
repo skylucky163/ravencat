@@ -236,9 +236,11 @@ const builtInTools = [
   ...[
     ['get_user_avatar', 'profile', false, false], ['get_ai_avatar', 'assistants', false, false],
     ['get_group_avatar', 'chat', false, false],
+    ['get_own_space_cover', 'assistants', false, false],
     ['get_chat_background', 'profile', false, false], ['get_call_background', 'calls', false, false],
     ['get_global_background', 'profile', true, false], ['get_moments_cover', 'profile', false, false],
     ['set_ai_avatar', 'assistants', false, true], ['set_chat_background', 'profile', false, true],
+    ['set_own_space_cover', 'assistants', false, true],
     ['set_call_background', 'calls', false, true], ['set_user_avatar', 'profile', true, true],
     ['set_moments_cover', 'profile', true, true], ['set_global_background', 'profile', true, true],
     ['set_ai_name', 'assistants', false, true],
@@ -262,10 +264,13 @@ const builtInTools = [
   { module: '@features/moments', symbol: 'AIDeleteOwnMomentTool', name: 'aiDeleteOwnMoment', owner: 'moments', ...REVERSIBLE_WRITE },
   { module: '@features/moments', symbol: 'AIDeleteOwnMomentCommentTool', name: 'aiDeleteOwnMomentComment', owner: 'moments', ...REVERSIBLE_WRITE },
   { module: '@features/wallet', symbol: 'GetLedgerContextTool', name: 'getLedgerContext', owner: 'wallet', ...PRIVATE_READ },
-  { module: '@features/wallet', symbol: 'SearchLedgerTool', name: 'searchLedger', owner: 'wallet', ...PRIVATE_READ },
   { module: '@features/wallet', symbol: 'AddLedgerRecordTool', name: 'addLedgerRecord', owner: 'wallet', ...REVERSIBLE_ACTION },
   { module: '@features/wallet', symbol: 'UpdateLedgerRecordTool', name: 'updateLedgerRecord', owner: 'wallet', ...REVERSIBLE_ACTION },
   { module: '@features/wallet', symbol: 'DeleteLedgerRecordTool', name: 'deleteLedgerRecord', owner: 'wallet', ...REVERSIBLE_ACTION },
+  { module: '@features/wallet', symbol: 'CreateLedgerQuickActionTool', name: 'createLedgerQuickAction', owner: 'wallet', ...REVERSIBLE_ACTION },
+  { module: '@features/wallet', symbol: 'UpdateLedgerQuickActionTool', name: 'updateLedgerQuickAction', owner: 'wallet', ...REVERSIBLE_ACTION },
+  { module: '@features/wallet', symbol: 'DeleteLedgerQuickActionTool', name: 'deleteLedgerQuickAction', owner: 'wallet', ...REVERSIBLE_ACTION },
+  { module: '@features/wallet', symbol: 'UseLedgerQuickActionTool', name: 'useLedgerQuickAction', owner: 'wallet', ...REVERSIBLE_ACTION },
   { module: '@features/calls', symbol: 'RequestVideoCallTool', name: 'requestVideoCall', owner: 'calls', ...EXTERNAL_SIDE_EFFECT },
   { module: '@features/calls', symbol: 'LookAtUserTool', name: 'lookAtUser', owner: 'calls', ...SENSITIVE_ACTION },
   { module: '@features/memory', symbol: 'RememberMemoryTool', name: 'remember_memory', owner: 'memory', ...REVERSIBLE_WRITE },
@@ -309,6 +314,7 @@ const builtInTools = [
   { module: '@features/chat', symbol: 'EditPrimarySummaryTool', name: 'edit_primary_summary', owner: 'chat', ...REVERSIBLE_WRITE },
   { module: '@features/chat', symbol: 'DeletePrimarySummaryTool', name: 'delete_primary_summary', owner: 'chat', ...REVERSIBLE_WRITE },
   { module: '@features/chat', symbol: 'SendVoiceMessageTool', name: 'send_voice_message', owner: 'chat', ...EXTERNAL_SIDE_EFFECT },
+  { module: './ShareMomentTool', symbol: 'ShareMomentTool', name: 'share_moment', owner: 'moments', ...EXTERNAL_SIDE_EFFECT },
   { module: '@features/chat', symbol: 'SendImageTool', name: 'send_image', owner: 'chat', ...EXTERNAL_SIDE_EFFECT },
   { module: '@features/stickers', symbol: 'SearchStickersTool', name: 'search_stickers', owner: 'stickers', ...SAFE_READ },
   { module: '@features/stickers', symbol: 'ListStickerGroupsTool', name: 'list_sticker_groups', owner: 'stickers', ...SAFE_READ },
@@ -361,6 +367,7 @@ for (const tool of builtInTools) {
     || tool.module === '@features/memory'
     || tool.module === './ApplicationSettingsTools'
     || tool.module === './GroupManagementTools'
+    || tool.module === './ShareMomentTool'
     || tool.symbol === 'SendVoiceMessageTool'
     || tool.symbol === 'SendImageTool'
     || tool.symbol === 'SearchChatSummariesTool'

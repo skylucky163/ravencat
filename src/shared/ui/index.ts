@@ -17,6 +17,8 @@ export { default as DropdownField } from './DropdownField';
 export { default as GroupAvatar } from './GroupAvatar';
 export { default as InputField } from './InputField';
 export { default as AppTextInput } from './AppTextInput';
+export { default as ShareSheet } from './ShareSheet';
+export type { ShareSheetTarget } from './ShareSheet';
 export type { AppTextInputProps } from './AppTextInput';
 export { default as KeyboardAvoidingContainer } from './KeyboardAvoidingContainer';
 export type { KeyboardAvoidingContainerProps } from './KeyboardAvoidingContainer';

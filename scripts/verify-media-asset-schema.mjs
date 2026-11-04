@@ -70,7 +70,7 @@ db.exec(MEDIA_ASSET_CONTENT_HASH_INDEX);
 insertAsset(db);
 insertAsset(db, {
   id: 'media-2',
-  storageBackend: 'native-bubble-skin',
+  storageBackend: 'persistent-image',
   storageKey: 'skins/media-2.webp',
   status: 'missing',
 });

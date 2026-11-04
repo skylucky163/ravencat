@@ -31,11 +31,17 @@ const fakeReactNative = {
 };
 
 const JPEG = Uint8Array.from([255, 216, 255, 0, 0]);
-const PNG = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+const PNG = new Uint8Array(33);
+PNG.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
 const GIF = Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0, 0]);
 const WEBP = Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0, 0, 0, 0, 0, 0, 0, 0]);
 function seed(uri, bytes, width, height) {
-  files.set(uri, bytes);
+  const encoded = Uint8Array.from(bytes);
+  if (encoded[0] === 137) {
+    const header = new DataView(encoded.buffer);
+    header.setUint32(16, width); header.setUint32(20, height);
+  }
+  files.set(uri, encoded);
   dimensions.set(uri, { width, height });
 }
 

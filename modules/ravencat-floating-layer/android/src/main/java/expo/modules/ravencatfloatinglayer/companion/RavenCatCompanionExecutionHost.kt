@@ -2,8 +2,9 @@ package expo.modules.ravencatfloatinglayer.companion
 
 import android.content.Context
 import android.util.Log
+import expo.modules.backgroundruntime.BackgroundRuntime
 import expo.modules.ravencatfloatinglayer.RavenCatCompanionWakeEvent
-import expo.modules.ravencatfloatinglayer.RavenCatCompanionWakeHeadlessTaskService
+import expo.modules.backgroundruntime.ApplicationExecutionHost
 import expo.modules.ravencatfloatinglayer.RavenCatCompanionWakeStore
 import expo.modules.ravencatfloatinglayer.AIScheduleDiagnosticStage
 import java.util.concurrent.ConcurrentHashMap
@@ -15,9 +16,9 @@ import java.util.concurrent.TimeUnit
  *
  * 所有权：
  * - 本次 wake delivery 的执行生命周期（从「取得 native dispatch 权」到「autonomous run 到达终态」）；
- * - 执行期的有界前台执行（只在真正执行时存在，见 [RavenCatCompanionExecutionService]）；
- * - Headless JS 启动请求；
- * - Headless 完成回执的等待与超时收口。
+ * - 等待与取消本次执行；持续前台保障由应用总开关独立拥有；
+ * - 向共享应用宿主提交执行请求；
+ * - 业务完成回执的等待与超时收口。
  *
  * 不拥有：SQLite 业务真相、claim / consume、AI Agent Runtime。
  *
@@ -25,15 +26,14 @@ import java.util.concurrent.TimeUnit
  * （`RavenCatCompanionWakeStore` 按 `deliveryEventId` 持有）。本宿主只**写入**
  * 取消请求，从不删除它——删除等于让一个已被取消的 delivery 复活。
  *
- * 关键不变量：执行宿主必须比它启动的 Headless JS 活得更久，直到 runner 回报终态；
- * 不得在 JS 仍可能运行时提前宣告成功并释放唯一执行保障。执行期是否需要前台执行
- * 只影响执行质量，不影响本次 wake 是否会完成。
+ * 关键不变量：Worker 等到 runner 回报终态才能宣告成功；超时必须记录取消与实际结果。
+ * 本层不启停应用总服务；总开关关闭时，只能尽力使用 Worker 的系统执行窗口。
  */
 internal enum class RavenCatCompanionExecutionOutcome {
   /** JS runner 已回执终态（成功或失败都算终态）。 */
   COMPLETED,
 
-  /** 无法把 wake 交给 Headless JS；保留既有 pending 恢复路径。 */
+  /** 应用宿主未接受 wake；保留既有 pending 恢复路径。 */
   START_REJECTED,
 
   /** 有界等待耗尽，runner 未回执终态。 */
@@ -53,52 +53,40 @@ internal enum class RavenCatCompanionExecutionOutcome {
 
 /** execution host 与 Android 平台之间的窄端口；测试可替换为纯内存实现。 */
 internal interface RavenCatCompanionExecutionPort {
-  /**
-   * 为本次 delivery 请求建立前台执行。
-   *
-   * 返回 true 只表示「startForegroundService 请求已被接受」；
-   * `startForeground` 是否真正建立要看 [isExecutionForegroundRunning]。
-   */
-  fun requestExecutionForeground(
-    context: Context,
-    deliveryEventId: String,
-    executionContext: String,
-  ): Boolean
+  /** 只读应用级保障；日程无权启动、停止或改写总开关。 */
+  fun isApplicationBackgroundRunning(context: Context): Boolean
 
-  /** 释放本次 delivery 的前台执行；必须幂等。 */
-  fun stopExecutionForeground(context: Context, deliveryEventId: String)
-
-  /** 当前执行期前台是否真实建立（`startForeground` 已成功）。 */
-  fun isExecutionForegroundRunning(context: Context): Boolean
-
-  /** 请求启动 Headless JS；返回 false 表示这次 wake 没有交给 JS。 */
-  fun startHeadless(context: Context, event: RavenCatCompanionWakeEvent): Boolean
+  /** 提交应用宿主请求；返回 false 表示原生信箱未接受这次 wake。 */
+  fun dispatchExecution(context: Context, event: RavenCatCompanionWakeEvent): Boolean
 
   /** 请求 runner 取消当前 delivery 的 autonomous 执行；超时收口路径使用。 */
-  fun cancelHeadlessExecution(context: Context, deliveryEventId: String)
+  fun cancelExecution(context: Context, deliveryEventId: String)
 }
 
 internal object RavenCatCompanionAndroidExecutionPort : RavenCatCompanionExecutionPort {
-  override fun requestExecutionForeground(
-    context: Context,
-    deliveryEventId: String,
-    executionContext: String,
-  ): Boolean = RavenCatCompanionExecutionService.start(context, deliveryEventId, executionContext)
+  override fun isApplicationBackgroundRunning(context: Context): Boolean = BackgroundRuntime.isRunning
 
-  override fun stopExecutionForeground(context: Context, deliveryEventId: String) =
-    RavenCatCompanionExecutionService.stop(context, deliveryEventId)
-
-  override fun isExecutionForegroundRunning(context: Context): Boolean =
-    RavenCatCompanionExecutionService.isForegroundRunning
-
-  override fun startHeadless(context: Context, event: RavenCatCompanionWakeEvent): Boolean {
-    val accepted = RavenCatCompanionWakeHeadlessTaskService.start(context, event)
+  override fun dispatchExecution(context: Context, event: RavenCatCompanionWakeEvent): Boolean {
+    RavenCatCompanionWakeStore.recordHeadlessTaskStartRequested(context, event)
+    val accepted = ApplicationExecutionHost.post(context, "companion", mapOf(
+        "wakeReason" to event.wakeReason, "source" to event.source, "eventId" to event.eventId,
+        "createdAtEpochMs" to event.createdAtEpochMs.toDouble(), "scheduleRevision" to event.scheduleRevision.toDouble(),
+        "hostAIId" to event.hostAIId, "triggerKind" to event.triggerKind,
+        "expectedRemindAtEpochMs" to event.expectedRemindAtEpochMs?.toDouble(),
+        "projectionToken" to event.projectionToken, "deliveryEventId" to event.deliveryEventId,
+      ), 660_000L)
+    if (accepted) {
+      RavenCatCompanionWakeStore.recordHeadlessTaskStartAccepted(context, event)
+    } else {
+      RavenCatCompanionWakeStore.recordHeadlessTaskStartFailed(context, event, "应用宿主未接受执行请求")
+      RavenCatCompanionWakeStore.recordPending(context, event)
+    }
     // 进程内 JS 观察者只是附加观察面；它是否存在不参与执行结果判定。
     RavenCatCompanionWakeDispatcher.notifyBridge(event)
     return accepted
   }
 
-  override fun cancelHeadlessExecution(context: Context, deliveryEventId: String) =
+  override fun cancelExecution(context: Context, deliveryEventId: String) =
     RavenCatCompanionWakeDispatcher.notifyExecutionCancel(deliveryEventId)
 }
 
@@ -157,24 +145,10 @@ internal object RavenCatCompanionExecutionHost {
     RavenCatCompanionWakeStore.recordScheduleDiagnostic(context, deliveryEventId,
       AIScheduleDiagnosticStage.HOST_STARTED, dispatch.event.expectedRemindAtEpochMs)
 
-    RavenCatCompanionWakeStore.recordScheduleDiagnostic(context, deliveryEventId,
-      AIScheduleDiagnosticStage.FOREGROUND_REQUESTED)
-    val foregroundStartRequested = port.requestExecutionForeground(
-      context,
-      deliveryEventId,
-      buildExecutionContext(dispatch),
-    )
-    if (!foregroundStartRequested) {
-      RavenCatCompanionWakeStore.recordScheduleDiagnostic(context, deliveryEventId,
-        AIScheduleDiagnosticStage.FOREGROUND_REJECTED)
-      Log.w(TAG, "companion_execution_host_foreground_start_rejected deliveryEventId=$deliveryEventId")
-    }
-
-    // 诊断必须区分「前台执行请求已投递」与「前台执行真实建立」；
-    // 真值要在释放前读取（释放后恒为 false，不再有信息量）。
+    // 总开关关闭时仍可使用 Worker 的系统执行窗口；日程不另起一份前台服务。
     var foregroundRunning = false
     val outcome = try {
-      if (!port.startHeadless(context, dispatch.event)) {
+      if (!port.dispatchExecution(context, dispatch.event)) {
         RavenCatCompanionExecutionOutcome.START_REJECTED
       } else {
         awaitRunnerTerminal(
@@ -187,9 +161,8 @@ internal object RavenCatCompanionExecutionHost {
         )
       }
     } finally {
-      foregroundRunning = port.isExecutionForegroundRunning(context)
+      foregroundRunning = port.isApplicationBackgroundRunning(context)
       waitingForRunnerCompletion.remove(deliveryEventId)
-      port.stopExecutionForeground(context, deliveryEventId)
     }
 
     RavenCatCompanionWakeStore.recordExecutionOutcome(
@@ -201,7 +174,7 @@ internal object RavenCatCompanionExecutionHost {
     Log.i(
       TAG,
       "companion_execution_host_stopped deliveryEventId=$deliveryEventId " +
-        "outcome=$outcome foregroundStartRequested=$foregroundStartRequested " +
+        "outcome=$outcome " +
         "foregroundRunning=$foregroundRunning",
     )
     return outcome
@@ -256,7 +229,7 @@ internal object RavenCatCompanionExecutionHost {
       "companion_execution_cancel_requested deliveryEventId=$deliveryEventId " +
         "workerStopped=$workerStopped",
     )
-    port.cancelHeadlessExecution(context, deliveryEventId)
+    port.cancelExecution(context, deliveryEventId)
     val completedDuringGrace = try {
       completion.await(cancellationGraceMs, TimeUnit.MILLISECONDS)
     } catch (_: InterruptedException) {
@@ -273,15 +246,6 @@ internal object RavenCatCompanionExecutionHost {
   /** JS runner 回执落盘后唤醒对应 delivery 的执行宿主；没有等待者时是普通 no-op。 */
   fun signalRunnerCompletion(deliveryEventId: String) {
     waitingForRunnerCompletion[deliveryEventId]?.countDown()
-  }
-
-  private fun buildExecutionContext(dispatch: RavenCatCompanionWakeDispatch): String {
-    val event = dispatch.event
-    return if (event.triggerKind == "ai_schedule") {
-      "正在执行一条 AI 日程"
-    } else {
-      "正在执行一次 self wake"
-    }
   }
 
   private const val TAG = "RavenCatCompanionWake"

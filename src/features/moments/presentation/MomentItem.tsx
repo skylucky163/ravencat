@@ -1,10 +1,10 @@
 // 单条朋友圈内容及互动区域。
-// 单条动态组件 - 拆分重构版
 
 import { showAppDialog } from '@shared/ui';
 import React, { useState, useCallback, useMemo, useRef, memo } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
-import { MapPin } from 'lucide-react-native';
+import { MapPin, Share2 } from 'lucide-react-native';
+import { useMomentNavigation } from './MomentNavigation';
 
 import { SELF_USER_PROFILE_ID } from '@features/profile';
 import type { MomentComment, MomentRecord } from './useMoments';
@@ -20,9 +20,10 @@ import {
 import { describeMomentDeleteFailure } from './momentActionFeedback';
 import { describeMomentVisibility } from './MomentAudienceDraft';
 import MomentMediaViewerModal from './MomentMediaViewerModal';
-import MomentMediaImage from './MomentMediaImage';
+import { MediaAssetImage } from '@features/media';
 
 interface MomentItemProps {
+  detail?: boolean;
   item: MomentRecord;
   currentUserId?: string;
   onLike?: (momentId: string) => void;
@@ -40,11 +41,11 @@ interface MomentItemProps {
 }
 
 type RenderedMomentComment = MomentComment & {
-  renderKey: string;
   parentUserName?: string | null;
 };
 
 function MomentItem({
+  detail = false,
   item,
   currentUserId = SELF_USER_PROFILE_ID,
   onLike,
@@ -54,6 +55,7 @@ function MomentItem({
   onDeleteComment,
   onMediaUpdated,
 }: MomentItemProps) {
+  const navigation = useMomentNavigation();
   const theme = useTheme();
   const styles = useMemo(() => createMomentItemStyles(theme), [theme]);
   const [showCommentInput, setShowCommentInput] = useState(false);
@@ -65,7 +67,7 @@ function MomentItem({
   const commentTextRef = useRef('');
 
   // 身份判断必须同时比较 actorType + actorId：只比 id 会让同名/同值的其他 actor 命中。
-  const hasLiked = (item.likes || []).some(
+  const hasLiked = item.likes.some(
     (like) => like.actorType === 'user' && like.actorId === currentUserId
   );
   const isOwnMoment = item.actorType === 'user' && item.actorId === currentUserId;
@@ -74,9 +76,9 @@ function MomentItem({
   // 可见范围只是给作者自己的轻量提示；M6 不提供任何编辑入口（audience 创建后不可变）。
   const visibilityHint = isOwnMoment ? describeMomentVisibility(item.audienceMode) : null;
   const renderedComments = useMemo<RenderedMomentComment[]>(() => {
-    const commentById = new Map((item.comments || []).map((comment) => [comment.id, comment]));
+    const commentById = new Map(item.comments.map((comment) => [comment.id, comment]));
 
-    return (item.comments || []).flatMap((comment) => {
+    return item.comments.flatMap((comment) => {
       const parentComment = comment.parentCommentId
         ? commentById.get(comment.parentCommentId)
         : null;
@@ -86,11 +88,12 @@ function MomentItem({
         ...comment,
         content,
         parentUserName: parentComment?.userName || null,
-        renderKey: comment.id || 'comment',
       }] : [];
     });
   }, [item.comments]);
   const aiComments = renderedComments.filter((comment) => comment.actorType === 'ai');
+  const { assistantId } = item;
+  const authorAvatar = <Avatar actorType={item.actorType} name={item.userName} avatarUrl={item.avatar} />;
   const mediaColumns = item.media.length === 1 ? 1 : item.media.length <= 4 ? 2 : 3;
   const mediaWidth = mediaColumns === 1 ? '100%' : mediaColumns === 2 ? '49%' : '32%';
 
@@ -189,7 +192,16 @@ function MomentItem({
   return (
     <ThemedSurface variant="card" style={styles.container}>
       <View style={styles.avatarContainer}>
-        <Avatar name={item.userName} avatarUrl={item.avatar} />
+        {assistantId ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`打开${item.userName}的个人主页`}
+            onPress={() => navigation.openAssistantProfile(assistantId)}
+            activeOpacity={0.7}
+          >
+            {authorAvatar}
+          </TouchableOpacity>
+        ) : authorAvatar}
       </View>
 
       <View style={styles.contentContainer}>
@@ -209,7 +221,7 @@ function MomentItem({
           </Text>
         ) : null}
 
-        <Text style={styles.content}>{item.content}</Text>
+        {detail ? <Text style={styles.content}>{item.content}</Text> : <TouchableOpacity onPress={() => navigation.openMoment(item.id)} activeOpacity={0.8}><Text style={styles.content}>{item.content}</Text></TouchableOpacity>}
 
         {item.media.length > 0 ? (
           <View style={styles.mediaGrid}>
@@ -220,7 +232,7 @@ function MomentItem({
                 onPress={() => setMediaViewerIndex(index)}
                 activeOpacity={0.9}
               >
-                <MomentMediaImage mediaAssetId={media.mediaAssetId} style={styles.mediaImage} resizeMode="cover" />
+                <MediaAssetImage mediaAssetId={media.mediaAssetId} style={styles.mediaImage} resizeMode="cover" />
               </TouchableOpacity>
             ))}
           </View>
@@ -233,20 +245,20 @@ function MomentItem({
           </View>
         ) : null}
 
-        {((item.likes?.length || 0) > 0 || (item.comments?.length || 0) > 0) && (
+        {(item.likes.length > 0 || item.comments.length > 0) && (
           <View style={styles.interactionContainer}>
-            {(item.likes?.length || 0) > 0 && (
+            {item.likes.length > 0 && (
               <View style={styles.likesRow}>
                 <HeartIcon filled />
-                <Text style={styles.likesText}>{getLikesText(item.likes || [])}</Text>
+                <Text style={styles.likesText}>{getLikesText(item.likes)}</Text>
               </View>
             )}
 
             {renderedComments.length > 0 && (
               <View style={styles.commentsContainer}>
-                {(item.likes?.length || 0) > 0 ? <View style={styles.divider} /> : null}
+                {item.likes.length > 0 ? <View style={styles.divider} /> : null}
 
-                {renderedComments.map((comment, index) => {
+                {renderedComments.map((comment) => {
                   const isOwnComment = comment.actorType === 'user'
                     && comment.actorId === currentUserId;
                   const isAIComment = comment.actorType === 'ai';
@@ -257,7 +269,7 @@ function MomentItem({
                   });
 
                   return (
-                    <View key={comment.renderKey || comment.id || index} style={styles.commentRow}>
+                    <View key={comment.id} style={styles.commentRow}>
                       <TouchableOpacity
                         style={styles.commentContentWrapper}
                         onPress={() => isAIComment && handleReplyToAIComment(comment)}
@@ -295,6 +307,10 @@ function MomentItem({
 
           <TouchableOpacity style={styles.actionButton} onPress={handleComment} activeOpacity={0.7}>
             <CommentIcon />
+          </TouchableOpacity>
+
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="分享时刻" style={[styles.actionButton, styles.shareButton]} onPress={() => navigation.shareMoment(item.id)} activeOpacity={0.7}>
+            <Share2 size={16} strokeWidth={1.5} color={theme.colors.icon.secondary} />
           </TouchableOpacity>
         </View>
       </View>

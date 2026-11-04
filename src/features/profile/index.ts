@@ -5,26 +5,15 @@ export { ProfileFieldScreen } from './presentation/ProfileFieldScreen';
 export { isUserProfileField, type UserProfileField } from './domain/UserProfileField';
 export {
   getCurrentUserProfile,
-  updateCurrentUserAvatar,
-  updateCurrentUserAvatarFromDraft,
   updateCurrentUserMomentsCover,
   clearCurrentUserLegacyCachedMomentsCover,
-  updateCurrentUserProfile,
   subscribeUserProfileUpdated,
   getCurrentUserMomentsCoverImageSelection,
   changeCurrentUserAvatarFromMediaAsset,
   changeCurrentUserMomentsCoverFromMediaAsset,
 } from './composition';
-export { SQLiteUserProfileRepository, userProfileRepository } from './infrastructure/SQLiteUserProfileRepository';
-export {
-  DEFAULT_SELF_USER_NAME,
-  SELF_USER_PROFILE_ID,
-} from './domain/UserProfile';
-export {
-  DEFAULT_USER_AVATAR,
-  DEFAULT_USER_NAME,
-  DEFAULT_USER_PROFILE,
-} from './presentation/userProfileConstants';
+export { userProfileRepository } from './infrastructure/SQLiteUserProfileRepository';
+export { SELF_USER_PROFILE_ID, DEFAULT_USER_PROFILE } from './domain/UserProfile';
 export type { UpdateUserProfileInput, UserProfile } from './domain/UserProfile';
 export type { IUserProfileRepository } from './domain/UserProfileRepository';
 

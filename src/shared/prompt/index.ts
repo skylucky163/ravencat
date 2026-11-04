@@ -34,15 +34,6 @@ export {
   DEFAULT_GROUP_CONTEXT_PRIMARY_LIMIT,
   DEFAULT_GROUP_CONTEXT_SECONDARY_LIMIT,
 } from './contextWindowLimits';
-export {
-  DEFAULT_VISION_OCR_TASK_PROMPT,
-  getDefaultAuxiliaryTaskPrompt,
-} from './auxiliaryTaskPrompts';
-export type { AuxiliaryPromptCapability } from './auxiliaryTaskPrompts';
-export {
-  readAuxiliaryTaskPromptOverride,
-  writeAuxiliaryTaskPromptOverride,
-} from './auxiliaryPromptMetadata';
 export type {
   PromptDefinitionCategory,
   PromptDefinitionContentKind,

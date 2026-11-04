@@ -1,3 +1,4 @@
+import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 /** 群聊附件行为：保护可解析文件边界、消息提交、管理员隔离与通用附件输入组装。 */
 
 import assert from 'node:assert/strict';
@@ -41,9 +42,9 @@ async function loadSendGroupUserMessage() {
     read('src/features/chat/messages/domain/ChatSticker.ts'),
   );
   const metadataUrl = transpileToModuleUrl(
-    read('src/features/chat/messages/domain/chatMessageMetadata.ts')
+    read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`)
       .replace(/from ['"]\.\/SharedChatRecord['"]/g,
-        `from '${transpileToModuleUrl(read('src/features/chat/messages/domain/SharedChatRecord.ts'))}'`)
+        `from '${sharedChatRecordModuleUrl}'`)
       .replace(/from ['"]\.\/ChatSticker['"]/g, `from '${chatStickerUrl}'`),
   );
   // 事务协调器桩：本测试只关心消息事实与 metadata，事务直接透传。
@@ -130,9 +131,9 @@ async function loadBuildChatBatchAIInput() {
     read('src/features/chat/messages/domain/ChatSticker.ts'),
   );
   const metadataUrl = transpileToModuleUrl(
-    read('src/features/chat/messages/domain/chatMessageMetadata.ts')
+    read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`)
       .replace(/from ['"]\.\/SharedChatRecord['"]/g,
-        `from '${transpileToModuleUrl(read('src/features/chat/messages/domain/SharedChatRecord.ts'))}'`)
+        `from '${sharedChatRecordModuleUrl}'`)
       .replace(/from ['"]\.\/ChatSticker['"]/g, `from '${chatStickerUrl}'`),
   );
   const imageInputUrl = transpileToModuleUrl(`
@@ -146,13 +147,13 @@ async function loadBuildChatBatchAIInput() {
       };
     }
   `);
-  const source = read('src/features/chat/reply/application/BuildChatBatchAIInput.ts')
+  const source = read('src/features/chat/reply/application/BuildChatBatchAIInput.ts').replaceAll("from '../../messages/domain/SharedMoment'", `from '${sharedMomentModuleUrl}'`).replaceAll("from '../../messages/domain/chatMessageMetadata'", `from '${metadataUrl}'`)
     .replace(/from ['"]\.\/ChatReplyRuntimeDependencies['"]/g,
       `from '${transpileToModuleUrl('export function getChatReplyRuntimeDependencies() { return { prompt: { readImageGroundingReminder: async () => null } }; }')}'`)
     .replace(/from ['"]@features\/media['"]/g,
       `from '${transpileToModuleUrl('export function mediaImageFailure() { return null; }')}'`)
     .replace(/from ['"]\.\.\/\.\.\/messages\/domain\/SharedChatRecord['"]/g,
-      `from '${transpileToModuleUrl(read('src/features/chat/messages/domain/SharedChatRecord.ts'))}'`)
+      `from '${sharedChatRecordModuleUrl}'`)
     .replace(
       /from ['"]@features\/chat\/messages\/domain['"]/g,
       `from '${metadataUrl}'`,

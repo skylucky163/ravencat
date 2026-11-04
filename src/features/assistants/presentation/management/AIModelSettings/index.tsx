@@ -20,14 +20,13 @@ import MaxTokensSection from './MaxTokensSection';
 
 import { createModelSettingsStyles } from './styles';
 import { createCommonStyles } from '@shared/ui/commonStyles';
-import CopyToGeneralModel from '../../auxiliaryModels/CopyToGeneralModel';
+import ServiceConnectionPicker from '../../auxiliaryModels/ServiceConnectionPicker';
 
 interface AIModelSettingsProps {
   aiAssistant: AIProfile;
   onBack: () => void;
   onUpdated?: (updatedAI: Partial<AIProfile>) => void;
-  auxiliaryModelSettings: (navigate: (action: () => void) => void) => ReactNode;
-  onManageVoiceModels(): void;
+  auxiliaryModelSettings: ReactNode;
 }
 
 /**
@@ -41,7 +40,6 @@ export default function AIModelSettings({
   onBack,
   onUpdated,
   auxiliaryModelSettings,
-  onManageVoiceModels,
 }: AIModelSettingsProps) {
   const theme = useTheme();
   const styles = useMemo(() => createModelSettingsStyles(theme), [theme]);
@@ -87,13 +85,13 @@ export default function AIModelSettings({
     handleSelectModel,
     handleTestConnection,
     handleHostAIToggle,
-    errors, saveError, commit, flush, restore, getSnapshot, validateAll,
+    fillServiceConnection,
+    errors, saveError, commit, flush, restore, getSnapshot,
     handleReset,
   } = useModelSettings({ aiAssistant, onUpdated, onShowAlert: showAlert });
 
   const feedback = useAutoSaveFeedback(errors);
-  const { leave, back } = useAutoSaveNavigation(flush, onBack, () => feedback.revealErrors(getSnapshot().errors));
-  const navigate = (action: () => void) => { void leave(action); };
+  const { back } = useAutoSaveNavigation(flush, onBack, () => feedback.revealErrors(getSnapshot().errors));
   const blur = () => { void commit(); };
   const restoreDraft = () => { void restore().then(() => feedback.setBlocked(false)); };
 
@@ -154,6 +152,10 @@ export default function AIModelSettings({
               autoCapitalize="none"
               inputStyle={styles.borderedInput}
             />
+          </View>
+
+          <View style={styles.section}>
+            <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} onFill={fillServiceConnection} disabled={isTesting || isLoadingModels} />
           </View>
 
           {/* 模型选择 + 测试连接 */}
@@ -249,18 +251,9 @@ export default function AIModelSettings({
             />
           </View>
 
-          <View style={styles.section}>
-            <CopyToGeneralModel readConfig={() => {
-              const config = validateAll();
-              if (!config) { feedback.revealErrors(getSnapshot().errors); return null; }
-              return { apiBaseUrl: config.apiBaseUrl!, apiKey: config.apiKey!, model: config.model!,
-                temperature: config.temperature!, topP: config.topP!, maxTokens: config.maxTokens! };
-            }} />
-          </View>
-
           <View style={[styles.section, styles.sectionLightBorder]}>
-            {auxiliaryModelSettings(navigate)}
-            <AssistantVoiceModelPicker assistantId={aiAssistant.id} onManageModels={() => navigate(onManageVoiceModels)} />
+            {auxiliaryModelSettings}
+            <AssistantVoiceModelPicker assistantId={aiAssistant.id} />
           </View>
 
         </ScrollView>

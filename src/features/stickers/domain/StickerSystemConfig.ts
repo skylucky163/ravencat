@@ -9,7 +9,6 @@ export interface StickerModelConfigRef {
   id: string;
   capabilityKind: string;
   name: string;
-  enabled: boolean;
   baseUrl: string;
   apiKey: string | null;
   model: string;
@@ -23,6 +22,7 @@ export interface StickerModelConfigRef {
 export type StickerModelRequirementKind = 'ocr' | 'embedding';
 
 export interface StickerSystemConfig {
+  automaticRecognitionEnabled: boolean;
   recognitionModelConfigId: string | null;
   embeddingModelConfigId: string | null;
   updatedAt: string;
@@ -32,7 +32,7 @@ export interface StickerSystemConfig {
 export type StickerModelSelectionStatus =
   | 'unconfigured'
   | 'active'
-  | 'disabled'
+  | 'incomplete'
   | 'deleted'
   | 'capability_mismatch';
 
@@ -58,8 +58,8 @@ function rejectedSelection(
 
 /**
  * 把「已绑定的 modelConfigId + 当前读到的配置」判定成展示状态。
- * 与 resolver 共用同一套规则：必须存在、必须 enabled、capabilityKind 必须匹配；
- * 三种失效原因分别落到 deleted / disabled / capability_mismatch，便于 UI 与
+ * 与 resolver 共用同一套规则：必须存在、连接完整且 capabilityKind 匹配；
+ * 三种失效原因分别落到 deleted / incomplete / capability_mismatch，便于 UI 与
  * verifier 区分“模型不存在”和“模型存在但不可用”。
  */
 export function evaluateStickerModelSelection(
@@ -71,7 +71,7 @@ export function evaluateStickerModelSelection(
     return { modelConfigId: null, status: 'unconfigured', name: null, model: null };
   }
   if (!config) return rejectedSelection(modelConfigId, 'deleted');
-  if (!config.enabled) return rejectedSelection(modelConfigId, 'disabled');
+  if (!config.baseUrl.trim() || !config.apiKey?.trim() || !config.model.trim()) return rejectedSelection(modelConfigId, 'incomplete');
   if (config.capabilityKind !== requirement) {
     return rejectedSelection(modelConfigId, 'capability_mismatch');
   }
@@ -84,7 +84,7 @@ export function evaluateStickerModelSelection(
 }
 
 /**
- * Sticker-owned 模型解析规则：必须存在、必须 enabled、capabilityKind 必须匹配。
+ * Sticker-owned 模型解析规则：必须存在、连接完整且 capabilityKind 匹配。
  * 只读取 Sticker 自有选择，不读取其他 Feature 的模型设置。
  * 未配置或失效时返回 null，调用方据此保持待机而不是循环刷错误。
  */

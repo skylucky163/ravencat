@@ -1,3 +1,4 @@
+import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 /** 群 AI 自然 @ 解析与结构化 mention metadata 的行为验证。 */
 
 import assert from 'node:assert/strict';
@@ -28,9 +29,9 @@ const stickerModuleUrl = transpileToModuleUrl(`
     return Boolean(metadata?.kind === 'sticker' && metadata.sticker);
   }
 `);
-const sharedRecordModuleUrl = transpileToModuleUrl(read('src/features/chat/messages/domain/SharedChatRecord.ts'));
+const sharedRecordModuleUrl = sharedChatRecordModuleUrl;
 const metadataModuleUrl = transpileToModuleUrl(
-  read('src/features/chat/messages/domain/chatMessageMetadata.ts').replace(
+  read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`).replace(
     /from ['"]\.\/ChatSticker['"]/g,
     `from '${stickerModuleUrl}'`,
   ).replace(/from ['"]\.\/SharedChatRecord['"]/g, `from '${sharedRecordModuleUrl}'`),

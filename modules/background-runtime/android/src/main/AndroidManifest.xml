@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <application>
+    <service android:name=".RavenCatBackgroundService" android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="用户显式开启的 RavenCat 持续后台运行，用于跨聊天接收 AI 回复、执行已授权的 Agent 与主动伴随；由独立总开关控制，可随时停止" />
+    </service>
+  </application>
+</manifest>

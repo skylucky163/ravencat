@@ -98,7 +98,7 @@ class IncomingCallActivity : Activity() {
   /** 拒接：显式记录 reject response（同上，不能复用 open intent 的 action），维持无 UI Headless 路径。 */
   private fun handleReject(intent: Intent) {
     NotificationResponseDispatcher.buildResponse(intent, "reject")?.let { response ->
-      NotificationResponseDispatcher.recordForHeadless(applicationContext, response)
+      NotificationResponseDispatcher.recordCallAction(applicationContext, response)
     }
     dismissSurface(intent)
     finish()

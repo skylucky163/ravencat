@@ -27,7 +27,7 @@ type VoiceMessageTranscriptionFailure = Extract<VoiceMessageTranscriptionResult,
 
 export interface VoiceMessageTranscriptionSession {
   acceptAudioChunk(chunk: ArrayBuffer): void;
-  finish(recording: { uri: string; mimeType: string }): Promise<VoiceMessageTranscriptionResult>;
+  finish(): Promise<VoiceMessageTranscriptionResult>;
   cancel(): Promise<void>;
 }
 
@@ -78,13 +78,6 @@ export async function startVoiceMessageTranscription(params: {
     },
     cancel: async () => started.session.close(),
   };
-}
-
-export function transcribeVoiceMessageRecording(
-  session: VoiceMessageTranscriptionSession,
-  recording: { uri: string; mimeType: string },
-): Promise<VoiceMessageTranscriptionResult> {
-  return session.finish(recording);
 }
 
 function classifyFailure(rawError: string): VoiceMessageTranscriptionFailure {

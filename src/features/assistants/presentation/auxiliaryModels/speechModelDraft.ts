@@ -14,8 +14,8 @@ import type { AuxiliaryModelConfig, UpdateAuxiliaryModelConfigInput } from '../.
 import type { DraftCommit, DraftErrors } from '@shared/ui/AutoSaveDraftEditor';
 
 export interface SpeechModelDraft {
+  serviceConfigId: string;
   name: string;
-  enabled: boolean;
   apiKey: string;
   provider: string;
   model: string;
@@ -28,6 +28,7 @@ export function switchSpeechProvider(provider: SpeechProviderId): Partial<Speech
   const definition = getSpeechProvider(provider);
   const next: Partial<SpeechModelDraft> = {
     provider,
+    serviceConfigId: '',
     model: definition.defaultModel,
     baseUrl: definition.baseURL,
     apiKey: '',
@@ -52,8 +53,8 @@ export function getSpeechModelDraft(kind: SpeechKind, config: AuxiliaryModelConf
     const provider = kind === 'stt' ? 'dashscopeRealtimeAsr' : 'minimaxT2aV2';
     return {
       ...parameters,
+      serviceConfigId: '',
       name: getSpeechProvider(provider).label,
-      enabled: true,
       apiKey: '',
       baseUrl: '',
       model: '',
@@ -70,8 +71,8 @@ export function getSpeechModelDraft(kind: SpeechKind, config: AuxiliaryModelConf
   }
   const draft: SpeechModelDraft = {
     ...parameters,
+    serviceConfigId: config.serviceConfigId ?? '',
     name: config.name,
-    enabled: config.enabled,
     apiKey: config.apiKey ?? '',
     baseUrl: config.baseUrl,
     model: config.model,
@@ -140,17 +141,14 @@ export function parseSpeechModelDraft(
         accepted.push(key);
       } else errors.name = '配置名称不能为空';
     }
-    if (key === 'enabled') {
-      patch.enabled = draft.enabled;
-      accepted.push(key);
-    }
     // 清空密钥是明确修改，允许保存为不可用资产，不继承旧密钥。
     if (key === 'apiKey' && (!changingEndpoint || !draft.apiKey.trim())) {
       patch.apiKey = draft.apiKey.trim() || null;
       accepted.push(key);
     }
   }
-  const connectionKeys = changed.filter((key) => !['name', 'enabled', 'apiKey'].includes(String(key)));
+  if (changed.includes('serviceConfigId') && !draft.serviceConfigId) { patch.serviceConfigId = null; accepted.push('serviceConfigId'); }
+  const connectionKeys = changed.filter((key) => !['name', 'apiKey'].includes(String(key)) && !(key === 'serviceConfigId' && !draft.serviceConfigId));
   if (connectionKeys.length) {
     let configuration: SpeechConnectionConfig;
     try {
@@ -163,6 +161,7 @@ export function parseSpeechModelDraft(
       patch.baseUrl = configuration.baseURL;
       patch.model = configuration.model;
       patch.metadataJson = configuration.metadataJson;
+      if (changed.includes('serviceConfigId')) patch.serviceConfigId = draft.serviceConfigId || null;
       // 换提供方时，新密钥必须和新连接一起提交，不能先发往旧提供方。
       if (changed.includes('apiKey') && !accepted.includes('apiKey')) {
         patch.apiKey = configuration.apiKey || null;

@@ -27,14 +27,27 @@
         ├── ai-request-diagnostics
             └── index.tsx
         ├── appearance.tsx
+        ├── assistants
+            ├── [aiId]
+                ├── chat-settings.tsx
+                ├── context-settings.tsx
+                ├── edit.tsx
+                ├── model-settings.tsx
+                └── moments.tsx
+            └── [aiId].tsx
         ├── auxiliary-models
             ├── capabilities
                 └── [kind].tsx
             ├── index.tsx
-            └── models
+            ├── models
                 └── [modelId].tsx
+            └── services
+                ├── [serviceId].tsx
+                └── index.tsx
         ├── backup
             └── index.tsx
+        ├── bubble-skin.tsx
+        ├── bubble-skins.tsx
         ├── calls
             └── [callId].tsx
         ├── chat
@@ -78,6 +91,7 @@
             ├── settings.tsx
             └── trigger.tsx
         ├── moments
+            ├── [momentId].tsx
             ├── publish.tsx
             └── settings.tsx
         ├── navigation-error.tsx
@@ -109,6 +123,7 @@
             ├── index.tsx
             ├── proactive-life.tsx
             └── system-access.tsx
+        ├── sticker-progress.tsx
         ├── sticker-system.tsx
         ├── wallet
             ├── history
@@ -144,8 +159,7 @@
                 ├── AuxiliaryModel.ts
                 ├── AuxiliaryModelRepository.ts
                 ├── HostRepository.ts
-                └── ModelCallConfig.ts
-            ├── GeneralModelCopies.ts
+                └── ModelService.ts
             ├── index.ts
             ├── infrastructure
                 ├── SQLiteAssistantRepository.ts
@@ -153,8 +167,10 @@
                 ├── SQLiteAssistantVoiceSettingsRepository.ts
                 ├── SQLiteAuxiliaryModelDefaults.ts
                 ├── SQLiteAuxiliaryModelRepository.ts
-                └── SQLiteHostRepository.ts
+                ├── SQLiteHostRepository.ts
+                └── SQLiteModelServiceRepository.ts
             ├── ManageAuxiliaryModelConfigs.ts
+            ├── ModelServices.ts
             ├── presentation
                 ├── auxiliaryModels
                     ├── AuxiliaryModelCenterScreen.tsx
@@ -163,9 +179,10 @@
                     ├── AuxiliaryModelNavigator.tsx
                     ├── AuxiliaryModelPoolScreen.tsx
                     ├── constants.ts
-                    ├── CopyToGeneralModel.tsx
-                    ├── GeneralModelPrefill.tsx
                     ├── index.ts
+                    ├── ModelServiceEditScreen.tsx
+                    ├── ModelServiceListScreen.tsx
+                    ├── ServiceConnectionPicker.tsx
                     ├── speechModelDraft.ts
                     ├── SpeechModelEditScreen.tsx
                     ├── styles.ts
@@ -173,7 +190,7 @@
                     ├── TranslationModelEditScreen.tsx
                     └── types.ts
                 ├── HostAIAppointmentDialog.ts
-                └── management
+                ├── management
                     ├── addAIFormHelpers.ts
                     ├── AIModelSettings
                         ├── index.tsx
@@ -199,6 +216,18 @@
                     ├── useAddAIForm.ts
                     ├── useAddAIFormState.ts
                     └── useAddAIModelSelection.ts
+                └── profile
+                    ├── AssistantModelSettingsScreen.tsx
+                    ├── AssistantProfile.styles.ts
+                    ├── assistantProfileDraft.ts
+                    ├── AssistantProfileEditScreen.tsx
+                    ├── AssistantProfilePage.tsx
+                    ├── AssistantProfileScreen.tsx
+                    ├── AssistantSettingsEntries.styles.ts
+                    ├── AssistantSettingsEntries.tsx
+                    ├── AssistantSpaceCover.tsx
+                    ├── useAIAssistantProfile.ts
+                    └── useAssistantProfile.ts
             ├── ResolveAuxiliaryModel.ts
             └── TestAuxiliaryModelConnection.ts
         ├── backup
@@ -314,6 +343,29 @@
                 ├── index.ts
                 └── styles.ts
         ├── chat
+            ├── appearance
+                ├── application
+                    ├── BubbleSkinDraft.ts
+                    └── ChatBubbleSkinRuntime.ts
+                ├── domain
+                    └── ChatBubbleSkin.ts
+                ├── infrastructure
+                    └── SQLiteChatBubbleSkinRepository.ts
+                └── presentation
+                    ├── BubbleDecorationControls.tsx
+                    ├── BubbleDecorationLayer.tsx
+                    ├── BubbleFrameGuides.tsx
+                    ├── BubbleSkinDrawing.tsx
+                    ├── BubbleSkinEditor.styles.ts
+                    ├── BubbleSkinPreview.tsx
+                    ├── BubbleSkinSaveSheet.tsx
+                    ├── ChatBubbleSkinEditorScreen.tsx
+                    ├── ChatBubbleSkinSettings.styles.ts
+                    ├── ChatBubbleSkinSettings.tsx
+                    ├── pickBubbleImage.ts
+                    ├── useBubbleSkinEditor.ts
+                    ├── useChatBubbleSkins.ts
+                    └── useChatBubbleTextColors.ts
             ├── ChatAssistantDirectory.ts
             ├── composition.ts
             ├── conversation
@@ -427,7 +479,9 @@
                     ├── index.ts
                     ├── MessageRepository.ts
                     ├── MessageTimeSeparator.ts
-                    └── SharedChatRecord.ts
+                    ├── SharedChatRecord.ts
+                    ├── SharedContent.ts
+                    └── SharedMoment.ts
                 ├── events
                     └── ChatEvents.ts
                 └── infrastructure
@@ -438,15 +492,21 @@
                 ├── conversation
                     ├── AIOptions.tsx
                     ├── AIOptionsParts.tsx
+                    ├── AssistantChatSettingsScreen.tsx
+                    ├── AssistantContextSettingsScreen.tsx
+                    ├── AssistantConversationPage.tsx
                     ├── ChatImageModelPicker.tsx
                     ├── ChatSettings.tsx
                     ├── chatSettingsDraft.ts
                     ├── chatSettingsStyles.ts
                     ├── ChatStatisticsScreen.tsx
+                    ├── ContextSettings.tsx
+                    ├── contextSettingsDraft.ts
                     ├── ContextWindowSection.tsx
                     ├── FixedChatContextSection.tsx
                     ├── HistoricalGroupsSection.tsx
-                    └── useChatSettings.ts
+                    ├── useChatSettings.ts
+                    └── useContextSettings.ts
                 ├── favorites
                     ├── ChatFavoritesScreen.styles.ts
                     └── ChatFavoritesScreen.tsx
@@ -484,6 +544,7 @@
                         ├── ChatAttachmentComposerTray.tsx
                         ├── ChatBackground.tsx
                         ├── chatBottomAnchorExperiment.ts
+                        ├── ChatContentShareSheet.tsx
                         ├── ChatEmojiPanel.tsx
                         ├── chatEmojiPanelStyles.ts
                         ├── ChatHeader.tsx
@@ -491,6 +552,7 @@
                         ├── ChatInputArea.tsx
                         ├── chatInputLimits.ts
                         ├── chatInputStyles.ts
+                        ├── chatMediaResolutionCache.ts
                         ├── ChatMessageActionMenu.tsx
                         ├── ChatMessageEditor.tsx
                         ├── ChatMessageInlineActions.tsx
@@ -499,11 +561,12 @@
                         ├── chatMessageListState.ts
                         ├── chatMessagePresentation.ts
                         ├── chatMessageRenderUtils.ts
+                        ├── ChatMessageTextSelectionSheet.tsx
                         ├── chatPresentationRun.ts
                         ├── ChatRegenerationConfirm.tsx
                         ├── ChatReplyVersionSheet.tsx
                         ├── ChatSelectionBars.tsx
-                        ├── ChatShareSheet.tsx
+                        ├── ChatShareNavigation.tsx
                         ├── chatStyles.ts
                         ├── ChatToolPanel.tsx
                         ├── chatToolPanelCapability.ts
@@ -517,6 +580,7 @@
                         ├── reasoningExpansionState.ts
                         ├── sessionTimelineCache.ts
                         ├── SharedChatRecordView.tsx
+                        ├── SharedMomentCard.tsx
                         ├── StickerManagementModals.tsx
                         ├── stickerManagementModalStyles.ts
                         ├── TogetherListeningActivityCard.tsx
@@ -524,9 +588,11 @@
                         ├── useAgentTransientTimeline.ts
                         ├── useChatBottomFollow.ts
                         ├── useChatComposerSurface.ts
+                        ├── useChatContentShare.ts
                         ├── useChatFavoriteAction.ts
                         ├── useChatMessageSelection.ts
                         ├── useChatMessageShare.ts
+                        ├── useChatStickerAction.ts
                         ├── useChatTimelineSync.ts
                         └── useMessageHistoryState.ts
                     ├── FilePreview.tsx
@@ -582,6 +648,7 @@
                     ├── ChatStreamingReplyProjector.ts
                     ├── SendImageTool.ts
                     ├── SendVoiceMessageTool.ts
+                    ├── SharedMomentSendIntent.ts
                     └── ToolReplyPresentation.ts
                 ├── application
                     ├── AssistantMessageDelivery.ts
@@ -647,6 +714,7 @@
                 ├── infrastructure
                     └── SQLiteChatSummaryRepository.ts
                 └── presentation
+                    ├── AssistantSummaryRouteScreens.tsx
                     ├── ChatSecondarySummaryScreen.tsx
                     ├── ChatSummaryDiagnostics.tsx
                     ├── ChatSummaryEditorScreen.tsx
@@ -679,7 +747,7 @@
                 ├── CompanionRuntimeDependencies.ts
                 ├── CompanionScreenCapture.ts
                 ├── CompanionSettingsFacade.ts
-                ├── CompanionWakeHeadlessTask.ts
+                ├── ExecuteCompanionWake.ts
                 ├── ExecuteFloatingMessage.ts
                 ├── index.ts
                 ├── ProactiveAgentRunState.ts
@@ -704,6 +772,8 @@
                 ├── SQLiteCompanionStateRepository.ts
                 └── SQLiteProactiveLifeReadRepository.ts
             └── presentation
+                ├── AIScheduleDetail.styles.ts
+                ├── AIScheduleDetailContent.tsx
                 ├── CompanionBlacklistScreen.tsx
                 ├── CompanionControls.tsx
                 ├── CompanionDiagnosticsReport.ts
@@ -712,10 +782,18 @@
                 ├── CompanionSettingsScreen.tsx
                 ├── CompanionSettingsShared.styles.ts
                 ├── CompanionSystemAccessScreen.tsx
+                ├── FragmentMaterial.tsx
+                ├── fragmentTextures.ts
+                ├── proactiveLifeArcGeometry.ts
+                ├── ProactiveLifeArcLights.tsx
+                ├── proactiveLifeCalendar.ts
+                ├── ProactiveLifeCalendarArc.styles.ts
+                ├── ProactiveLifeCalendarArc.tsx
                 ├── ProactiveLifeScreen.styles.ts
                 ├── ProactiveLifeScreen.tsx
                 ├── proactiveLifeViewModel.ts
-                └── useCompanionFloatingBridge.ts
+                ├── useCompanionFloatingBridge.ts
+                └── useProactiveLifeCalendar.ts
         ├── deviceControl
             ├── aiTools
                 ├── OpenAppTool.ts
@@ -756,7 +834,6 @@
                 ├── FloatingLayerFacade.ts
                 ├── FloatingLayerPort.ts
                 ├── FloatingLayerRuntimeDependencies.ts
-                ├── FloatingMessageHeadlessTask.ts
                 └── index.ts
             ├── composition.ts
             ├── domain
@@ -847,11 +924,12 @@
                 ├── MediaAssetLifecycle.ts
                 └── MediaAssetRepository.ts
             ├── index.ts
-            └── infrastructure
-                ├── NativeBubbleSkinAssetBacking.ts
+            ├── infrastructure
                 ├── PersistentMediaAssetBackings.ts
                 ├── SQLiteAIDownloadedImageRepository.ts
                 └── SQLiteMediaAssetRepository.ts
+            └── presentation
+                └── MediaAssetImage.tsx
         ├── memory
             ├── aiTools
                 └── MemoryAgentTools.ts
@@ -873,8 +951,6 @@
                 ├── SQLiteMemoryEntryRepository.ts
                 └── SQLiteMemoryRepository.ts
             └── presentation
-                ├── GalaxyBackground.tsx
-                ├── galaxyStarField.ts
                 ├── MemoryEditorScreen.tsx
                 ├── MemoryEmbeddingModelPicker.tsx
                 ├── MemoryGalaxy.tsx
@@ -885,7 +961,6 @@
                 ├── MemorySettingsScreen.tsx
                 ├── MemorySpacePanel.tsx
                 ├── MemoryTriggerScreen.tsx
-                ├── ShootingStar.tsx
                 ├── SplashOverlay.tsx
                 └── useMemoryManagementSnapshot.ts
         ├── miniPrograms
@@ -930,6 +1005,7 @@
                 ├── MomentMediaRuntime.ts
                 ├── MomentSettings.ts
                 ├── ReadMomentDetail.ts
+                ├── ShareMoment.ts
                 ├── SocialInboxSummary.ts
                 └── UserMomentCommands.ts
             ├── composition.ts
@@ -937,15 +1013,18 @@
                 ├── MomentErrors.ts
                 ├── MomentImageAnalysis.ts
                 ├── MomentLocation.ts
-                └── MomentRepository.ts
+                ├── MomentRepository.ts
+                └── MomentShareSnapshot.ts
             ├── index.ts
             ├── infrastructure
                 └── SQLiteMomentRepository.ts
             ├── presentation
+                ├── AssistantMomentsScreen.tsx
                 ├── index.ts
                 ├── momentActionFeedback.ts
                 ├── MomentAudienceDraft.ts
                 ├── MomentAudienceSelectorModal.tsx
+                ├── MomentDetailScreen.tsx
                 ├── momentItem
                     ├── formatters.ts
                     ├── icons.tsx
@@ -953,8 +1032,8 @@
                     ├── permissions.ts
                     └── styles.ts
                 ├── MomentItem.tsx
-                ├── MomentMediaImage.tsx
                 ├── MomentMediaViewerModal.tsx
+                ├── MomentNavigation.tsx
                 ├── MomentsCoverPreviewModal.tsx
                 ├── MomentsHeader.tsx
                 ├── MomentsSettingsView.tsx
@@ -1028,8 +1107,7 @@
                 ├── ProfileTab.styles.ts
                 ├── ProfileTab.tsx
                 ├── useCurrentUserProfile.ts
-                ├── useProfileAvatar.ts
-                └── userProfileConstants.ts
+                └── useProfileAvatar.ts
         ├── prompting
             ├── application
                 ├── GetPromptCenterSnapshot.ts
@@ -1104,13 +1182,16 @@
                 ├── FishAudioSpeechClient.ts
                 ├── MiniMaxSpeechClient.ts
                 ├── OpenAISpeechClient.ts
+                ├── RealtimeRecognitionSocket.ts
                 ├── speechAudioEncoding.ts
                 ├── SpeechHttpError.ts
                 ├── SpeechProviderOptions.ts
                 ├── SpeechSynthesisGateway.ts
                 ├── SQLiteSpeechSettingsRepository.ts
+                ├── StepfunRealtimeASRClient.ts
                 ├── TencentRealtimeASRClient.ts
-                └── tencentRealtimeASRSignature.ts
+                ├── tencentRealtimeASRSignature.ts
+                └── VolcengineRealtimeASRClient.ts
             ├── presentation
                 ├── SpeechConfigurationTest.tsx
                 └── SpeechRecognitionModelPicker.tsx
@@ -1129,6 +1210,8 @@
                 ├── StickerCommands.ts
                 ├── StickerEmbeddingPendingSignal.ts
                 ├── StickerEmbeddings.ts
+                ├── StickerProcessing.ts
+                ├── StickerProcessingSignal.ts
                 ├── StickerQueries.ts
                 ├── StickerRuntime.ts
                 ├── StickerSearch.ts
@@ -1138,6 +1221,7 @@
                 ├── AIStickerProcessing.ts
                 ├── Sticker.ts
                 ├── StickerEmbedding.ts
+                ├── StickerProcessing.ts
                 ├── StickerRepository.ts
                 ├── StickerSearch.ts
                 └── StickerSystemConfig.ts
@@ -1148,10 +1232,17 @@
             └── presentation
                 └── stickerSystem
                     ├── index.ts
+                    ├── processingStyles.ts
+                    ├── StickerAnnotationStatus.tsx
+                    ├── StickerProcessingScreen.tsx
+                    ├── StickerProcessingSummary.tsx
+                    ├── StickerProgressNavigation.tsx
                     ├── StickerSystemGroupsScreen.tsx
                     ├── StickerSystemLibraryScreen.tsx
                     ├── StickerSystemScreen.tsx
-                    └── styles.ts
+                    ├── StickerThumbnail.tsx
+                    ├── styles.ts
+                    └── useStickerProcessingProgress.ts
         ├── togetherListening
             ├── aiTools
                 ├── InviteListeningTogetherTool.ts
@@ -1187,8 +1278,8 @@
         ├── wallet
             ├── aiTools
                 ├── GetLedgerContextTool.ts
-                ├── LedgerRecordTools.ts
-                └── SearchLedgerTool.ts
+                ├── LedgerQuickActionTools.ts
+                └── LedgerRecordTools.ts
             ├── application
                 ├── AddRecord.ts
                 ├── QueueLedgerAIReply.ts
@@ -1213,21 +1304,17 @@
                         └── PieChart.tsx
                     ├── index.tsx
                     ├── styles.ts
-                    ├── types.ts
                     └── useHistoryDetail.ts
                 ├── historyRoute.ts
                 ├── HistoryScreen
                     ├── components
                         ├── CardList.tsx
-                        ├── DayCard.tsx
-                        ├── EmptyState.tsx
-                        ├── MonthCard.tsx
-                        ├── ViewSwitcher.tsx
-                        └── WeekCard.tsx
+                        ├── HistoryCard.tsx
+                        └── ViewSwitcher.tsx
                     ├── index.tsx
                     ├── styles.ts
-                    ├── types.ts
                     └── useHistoryScreen.ts
+                ├── historyTypes.ts
                 ├── Overview.tsx
                 ├── QuickActionModal.tsx
                 ├── QuickActions.tsx
@@ -1275,15 +1362,16 @@
                 ├── McpRunClientPool.ts
                 ├── registerMcpAgentTools.ts
                 ├── registerMcpToolsForHostRun.ts
+                ├── ShareMomentTool.ts
                 └── ToolPackageExposure.ts
             ├── chatSummaryRepository.ts
             ├── completePendingBackupRestore.ts
             ├── configureAIImageTools.ts
             ├── configureAIRuntime.ts
             ├── configureAuxiliaryModelInitialization.ts
+            ├── configureBackgroundExecutionRuntime.ts
             ├── configureChatRuntime.ts
             ├── configureChatSummaryRuntime.ts
-            ├── configureCompanionHeadlessRuntime.ts
             ├── configureCompanionRuntime.ts
             ├── configureDeviceControlRuntime.ts
             ├── configureFloatingLayerRuntime.ts
@@ -1311,16 +1399,19 @@
             ├── MigrateLegacyAvatarReferences.ts
             └── RebaseRestoredLegacyMedia.ts
         ├── navigation
+            ├── AssistantModelSettingsRouteContent.tsx
             ├── AuxiliaryModelsRouteContent.tsx
             ├── externalNavigation.ts
+            ├── MomentSharingBoundary.tsx
             ├── ProfileRouteContent.tsx
             ├── PromptCenterRouteContent.tsx
             ├── retainedRouteRefreshContract.ts
+            ├── StickerProgressNavigationBoundary.tsx
             ├── useRetainedRouteRefreshRevision.ts
             └── useRootNavigationReady.ts
         ├── notifications
-            ├── CallNotificationActionHeadlessTask.ts
-            └── TogetherListeningNotificationActionHeadlessTask.ts
+            ├── CallNotificationAction.ts
+            └── TogetherListeningNotificationAction.ts
         ├── prompt
             ├── catalog
                 ├── hostPromptDefinitions.ts
@@ -1348,14 +1439,14 @@
             └── tokenBudget.ts
         ├── runtime
             ├── AIMessageDeliveryCoordinator.ts
-            ├── CallExecutionHeadlessTask.ts
+            ├── ApplicationExecutionHost.ts
             ├── ChatSummaryQueueCoordinator.ts
-            ├── ConversationExecutionLifetime.ts
             ├── ConversationTurnCoordinator.ts
-            ├── ConversationTurnHeadlessTask.ts
+            ├── ExecuteCall.ts
+            ├── ExecuteConversationTurns.ts
+            ├── ExecuteHostRelationshipReply.ts
             ├── FloatingConversationProjection.ts
             ├── HostModelRunPreparation.ts
-            ├── HostRelationshipReplyHeadlessTask.ts
             ├── MemoryEmbeddingQueueCoordinator.ts
             ├── StartupRecoveryCoordinator.ts
             ├── StickerAnnotationQueueCoordinator.ts
@@ -1398,6 +1489,7 @@
             ├── OpenAIClient.ts
             └── types.ts
         ├── device
+            ├── BackgroundRuntime.ts
             ├── CallPresentationSurface.ts
             ├── CallRingtone.ts
             ├── chat
@@ -1420,6 +1512,7 @@
             ├── LocalAudioPlaybackCoordinator.ts
             ├── MediaFileContent.ts
             ├── MediaFileLifetime.ts
+            ├── MessageBubbleBackground.ts
             ├── Notification.ts
             ├── notificationPayload.ts
             ├── PersistentImageStore.ts
@@ -1472,6 +1565,8 @@
                 ├── callBackgroundSchema.ts
                 ├── callHistorySchema.ts
                 ├── callRingtoneSchema.ts
+                ├── chatBubbleSkinPresetMigration.ts
+                ├── chatBubbleSkinSchema.ts
                 ├── chatFavoriteSchema.ts
                 ├── chatRegenerationSchema.ts
                 ├── chatReplyVersionSchema.ts
@@ -1493,6 +1588,7 @@
                 ├── memoryV3Schema.ts
                 ├── migrations.ts
                 ├── modelSelectionSchema.ts
+                ├── modelServiceSchema.ts
                 ├── momentsSchema.ts
                 ├── promptingSchema.ts
                 ├── protocolSchema.ts
@@ -1537,8 +1633,6 @@
         ├── kernel
             └── selfIdentity.ts
         ├── prompt
-            ├── auxiliaryPromptMetadata.ts
-            ├── auxiliaryTaskPrompts.ts
             ├── catalogTypes.ts
             ├── contextWindowLimits.ts
             ├── estimateTextTokens.ts
@@ -1614,8 +1708,14 @@
             ├── modelSelectionTypes.ts
             ├── NavigationHeader.tsx
             ├── NavigationHeaderHelp.tsx
+            ├── ShareSheet.tsx
             ├── Slider.tsx
             ├── SliderField.tsx
+            ├── space
+                ├── GalaxyBackground.tsx
+                ├── index.ts
+                ├── ShootingStars.tsx
+                └── starField.ts
             ├── Toggle.tsx
             ├── ToggleField.tsx
             ├── useAutoSaveDraft.ts
@@ -1674,6 +1774,30 @@
                             └── modules
                                 └── appupdates
                                     └── UpdateArtifactTest.kt
+        └── index.ts
+    ├── background-runtime
+        ├── android
+            └── src
+                ├── main
+                    └── java
+                        └── expo
+                            └── modules
+                                └── backgroundruntime
+                                    ├── ApplicationExecutionHost.kt
+                                    ├── BackgroundRuntime.kt
+                                    ├── BackgroundRuntimeModule.kt
+                                    ├── ExecutionWakeLocks.kt
+                                    └── RavenCatBackgroundService.kt
+                └── test
+                    └── java
+                        └── expo
+                            └── modules
+                                └── backgroundruntime
+                                    ├── ApplicationExecutionHostTest.kt
+                                    ├── BackgroundRuntimeTest.kt
+                                    ├── ExecutionTestApplication.kt
+                                    ├── ExecutionWakeLockShadow.kt
+                                    └── ExecutionWakeLocksTest.kt
         └── index.ts
     ├── backup-storage
         ├── android
@@ -1757,26 +1881,6 @@
                                     ├── CallOverlayContinuityTest.kt
                                     └── CallTelecomSessionTest.kt
         └── index.ts
-    ├── conversation-turn-runtime
-        ├── android
-            └── src
-                ├── main
-                    └── java
-                        └── expo
-                            └── modules
-                                └── conversationturnruntime
-                                    ├── ConversationTurnHeadlessTaskService.kt
-                                    ├── ConversationTurnHostLifetime.kt
-                                    └── ConversationTurnRuntimeModule.kt
-                └── test
-                    └── java
-                        └── expo
-                            └── modules
-                                └── conversationturnruntime
-                                    └── ConversationTurnHostLifetimeTest.kt
-        ├── index.ts
-        └── src
-            └── ConversationTurnRuntimeModule.ts
     ├── device-control
         ├── android
             └── src
@@ -1905,7 +2009,6 @@
                         └── expo
                             └── modules
                                 └── kimiphonenotifications
-                                    ├── CallNotificationActionHeadlessTaskService.kt
                                     ├── IncomingCallActivity.kt
                                     ├── IncomingCallSurfaceRegistry.kt
                                     ├── KimiPhoneNotificationsModule.kt
@@ -1916,7 +2019,6 @@
                                     ├── NotificationPublisher.kt
                                     ├── NotificationResponseDispatcher.kt
                                     ├── NotificationStateStore.kt
-                                    ├── TogetherListeningNotificationActionHeadlessTaskService.kt
                                     └── TogetherListeningNotificationActivity.kt
                 └── test
                     └── java
@@ -1949,6 +2051,26 @@
             ├── LiquidGlassBackdrop.tsx
             ├── LiquidGlassEffect.tsx
             └── types.ts
+    ├── message-bubble-background
+        ├── android
+            └── src
+                ├── main
+                    └── java
+                        └── expo
+                            └── modules
+                                └── messagebubble
+                                    ├── BubbleBitmapCache.kt
+                                    ├── MessageBubbleModule.kt
+                                    ├── MessageBubbleView.kt
+                                    └── NineSliceRenderer.kt
+                └── test
+                    └── java
+                        └── expo
+                            └── modules
+                                └── messagebubble
+                                    ├── BubbleTouchTest.kt
+                                    └── NineSliceRendererTest.kt
+        └── index.tsx
     ├── native-text-selection
         └── android
             └── src
@@ -2017,11 +2139,9 @@
                                     ├── bridge
                                         ├── RavenCatConversationPreviewRecord.kt
                                         └── RavenCatFloatingLayerModule.kt
-                                    ├── BubbleSkinAssetResolver.kt
                                     ├── BubbleSkinStore.kt
                                     ├── companion
                                         ├── RavenCatCompanionExecutionHost.kt
-                                        ├── RavenCatCompanionExecutionService.kt
                                         └── RavenCatCompanionWakeDispatcher.kt
                                     ├── CompanionScheduleMigration.kt
                                     ├── controller
@@ -2038,9 +2158,7 @@
                                     ├── RavenCatAIScheduleAlarmScheduler.kt
                                     ├── RavenCatAIScheduleScheduler.kt
                                     ├── RavenCatCompanionCompletionRing.kt
-                                    ├── RavenCatCompanionWakeHeadlessTaskService.kt
                                     ├── RavenCatCompanionWakeStore.kt
-                                    ├── RavenCatFloatingMessageHeadlessTaskService.kt
                                     ├── RavenCatFloatingMessageTaskStore.kt
                                     ├── RavenCatTogetherListeningPresentationStore.kt
                                     ├── runtime
@@ -2067,11 +2185,9 @@
                                 └── ravencatfloatinglayer
                                     ├── bridge
                                         └── RavenCatConversationPreviewRecordTest.kt
-                                    ├── BubbleSkinAssetResolverTest.kt
                                     ├── BubbleSkinStoreBackupExportTest.kt
                                     ├── companion
-                                        ├── RavenCatCompanionExecutionHostTest.kt
-                                        └── RavenCatCompanionExecutionServiceForegroundDeniedTest.kt
+                                        └── RavenCatCompanionExecutionHostTest.kt
                                     ├── controller
                                         ├── RavenCatAppForegroundActivityTrackerTest.kt
                                         ├── RavenCatBubbleSizeTest.kt

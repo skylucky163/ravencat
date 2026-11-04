@@ -86,7 +86,7 @@ ML Kit SDK 及模型有独立使用条款，不应标为本项目的 MIT 或 Apa
 
 `modules/netease-public-data` 的 EAPI 与公开只读接口参考了 `NeteaseCloudMusicApiEnhanced/api-enhanced`。维护时的审计记录已确认参考 commit，具体范围、上游署名与 MIT 原文见 [参考实现来源](third-party/reference-implementations.md)。本地使用 Kotlin 实现相应子集，未引入上游 Node/Express 服务；改写语言或只使用子集不取消已记录的来源说明。
 
-项目六张原创图片与两张 Expo 模板图片的来源和许可见 [asset-sources.md](asset-sources.md)，已于 2026-10-10 逐项核对。
+项目六张原创图片、AI 生成的默认星空封面与两张 Expo 模板图片的来源和许可见 [asset-sources.md](asset-sources.md)。六张原创与两张模板图片于 2026-10-10 核对，星空封面来源于 2026-11-05 由维护者确认。
 
 ## 发布时如何保留声明
 

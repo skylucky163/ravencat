@@ -53,7 +53,7 @@ export default function ChatSummaryScreen({ conversationId, onBack, onCreateSumm
       {(secondary.length > 0 || archivedCount > 0) && <Pressable accessibilityLabel="编辑二级摘要" disabled={clearing} onPress={onEditSecondary}>
         <ThemedSurface variant="card" nativeGlass={false} style={styles.card}>
           <View style={styles.row}><Text style={styles.sectionLabel}>二级摘要</Text><ChevronRight size={16} color={theme.colors.text.secondary} /></View>
-          <Text numberOfLines={6} style={styles.body}>{secondary.length ? secondary.map((value) => value.content).join('\n\n') : '二级正文已删除，原摘要仍可查看和编辑。'}</Text>
+          <Text numberOfLines={6} style={styles.body}>{secondary.length ? secondary.map((value) => value.content).join('\n\n') : '暂无二级正文，原摘要仍可查看和编辑。'}</Text>
           <Text style={styles.meta}>集中编辑 · {archivedCount} 条原摘要</Text>
         </ThemedSurface>
       </Pressable>}

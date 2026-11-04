@@ -10,9 +10,6 @@ export const createStyles = (theme: PresentationTheme) => {
   };
   return StyleSheet.create({
     content: { padding: theme.spacing.lg, paddingBottom: 48, gap: theme.spacing.md },
-    aiCard: { ...card, padding: theme.spacing.lg },
-    formSection: { ...card, padding: theme.spacing.lg },
-    lastField: { marginBottom: 0 },
     settingsSection: { ...card, padding: theme.spacing.lg, gap: theme.spacing.sm },
     sectionLabel: {
       paddingTop: theme.spacing.md,
@@ -48,6 +45,7 @@ export const createStyles = (theme: PresentationTheme) => {
       textAlignVertical: 'center',
     },
     unit: { color: theme.colors.text.tertiary, fontSize: 12 },
+    sharedValue: { color: theme.colors.text.secondary, fontSize: 14 },
     disabled: { opacity: 0.45 },
     contextLimitError: { color: theme.colors.feedback.error, fontSize: 13, marginTop: theme.spacing.xs },
     fixedPreview: {

@@ -4,5 +4,5 @@ import { StickerSystemScreen } from '@features/stickers';
 
 export default function StickerSystemRoute() {
   const router = useRouter();
-  return <StickerSystemScreen onBack={() => router.back()} />;
+  return <StickerSystemScreen onBack={() => router.back()} onOpenProgress={() => router.push('/sticker-progress')} />;
 }

@@ -1,15 +1,15 @@
+import ServiceConnectionPicker from './ServiceConnectionPicker';
 /** 辅助模型编辑：已有资产自动保存，新资产在完整校验后显式创建。 */
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@shared/theme';
 import NavigationHeader from '@shared/ui/NavigationHeader';
-import { KeyboardAvoidingContainer, Button, InputField, ModelPickerModal, ToggleField, SliderField, showAppDialog } from '@shared/ui';
+import { KeyboardAvoidingContainer, Button, InputField, ModelPickerModal, SliderField, showAppDialog } from '@shared/ui';
 import { createCommonStyles } from '@shared/ui/commonStyles';
 import type { AuxiliaryModelConfig, UpdateAuxiliaryModelConfigInput } from '../../domain/AuxiliaryModel';
 import type { ModelInfo } from '../../application/modelTypes';
 import type { AuxiliaryModelFormData } from './types';
-import { getDefaultAuxiliaryTaskPrompt } from '@shared/prompt';
 import MaxTokensSection from '../management/AIModelSettings/MaxTokensSection';
 import { createModelSettingsStyles } from '../management/AIModelSettings/styles';
 import { fetchModelsWithConfig } from '../management/sharedModelConfig';
@@ -20,7 +20,7 @@ import { readDraftNumber } from '@shared/ui/draftValidation';
 import { getAuxiliaryModelDraft, parseAuxiliaryModelDraft, type AuxiliaryModelDraft } from './auxiliaryModelDraft';
 
 interface AuxiliaryModelEditScreenProps {
-  capabilityKind: 'general' | 'embedding' | 'ocr';
+  capabilityKind: 'summary' | 'embedding' | 'ocr';
   capabilityLabel: string;
   modelId?: string | null;
   initialData?: AuxiliaryModelConfig | null;
@@ -40,16 +40,11 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
   const modelSettingsStyles = useMemo(() => createModelSettingsStyles(theme), [theme]);
   const isEdit = !!modelId;
   const isEmbeddingCapability = capabilityKind === 'embedding';
-  const hasEditableTaskPrompt = capabilityKind === 'ocr';
-  const defaultTaskPrompt = hasEditableTaskPrompt ? getDefaultAuxiliaryTaskPrompt('ocr') : '';
-  const usesManualModelInput = isEmbeddingCapability;
-  const canFetchModels = !usesManualModelInput;
-  const initial = useMemo(() => getAuxiliaryModelDraft(capabilityKind, initialData), [capabilityKind, initialData]);
+  const initial = useMemo(() => getAuxiliaryModelDraft(initialData), [initialData]);
   const parse = useCallback((draft: AuxiliaryModelDraft, changed: (keyof AuxiliaryModelDraft)[]) => parseAuxiliaryModelDraft(capabilityKind, draft, changed), [capabilityKind]);
   const editor = useAutoSaveDraft({ initial, parse, save: onSave, enabled: isEdit });
   const { draft, errors, commit, flush, restore, change, validateAll } = editor;
-  const { name, enabled, baseUrl, apiKey, model, taskPrompt,
-    usesDefaultTaskPrompt, tempInput, topPInput, maxTokens } = draft;
+  const { name, baseUrl, apiKey, model, tempInput, topPInput, maxTokens } = draft;
   const temperatureInput = readDraftNumber(tempInput, 'Temperature', 0, 2, true);
   const topPNumberInput = readDraftNumber(topPInput, 'Top P', 0, 1, true);
   const temperature = temperatureInput.error ? initialData?.temperature ?? null : temperatureInput.value;
@@ -61,23 +56,17 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
   const blur = () => { if (isEdit) void commit(); };
   const restoreDraft = () => { void restore().then(() => feedback.setBlocked(false)); };
   const fieldProps = (key: keyof AuxiliaryModelDraft) => ({ error: errors[key], onBlur: blur });
-  const inputErrorStyle = (key: keyof AuxiliaryModelDraft) => errors[key] ? { borderWidth: 1, borderColor: theme.colors.feedback.error } : undefined;
-  const fieldError = (key: keyof AuxiliaryModelDraft) => errors[key]
-    ? <Text accessibilityRole="alert" style={{ color: theme.colors.feedback.error, fontSize: 13, marginTop: theme.spacing.sm }}>{errors[key]}</Text> : null;
   const setField = <K extends keyof AuxiliaryModelDraft>(key: K, value: AuxiliaryModelDraft[K], immediate = false) => {
     setTestInputError(null);
     change({ [key]: value } as Pick<AuxiliaryModelDraft, K>, immediate);
   };
   const setName = (value: string) => setField('name', value);
-  const setEnabled = (value: boolean) => setField('enabled', value, true);
-  const setBaseUrl = (value: string) => setField('baseUrl', value);
-  const setApiKey = (value: string) => setField('apiKey', value);
+  const setBaseUrl = (value: string) => change({ baseUrl: value, serviceConfigId: '' });
+  const setApiKey = (value: string) => change({ apiKey: value, serviceConfigId: '' });
   const setModel = (value: string) => setField('model', value);
   const handleTempChange = (value: string, immediate = false) => setField('tempInput', value, immediate);
   const handleTopPChange = (value: string, immediate = false) => setField('topPInput', value, immediate);
   const handleMaxTokensChange = (value: string, immediate = false) => setField('maxTokens', value, immediate);
-  const handleTaskPromptChange = (value: string) => change({ taskPrompt: value, usesDefaultTaskPrompt: false });
-  const handleResetTaskPrompt = () => change({ taskPrompt: defaultTaskPrompt, usesDefaultTaskPrompt: true }, true);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -98,8 +87,8 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
     const values = validateAll();
     if (!values) return null;
     return {
-      id: modelId || undefined, name: values.name, baseUrl: values.baseUrl, model: values.model,
-      apiKey: values.apiKey ?? '', enabled: values.enabled, temperature: values.temperature ?? null,
+      id: modelId || undefined, serviceConfigId: values.serviceConfigId, name: values.name, baseUrl: values.baseUrl, model: values.model,
+      apiKey: values.apiKey ?? '', temperature: values.temperature ?? null,
       topP: values.topP ?? null, maxTokens: values.maxTokens ?? null, metadataJson: values.metadataJson,
     };
   };
@@ -157,9 +146,6 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={modelSettingsStyles.section}>
-            <ToggleField label="启用模型配置" hint="停用后，已选择此配置的系统会显示模型不可用。" value={enabled} onValueChange={setEnabled} />
-          </View>
           {/* 配置名称 */}
           <View style={modelSettingsStyles.section} onLayout={feedback.fieldLayout(['name'])}>
             <InputField
@@ -167,7 +153,7 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
               value={name}
               onChangeText={setName}
               {...fieldProps('name')}
-              placeholder={capabilityKind === 'general' ? '如：通用文本模型' : '如：图片理解模型'}
+              placeholder={capabilityKind === 'summary' ? '如：聊天摘要模型' : isEmbeddingCapability ? '如：记忆向量模型' : '如：图片理解模型'}
               inputStyle={modelSettingsStyles.borderedInput}
             />
           </View>
@@ -202,100 +188,20 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
 
 
 
-          {/* 模型选择 */}
+          <ServiceConnectionPicker baseUrl={baseUrl} apiKey={apiKey} disabled={isLoadingModels || testing}
+            onFill={service => { change({ serviceConfigId: service.id, baseUrl: service.baseUrl, apiKey: service.apiKey }, true); setAvailableModels([]); setShowModelPicker(false); setTestInputError(null); }} />
           <View style={modelSettingsStyles.section} onLayout={feedback.fieldLayout(['model'])}>
-            <View style={modelSettingsStyles.modelSectionHeader}>
-              <Text style={{ fontSize: 16, fontWeight: '600', color: theme.colors.text.primary, marginBottom: theme.spacing.md }}>模型</Text>
-              {canFetchModels ? (
-                <TouchableOpacity
-                  style={[modelSettingsStyles.miniBtn, modelSettingsStyles.miniBtnPrimary]}
-                  onPress={handleFetchModels}
-                  disabled={isLoadingModels}
-                  activeOpacity={0.7}
-                >
-                  {isLoadingModels ? (
-                    <ActivityIndicator size="small" color={theme.colors.brand.primary} />
-                  ) : (
-                    <Text style={modelSettingsStyles.miniBtnText}>
-                      {availableModels.length > 0 ? '重新获取' : '获取模型列表'}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              ) : null}
-            </View>
-
-            {usesManualModelInput ? (
-              <TextInput
-                style={[modelSettingsStyles.borderedInput, inputErrorStyle('model')]}
-                {...fieldProps('model')}
-                value={model}
-                onChangeText={setModel}
-                placeholder="如：text-embedding-3-small"
-                placeholderTextColor={theme.colors.text.tertiary}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            ) : model ? (
-              <View style={[modelSettingsStyles.modelValueBox, modelSettingsStyles.modelValueBoxHighlight]}>
-                <Text
-                  style={[modelSettingsStyles.modelValueText, modelSettingsStyles.modelValueTextHighlight]}
-                  numberOfLines={1}
-                  ellipsizeMode="middle"
-                >
-                  {model}
-                </Text>
-                {availableModels.length > 0 && (
-                  <TouchableOpacity
-                    style={[modelSettingsStyles.miniBtn, { backgroundColor: theme.colors.background.app }]}
-                    onPress={() => setShowModelPicker(true)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={modelSettingsStyles.miniBtnText}>切换</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ) : (
-              <View style={[modelSettingsStyles.modelValueBox, modelSettingsStyles.modelValueBoxMuted]}>
-                <Text style={[modelSettingsStyles.modelValueText, modelSettingsStyles.modelValueTextMuted]}>
-                  未选择模型
-                </Text>
-              </View>
-            )}
-            {fieldError('model')}
+            {isEmbeddingCapability && <Text style={{ color: theme.colors.text.secondary, lineHeight: 22 }}>
+              修改正在使用的模型或连接配置后，记忆、表情包等功能的原向量可能不再适用。旧向量会保留，不会自动重新向量化；请到对应功能中手动重建。此处需要选择支持向量化的模型。
+            </Text>}
+            <InputField label="模型名称" value={model} onChangeText={setModel} {...fieldProps('model')}
+              placeholder={isEmbeddingCapability ? '填写向量模型 ID' : '填写模型 ID，或从列表选择'} autoCapitalize="none" autoCorrect={false} />
+            <Button title={isLoadingModels ? '获取中…' : '获取模型列表'} variant="text" disabled={isLoadingModels} onPress={() => { void handleFetchModels(); }} />
+            {availableModels.length > 0 && <Button title="从已获取的列表选择" variant="text" onPress={() => setShowModelPicker(true)} />}
           </View>
-
 
           {!isEmbeddingCapability ? (
             <>
-              {hasEditableTaskPrompt ? (
-                <View style={modelSettingsStyles.section} onLayout={feedback.fieldLayout(['taskPrompt'])}>
-                  <View style={modelSettingsStyles.modelSectionHeader}>
-                    <Text style={{ fontSize: 16, fontWeight: '600', color: theme.colors.text.primary, marginBottom: theme.spacing.md }}>
-                      内部任务说明
-                    </Text>
-                    <TouchableOpacity
-                      style={[modelSettingsStyles.miniBtn, { backgroundColor: theme.colors.background.app }]}
-                      onPress={handleResetTaskPrompt}
-                    >
-                      <Text style={modelSettingsStyles.miniBtnText}>恢复内置</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <TextInput
-                    style={[modelSettingsStyles.borderedInput, { minHeight: 220, textAlignVertical: 'top' }, inputErrorStyle('taskPrompt')]}
-                    {...fieldProps('taskPrompt')}
-                    value={taskPrompt}
-                    onChangeText={handleTaskPromptChange}
-                    multiline
-                    placeholder="输入该辅助模型的任务说明"
-                    placeholderTextColor={theme.colors.text.tertiary}
-                  />
-                  {fieldError('taskPrompt')}
-                  <Text style={{ marginTop: theme.spacing.sm, color: theme.colors.text.secondary, fontSize: 13, lineHeight: 19 }}>
-                    {usesDefaultTaskPrompt ? '当前使用应用内置正文。' : '当前使用此模型的自定义正文。'} 输出字段与解析契约由运行时固定，不能在这里关闭。
-                  </Text>
-                </View>
-              ) : null}
-
               <View onLayout={feedback.fieldLayout(['tempInput'])}><SliderField
               {...fieldProps('tempInput')}
                 label="Temperature"
@@ -358,8 +264,7 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
       </KeyboardAvoidingContainer>
 
       {/* 模型选择弹窗 */}
-      {canFetchModels ? (
-        <ModelPickerModal
+      <ModelPickerModal
           visible={showModelPicker}
           models={availableModels}
           selectedModel={model}
@@ -368,7 +273,6 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
           title="选择模型"
           emptyText="暂无可用模型"
         />
-      ) : null}
     </SafeAreaView>
   );
 }

@@ -12,6 +12,7 @@
 | `assets/raven.png` | 默认 AI 头像 | 枫渡原创 | 项目 MIT |
 | `assets/yaya.png` | 内置鸦鸦悬浮皮肤，供原生模块生成资源 | 枫渡原创 | 项目 MIT |
 | `assets/ravenphone_bg.png` | 默认时刻封面 | 枫渡原创 | 项目 MIT |
+| `assets/stars.jpg` | AI 个人主页与朋友圈共用的默认星空封面 | 维护者使用文本 AI 模型生成 SVG 图像后形成的图片，2026-11-05 确认来源 | 随项目按 MIT 分发；单独记录 AI 生成来源 |
 | `assets/favicon.png` | 保留的模板资源，Android 配置未引用 | Expo `expo-template-blank` | Expo MIT |
 | `assets/splash-icon.png` | 保留的模板资源，当前启动图使用 `icon.png` | Expo `expo-template-blank` | Expo MIT |
 
@@ -33,3 +34,5 @@
 ## 记忆星空天体影像
 
 记忆星空新增七张 NASA 页面提供的天体与星云影像，随应用打包。这些素材不纳入项目原创图片的 MIT 声明；逐张来源、NASA／JPL／ESA 等署名、使用说明及运行时裁取与调色方式见[记忆星空图像说明](../src/features/memory/presentation/assets/README.md)。未使用 NASA 标志，也不表示 NASA 为本项目背书。
+
+共享星空背景的来源与署名单独见[星空背景影像说明](../src/shared/ui/space/assets/README.md)。时间碎片日历新增十四张天体素材，逐张来源、署名及 AI 调色说明见[时间碎片影像](../src/features/companion/presentation/assets/fragments/README.md)；同样不纳入项目原创图片的 MIT 声明。

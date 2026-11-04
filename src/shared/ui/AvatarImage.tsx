@@ -87,7 +87,7 @@ export default function AvatarImage({
       width: size,
       height: size,
       borderRadius,
-      backgroundColor: backgroundColor || `${theme.colors.brand.primary}15`,
+      backgroundColor: backgroundColor || 'transparent',
     },
     style,
   ];
@@ -129,7 +129,7 @@ const createStyles = (theme: PresentationTheme) => StyleSheet.create({
   image: {
     width: '100%',
     height: '100%',
-    resizeMode: 'cover',
+    resizeMode: 'contain',
   },
   placeholderText: {
     fontWeight: '600',

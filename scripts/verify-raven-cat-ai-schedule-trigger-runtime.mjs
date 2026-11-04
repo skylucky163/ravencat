@@ -888,17 +888,17 @@ const routerMocks = {
   },
 };
 const routerModule = loadModule(
-  'src/features/companion/application/CompanionWakeHeadlessTask.ts',
+  'src/features/companion/application/ExecuteCompanionWake.ts',
   routerMocks,
 );
 runnerCalls.length = 0;
-await routerModule.runCompanionWakeHeadlessTask(callback);
+await routerModule.runCompanionWake(callback);
 assert.deepEqual(runnerCalls.at(-1), ['completion', {
   deliveryEventId: 'schedule-x@tok', succeeded: true, error: 'ai_schedule_ignored:not_current_host',
 }], 'AI Schedule completion 必须用 deliveryEventId，避免 stale v1 毒死 v2');
 
 const throwRouter = loadModule(
-  'src/features/companion/application/CompanionWakeHeadlessTask.ts',
+  'src/features/companion/application/ExecuteCompanionWake.ts',
   {
     './CompanionExecutionCancellation': cancellationRegistryModule,
     './CompanionRuntimeDependencies': {
@@ -918,7 +918,7 @@ const throwRouter = loadModule(
 );
 runnerCalls.length = 0;
 await assert.rejects(
-  throwRouter.runCompanionWakeHeadlessTask(callback),
+  throwRouter.runCompanionWake(callback),
   /boom/,
 );
 assert.equal(runnerCalls.filter(([kind]) => kind === 'completion').length, 1);

@@ -6,6 +6,7 @@ import { ActivityIndicator, View, Text, TouchableOpacity, StyleSheet } from 'rea
 import { useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
 import { EXPENSE_COLOR, INCOME_COLOR } from './walletVisualizationColors';
+import { formatMonthDay } from './utils/timeUtils';
 import type { WalletRecord } from '../domain/WalletRecord';
 
 interface RecordListProps {
@@ -15,11 +16,6 @@ interface RecordListProps {
 }
 
 const formatAmount = (amount: number): string => amount.toFixed(2);
-
-const formatDate = (dateStr: string): string => {
-  const date = new Date(dateStr);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-};
 
 const createStyles = (theme: PresentationTheme) =>
   StyleSheet.create({
@@ -141,7 +137,7 @@ const RecordList: React.FC<RecordListProps> = ({
                 {record.type === 'expense' ? '-' : '+'}¥{formatAmount(record.amount)}
               </Text>
             )}
-            <Text style={styles.date}>{formatDate(record.recordDate)}</Text>
+            <Text style={styles.date}>{formatMonthDay(record.recordDate)}</Text>
           </View>
         </TouchableOpacity>
       ))}

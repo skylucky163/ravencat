@@ -5,32 +5,14 @@ import 'react-native-gesture-handler';
 
 import { AppRegistry } from 'react-native';
 import {
-  runCompanionWakeHeadlessTask,
-} from '@features/companion';
-import { runFloatingMessageHeadlessTask } from '@features/floatingLayer';
-import {
-  configureCompanionHeadlessRuntime,
-  runCallNotificationActionHeadlessTask,
-  runConversationTurnHeadlessTask,
-  runHostRelationshipReplyHeadlessTask,
-  runCallExecutionHeadlessTask,
-  runTogetherListeningNotificationActionHeadlessTask,
+  configureBackgroundExecutionRuntime,
+  configureApplicationExecutionHost,
 } from '@host';
 
-configureCompanionHeadlessRuntime();
-AppRegistry.registerHeadlessTask('RavenCatCompanionWakeTask', () => runCompanionWakeHeadlessTask);
-AppRegistry.registerHeadlessTask('RavenCatFloatingMessageTask', () => runFloatingMessageHeadlessTask);
-AppRegistry.registerHeadlessTask('ConversationTurnExecutionTask', () => runConversationTurnHeadlessTask);
-AppRegistry.registerHeadlessTask('HostRelationshipReplyTask', () => runHostRelationshipReplyHeadlessTask);
-AppRegistry.registerHeadlessTask('RavenCatCallExecutionTask', () => runCallExecutionHeadlessTask);
-AppRegistry.registerHeadlessTask(
-  'KimiPhoneCallNotificationActionTask',
-  () => runCallNotificationActionHeadlessTask
-);
-AppRegistry.registerHeadlessTask(
-  'KimiPhoneTogetherListeningNotificationActionTask',
-  () => runTogetherListeningNotificationActionHeadlessTask
-);
+// 原生独占这个持续身份的结束；它不执行循环、不获取 CPU 锁，也不随单条请求结束。
+AppRegistry.registerHeadlessTask('RavenCatApplicationExecution', () => () => new Promise(() => {}));
+configureBackgroundExecutionRuntime();
+configureApplicationExecutionHost();
 
 // 必须最后加载，确保后台任务与运行时先于路由根组件完成注册。
 require('expo-router/entry');

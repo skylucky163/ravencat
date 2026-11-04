@@ -19,7 +19,7 @@ import type { AssistantUserPrompt } from '../domain/Prompting';
 import { CustomPromptRow } from './CustomPromptRow';
 import { createPromptCenterStyles } from './promptCenterStyles';
 
-type RuleDefinitionId = 'foundation.default_core' | 'output.paragraph_breaks' | 'input.image_grounding' | 'internal.chat_summary' | 'internal.chat_secondary_summary';
+type RuleDefinitionId = 'foundation.default_core' | 'output.paragraph_breaks' | 'input.image_grounding' | 'internal.chat_summary' | 'internal.chat_secondary_summary' | 'internal.vision_ocr';
 export type PromptCenterPage = { kind: 'overview' } | { kind: 'conditional' } | { kind: 'other' } | { kind: 'registry' } | { kind: 'custom' } | { kind: 'tools' } | { kind: 'package'; id: string } | { kind: 'editor'; definitionId: RuleDefinitionId } | { kind: 'userEditor'; promptId?: string } | { kind: 'persona' };
 type Snapshot = Awaited<ReturnType<typeof getDefaultPromptEditor>>;
 type ToggleSetting = Pick<ToggleFieldProps, 'value' | 'onValueChange' | 'disabled' | 'accessibilityLabel'>;
@@ -29,6 +29,7 @@ const RULE_NAMES: Record<RuleDefinitionId, string> = {
   'input.image_grounding': '图片防幻觉提醒',
   'internal.chat_summary': '一级摘要提示词',
   'internal.chat_secondary_summary': '二级摘要提示词',
+  'internal.vision_ocr': '图片识别提示词',
 };
 const PACKAGE_NAMES: Record<string, string> = { kimiOfficial: 'Kimi 官方工具', webTools: '联网工具包', media: '图片', applicationSettings: '应用设置工具', groupChat: '群聊', protocol: '协议空间', moments: '时刻', wallet: '羽库记账', calls: '通话', memory: '记忆', chat: '语音', stickers: '表情包', togetherListening: '一起听', host: '主理 AI 专属' };
 
@@ -83,7 +84,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
     const next = await getDefaultPromptEditor();
     if (page.kind === 'registry') setRegistrySettings(await getAgentRegistrySettings());
     if (assistantId) {
-      const [selected, editorDetails] = await Promise.all([getPromptAssistant(assistantId), getAssistantPromptEditorDetails(assistantId)]);
+      const [selected, editorDetails] = await Promise.all([getPromptAssistant(assistantId), getAssistantPromptEditorDetails(assistantId, next)]);
       setAssistant(selected); setDetails(editorDetails);
       if (readSummaryState) setSummaryState(await getSummaryPromptGenerationState(assistantId));
     }
@@ -95,7 +96,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
       try {
         const next = await getDefaultPromptEditor();
         const selected = assistantId ? await getPromptAssistant(assistantId) : null;
-        const editorDetails = assistantId ? await getAssistantPromptEditorDetails(assistantId) : null;
+        const editorDetails = assistantId ? await getAssistantPromptEditorDetails(assistantId, next) : null;
         const registry = page.kind === 'registry' ? await getAgentRegistrySettings() : [];
         const summary = assistantId && readSummaryState ? await getSummaryPromptGenerationState(assistantId) : null;
         if (active) {
@@ -241,7 +242,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
   function summaryStatus(level: 'primary' | 'secondary') {
     if (!summaryState) return '选择 AI 后显示对应摘要的启用状态';
     const enabled = level === 'primary' ? summaryState.primaryEnabled : summaryState.secondaryEnabled;
-    return `${enabled ? '已开启' : '已关闭'} · 跟随${level === 'primary' ? '自动生成摘要' : '自动生成摘要与二级摘要'}设置`;
+    return `${enabled ? '已开启' : '已关闭'} · 跟随${level === 'primary' ? '一级摘要' : '一级与二级摘要'}设置`;
   }
   function readingStep(step: ChatPromptReadingStep, position: number) {
     switch (step) {
@@ -249,7 +250,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
       case 'paragraphs': return overviewRow('换行规则', '默认关闭 · 普通聊天正文的分段方式', () => onOpenPage({ kind: 'editor', definitionId: 'output.paragraph_breaks' }), position);
       case 'persona': return <ThemedSurface variant="card" style={styles.card}>
         <View style={styles.cardHeader}><Text style={styles.number}>{String(position).padStart(2, '0')}</Text><Text style={styles.title}>人设</Text></View>
-        {row('AI 人设', assistant ? '查看当前人设 · 在对话设置中修改' : '当前未绑定 AI，无法查看', assistant ? () => onOpenPage({ kind: 'persona' }) : undefined, undefined, !assistant)}
+        {row('AI 人设', assistant ? '查看当前人设 · 在 AI 个人主页中修改' : '当前未绑定 AI，无法查看', assistant ? () => onOpenPage({ kind: 'persona' }) : undefined, undefined, !assistant)}
         {row('用户人设', '在个人资料中修改 · 自动保存 · 所有 AI 共用', onOpenUserProfile)}
       </ThemedSurface>;
       case 'group_identity': return overviewRow('群聊身份背景', '群聊时提供群名称、成员及当前 AI 的群内身份', undefined, position);
@@ -291,6 +292,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
     sections: [
       { title: '用途与编辑', body: '按功能管理其他任务使用的提示词。选择条目可修改正文、恢复默认，或将当前正文应用到所有现有 AI。' },
       { title: '生效条件', body: '每项提示词随所属功能的设置生效，具体用途与启用条件可在对应编辑页查看。' },
+      { title: '图片识别', body: '仅在该 AI 绑定了视觉识别模型时参与图片转述；正文按 AI 保存，未单独覆盖时使用全局默认，输出格式不受正文影响。' },
     ],
   } : page.kind === 'editor' && summaryRule ? {
     sections: [
@@ -343,6 +345,8 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
         <Text style={styles.section}>聊天摘要</Text>
         {overviewRow('一级摘要提示词', summaryStatus('primary'), () => onOpenPage({ kind: 'editor', definitionId: 'internal.chat_summary' }))}
         {overviewRow('二级摘要提示词', summaryStatus('secondary'), () => onOpenPage({ kind: 'editor', definitionId: 'internal.chat_secondary_summary' }))}
+        <Text style={styles.section}>图片</Text>
+        {overviewRow('图片识别提示词', '为这位 AI 绑定视觉识别模型后生效 · 输出格式由运行时固定', () => onOpenPage({ kind: 'editor', definitionId: 'internal.vision_ocr' }))}
       </>}
       {page.kind === 'registry' && <>
         {!registrySettings.length && <Text style={styles.body}>暂无 AI，添加后可在这里选择。</Text>}
@@ -354,7 +358,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
         </TouchableOpacity>)}
       </>}
       {page.kind === 'persona' && <>
-        <Text style={styles.description}>人设在这位 AI 的对话设置中修改，保存后同步显示在这里。</Text>
+        <Text style={styles.description}>人设在这位 AI 的个人主页中修改，保存后同步显示在这里。</Text>
         <ThemedSurface variant="card" style={styles.card}><Text selectable style={styles.body}>{assistant!.persona || '尚未设置 AI 人设'}</Text></ThemedSurface>
       </>}
       {(page.kind === 'editor' || page.kind === 'userEditor') && <>

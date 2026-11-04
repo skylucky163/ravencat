@@ -1,8 +1,8 @@
 /**
  * Sticker 的 Agent-native 工具：只读取可供模型理解的结构化资料，或返回发送意图。
  *
- * 工具本身不拥有 Chat 消息生命周期。选择结果由 Chat canonical timeline 在 T3
- * 事务中转换成 assistant Sticker 消息，避免 tool 执行与消息提交形成第二条写入路径。
+ * 工具本身不拥有 Chat 消息生命周期。选择结果由 Chat canonical timeline 交给
+ * 回合提交 owner；普通发送在工具完成后提交，重写随 T3 原子替换。
  */
 
 import { COMPLETION_INTENT_PARAMETER } from '@shared/aiTools';
@@ -13,7 +13,7 @@ import type {
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { mediaImageFailure } from '@features/media';
 import { getStickersRuntimeDependencies } from '../application/StickerRuntime';
-import { getStickerVectorState } from '../application/AIStickerCommands';
+import { getStickerVectorState, getStickerVectorStates } from '../application/AIStickerCommands';
 import {
   getStickerById,
   listStickerGroupsForAI,
@@ -236,10 +236,11 @@ export async function searchStickers(
   };
   const stickers = await searchStickersForAI(input, { signal: context.abortSignal });
   throwIfAbortSignalAborted(context.abortSignal);
+  const vectors = await getStickerVectorStates(stickers);
 
   const data: StickerSearchResultData = {
     discriminator: STICKER_SEARCH_RESULT_DISCRIMINATOR,
-    stickers: await Promise.all(stickers.map(sticker => toAISearchSnapshot(sticker, context.task.assistantId))),
+    stickers: stickers.map((sticker, index) => toAISearchSnapshot(sticker, context.task.assistantId, vectors[index])),
   };
   return {
     status: 'success',
@@ -352,17 +353,18 @@ export async function listStickersInGroup(
   const cursor = args.cursor ? decodeStickerGroupPageCursor(args.cursor) : null;
   const page = await listStickersInGroupForAI(args.group_id, cursor, limit);
   throwIfAbortSignalAborted(context.abortSignal);
+  const vectors = await getStickerVectorStates(page.stickers);
 
   const data: StickerGroupPageResultData = {
     discriminator: STICKER_SEARCH_RESULT_DISCRIMINATOR,
-    stickers: await Promise.all(page.stickers.map(async (sticker) => ({
+    stickers: page.stickers.map((sticker, index) => ({
       stickerId: sticker.id,
       mediaAssetId: sticker.mediaAssetId,
-      vector: await getStickerVectorState(sticker),
+      vector: vectors[index],
       name: sticker.name,
       tags: [...sticker.tags],
       emotion: sticker.emotion,
-    }))),
+    })),
     nextCursor: page.nextCursor
       ? encodeStickerGroupPageCursor(page.nextCursor)
       : null,
@@ -404,14 +406,14 @@ export function isStickerSendIntent(value: unknown): value is StickerSendIntent 
     && typeof value.sticker.name === 'string';
 }
 
-async function toAISearchSnapshot(sticker: Sticker, assistantId: string): Promise<StickerAISearchSnapshot> {
+function toAISearchSnapshot(sticker: Sticker, assistantId: string, vector: StickerAISearchSnapshot['vector']): StickerAISearchSnapshot {
   return {
     stickerId: sticker.id,
     mediaAssetId: sticker.mediaAssetId,
     ownedBySelf: sticker.ownerAssistantId === assistantId,
     annotationStatus: sticker.annotationStatus,
     annotationError: sticker.annotationError,
-    vector: await getStickerVectorState(sticker),
+    vector,
     name: sticker.name,
     description: sticker.description,
     tags: [...sticker.tags],

@@ -175,13 +175,14 @@ export interface MomentPageCursor {
 
 export interface MomentPageRequest {
   limit: number;
+  /** 作者筛选先于分页；用户查看某位 AI 的主页仍使用用户读权限。 */
+  author?: { actorType: MomentActorType; actorId: string };
   /** 第一页为 `null` / 省略；下一页传上一页最后一条实际显示的 item。 */
   cursor?: MomentPageCursor | null;
 }
 
 /** AI 查询的筛选已由工具边界归一化；仓储在分页之前执行筛选和 ACL。 */
 export interface MomentQueryRequest extends MomentPageRequest {
-  author?: { actorType: MomentActorType; actorId: string };
   keyword?: string;
   keywordAuthors?: readonly { actorType: MomentActorType; actorId: string }[];
   currentAuthors?: readonly { actorType: MomentActorType; actorId: string }[];
@@ -206,10 +207,9 @@ export interface MomentQueryEntry extends Moment {
  * `listLikes` 不含 ACL，由 Application 层在读取前先断言 Moment 可见。
  */
 export interface IMomentRepository {
-  /** 用户读路径；不传分页时返回全部（宿主运行时审计用）。 */
-  listMomentsForUser(options?: MomentPageRequest): Promise<Moment[]>;
   listMomentTimelineForUser(options?: MomentPageRequest): Promise<MomentTimelineEntry[]>;
   getMomentForUser(momentId: string): Promise<Moment | null>;
+  getMomentDetailForUser(momentId: string): Promise<MomentTimelineEntry | null>;
 
   /** AI viewer 读路径；viewer 是不可变 agentId。 */
   queryVisibleMomentsForAgent(

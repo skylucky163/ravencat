@@ -66,6 +66,7 @@ const wallpaper = {
   setCustomChatWallpaperOverride: async (key, uri) => writes.push({ kind: 'conversation', key, uri }),
 };
 const sharedTheme = {
+  ...load('src/shared/theme/themeVariants.ts'),
   useTheme: () => theme, useThemedStyles: (create) => create(theme), useWallpaper: () => wallpaper,
   getThemeById: () => theme,
   isPaperNoteTheme: () => false,
@@ -85,14 +86,29 @@ const { default: ThemePickerView } = load('src/features/miniPrograms/presentatio
   ...uiDependencies,
   'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
   '@expo/vector-icons': { Ionicons: 'Ionicons' },
+  'lucide-react-native': { ChevronRight: 'ChevronRight', MessageCircle: 'MessageCircle' },
   '@shared/ui/NavigationHeader': { default: 'Header' },
   '@shared/ui/ColorPickerModal': { default: 'ColorPicker' },
   '@shared/ui/BackgroundPickerCard': { default: 'BackgroundPickerCard' },
   './GlassBlurSettings': { default: 'GlassBlurSettings' },
   './PaperNoteChatFooterSettings': { default: 'PaperNoteChatFooterSettings' },
   '@features/assistants': { listAIAssistants: async () => [{ id: 'ai' }] },
-  '@features/chat': { getCanonicalChatConversation: async () => ({ id: 'conversation' }), listGroupChats: async () => [{ id: 'group' }] },
+  '@features/chat': { useChatBubbleTextColors: () => ({
+    userText: { color: theme.colors.chat.userText, defaultColor: theme.colors.chat.userText, label: '主题默认' },
+    aiText: { color: theme.colors.chat.aiText, defaultColor: theme.colors.chat.aiText, label: '主题默认' },
+  }), getCanonicalChatConversation: async () => ({ id: 'conversation' }), listGroupChats: async () => [{ id: 'group' }] },
 });
+function countBubbleSettings(node) {
+  if (Array.isArray(node)) return node.reduce((sum, child) => sum + countBubbleSettings(child), 0);
+  if (!node || typeof node !== 'object') return 0;
+  return node.type === 'Text' && node.props.children === '气泡编辑' ? 1 : countBubbleSettings(node.props.children);
+}
+const originalThemeId = theme.id;
+for (const [themeId, expected] of [['default-light', 1], ['default-dark', 1], ['liquid-glass', 0], ['paper-note', 0], ['moon-kimi', 0]]) {
+  theme.id = themeId;
+  assert.equal(countBubbleSettings(ThemePickerView({ onBack() {} })), expected, `${themeId} 的气泡装饰设置可见性`);
+}
+theme.id = originalThemeId;
 const { default: ChatWallpaperSettings } = load('src/features/chat/presentation/messages/components/ChatWallpaperSettings.tsx', {
   ...uiDependencies, '@shared/ui': { BackgroundPickerCard: 'BackgroundPickerCard' },
 });

@@ -9,10 +9,9 @@ import { useReducedMotion } from 'react-native-reanimated';
 import { GlassBackdrop, GlassSceneProvider, useTheme, useThemedStyles } from '@shared/theme';
 import { selectMemorySpace } from '../application/MemoryCommands';
 import { createMemoryGalaxyStyles } from './memoryGalaxyStyles';
-import GalaxyBackground from './GalaxyBackground';
+import { GalaxyBackground, ShootingStars } from '@shared/ui/space';
 import MemoryGalaxy from './MemoryGalaxy';
 import MemorySpacePanel from './MemorySpacePanel';
-import ShootingStar from './ShootingStar';
 import SplashOverlay from './SplashOverlay';
 import useMemoryManagementSnapshot from './useMemoryManagementSnapshot';
 
@@ -29,17 +28,18 @@ export default function MemoryScreen({ onBack, onOpenSettings, onCreateMemory, o
   const styles = useThemedStyles(createMemoryGalaxyStyles);
   const glassSceneId = `memory:${useId()}`;
   const starlight = theme.mode === 'dark' ? theme.colors.text.primary : theme.colors.text.inverse;
+  const reducedMotion = useReducedMotion();
   const [assistantId, setAssistantId] = useState<string>();
   const [panelOpen, setPanelOpen] = useState(false);
   const [focused, setFocused] = useState(false);
   const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const [busy, setBusy] = useState(false);
-  const [splashDone, setSplashDone] = useState(false);
+  const [splashDone, setSplashDone] = useState(reducedMotion);
+  const [scenePrepared, setScenePrepared] = useState(reducedMotion);
+  const [sceneLaidOut, setSceneLaidOut] = useState(false);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [shootingStar, setShootingStar] = useState(false);
-  const reducedMotion = useReducedMotion();
   const ambientActive = focused && appActive && !panelOpen && !reducedMotion;
-  const { snapshot, error, refreshing, refresh } = useMemoryManagementSnapshot(assistantId);
+  const { snapshot, spaces, error, refreshing, refresh } = useMemoryManagementSnapshot(assistantId);
   useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false); }, []));
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => setAppActive(state === 'active'));
@@ -53,26 +53,15 @@ export default function MemoryScreen({ onBack, onOpenSettings, onCreateMemory, o
     finally { setBusy(false); }
   }, []);
   const openSpace = useCallback((id: string) => {
-    setAssistantId(id);
+    if (snapshot?.selectedSpace?.assistantId !== id) setAssistantId(id);
     setPanelOpen(true);
     void run(() => selectMemorySpace(id));
-  }, [run]);
+  }, [run, snapshot?.selectedSpace?.assistantId]);
   const navigateFromPanel = (navigate: () => void) => { setFocused(false); navigate(); };
 
-  // Screen 统一拥有所有装饰动效的前台生命周期。
-  useEffect(() => {
-    if (!splashDone || !ambientActive) {
-      setShootingStar(false);
-      return;
-    }
-    const timer = setInterval(() => {
-      if (Math.random() > 0.4) setShootingStar(true);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [splashDone, ambientActive]);
-
-  const removeShootingStar = useCallback(() => setShootingStar(false), []);
   const finishSplash = useCallback(() => setSplashDone(true), []);
+  const prepareScene = useCallback(() => setScenePrepared(true), []);
+  const markSceneLaidOut = useCallback(() => setSceneLaidOut(true), []);
 
   const scene = <>
     {/* 星云动效与前景共用 Screen 的前台生命周期。 */}
@@ -85,28 +74,31 @@ export default function MemoryScreen({ onBack, onOpenSettings, onCreateMemory, o
       </View>
       <View style={styles.header}>
         <Text style={styles.eyebrow}>MEMORY GALAXY</Text>
-        <Text style={styles.subtitle}>{snapshot ? `${snapshot.spaces.length} 个世界` : ''}</Text>
+        <Text style={styles.subtitle}>{spaces ? `${spaces.length} 个世界` : ''}</Text>
       </View>
       {error && !panelOpen && <><Text style={styles.error}>{error}</Text><Pressable accessibilityRole="button" accessibilityLabel="重新读取记忆空间" onPress={refresh}><Text style={[styles.subtitle, { textAlign: 'center' }]}>重新读取</Text></Pressable></>}
-      {!snapshot && !error && !panelOpen && <ActivityIndicator color={starlight} style={{ marginTop: 24 }} />}
-      {snapshot?.spaces.length === 0 && <Text style={styles.empty}>创建 AI 助手后，这里会亮起属于你们的星球。</Text>}
-      {snapshot && snapshot.spaces.length > 0 && <MemoryGalaxy spaces={snapshot.spaces} paused={!focused || !appActive || panelOpen || !splashDone} disabled={busy} onSelect={openSpace} />}
+      {!spaces && !error && !panelOpen && <ActivityIndicator color={starlight} style={{ marginTop: 24 }} />}
+      {spaces?.length === 0 && <Text style={styles.empty}>创建 AI 助手后，这里会亮起属于你们的星球。</Text>}
+      {spaces && spaces.length > 0 && <MemoryGalaxy spaces={spaces} paused={!focused || !appActive || panelOpen || !splashDone} disabled={busy} onSelect={openSpace} />}
     </SafeAreaView>
     {/* 流星 */}
-    {ambientActive && shootingStar && <ShootingStar width={viewport.width} height={viewport.height} onDone={removeShootingStar} />}
+    <ShootingStars width={viewport.width} height={viewport.height} active={ambientActive && splashDone} />
   </>;
 
   return <GlassSceneProvider sceneId={glassSceneId}>
     <View style={styles.screen} onLayout={({ nativeEvent: { layout } }) => setViewport({ width: layout.width, height: layout.height })}>
       {/* 只采样当前星空页面；弹窗是背景源的兄弟节点，避免玻璃采样自身。 */}
-      {theme.effects.glass.enabled ? <GlassBackdrop sceneId={glassSceneId} style={styles.screen} pointerEvents="auto" accessibilityElementsHidden={false} importantForAccessibility="auto">{scene}</GlassBackdrop> : scene}
+      {/* 固定开场播放完才挂载星空；数据与布局就绪后再淡出，准备阶段保持静止。 */}
+      {scenePrepared && (spaces || error || reducedMotion) && <View style={styles.screen} onLayout={markSceneLaidOut}>
+        {theme.effects.glass.enabled ? <GlassBackdrop sceneId={glassSceneId} style={styles.screen} pointerEvents="auto" accessibilityElementsHidden={false} importantForAccessibility="auto">{scene}</GlassBackdrop> : scene}
+      </View>}
       {/* 记忆面板 */}
-      {panelOpen && <MemorySpacePanel key={assistantId} visible={focused} snapshot={snapshot?.selectedSpace?.assistantId === assistantId ? snapshot : null} error={error} busy={busy} refreshing={refreshing} refresh={refresh} run={run} onClose={() => setPanelOpen(false)}
+      {panelOpen && <MemorySpacePanel key={assistantId} visible={focused} snapshot={snapshot} error={error} busy={busy} refreshing={refreshing} refresh={refresh} run={run} onClose={() => setPanelOpen(false)}
         onCreateMemory={id => navigateFromPanel(() => onCreateMemory(id))}
         onEditMemory={(id, memoryId) => navigateFromPanel(() => onEditMemory(id, memoryId))}
         onOpenTrigger={(id, triggerId) => navigateFromPanel(() => onOpenTrigger(id, triggerId))} />}
       {/* 开屏动效 */}
-      {!splashDone && <SplashOverlay active={focused && appActive} onFinish={finishSplash} />}
+      {!splashDone && <SplashOverlay active={focused && appActive} ready={sceneLaidOut && Boolean(snapshot || error)} onPrepare={prepareScene} onFinish={finishSplash} />}
     </View>
   </GlassSceneProvider>;
 }

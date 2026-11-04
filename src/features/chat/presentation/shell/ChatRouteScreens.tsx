@@ -7,8 +7,6 @@ import React, {
   type SetStateAction,
 } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { AIModelSettings } from '@features/assistants';
-import { ChatImageModelPicker } from '../conversation/ChatImageModelPicker';
 import { ProtocolView, type Protocol } from '@features/protocol';
 import { useTheme, type PresentationTheme } from '@shared/theme';
 import { EmptyState, showAppDialog } from '@shared/ui';
@@ -18,7 +16,6 @@ import GroupChatDetail from '../group/GroupChatDetail';
 import GroupOptions from '../group/GroupOptions';
 import { renameGroupChat, subscribeGroupChanged } from '../../group/application/GroupMembership';
 import AIOptions from '../conversation/AIOptions';
-import ChatSettings from '../conversation/ChatSettings';
 import ChatStatisticsScreen from '../conversation/ChatStatisticsScreen';
 import ChatMessageSearchScreen from '../messages/ChatMessageSearchScreen';
 import ChatMessageContextScreen from '../messages/ChatMessageContextScreen';
@@ -278,12 +275,14 @@ export function ChatConversationRouteScreen({
   sessionId = null,
   anchorMessageId = null,
   routeFocused,
+  onOpenAssistantProfile,
 }: {
   aiId: string;
   sessionId?: string | null;
   /** 主动生活「查看当时的聊天」一次性定位目标；null 表示正常进入。 */
   anchorMessageId?: number | null;
   routeFocused: boolean;
+  onOpenAssistantProfile: (aiId: string) => void;
 }) {
   const router = usePreparedConversation(aiId, sessionId, routeFocused);
   const theme = useTheme();
@@ -361,6 +360,7 @@ export function ChatConversationRouteScreen({
         anchorMessageId={anchorMessageId}
         currentUser={router.currentUser}
         aiAssistants={state.aiList}
+        onOpenAssistantProfile={onOpenAssistantProfile}
         onOpenMenu={() => openNestedScreen(router.openSubScreen, 'menu')}
         onOpenFilePreview={(params) => {
           state.openFilePreview(params);
@@ -377,7 +377,12 @@ export function ChatConversationRouteScreen({
   );
 }
 
-export function ChatMenuRouteScreen({ aiId }: { aiId: string }) {
+export function ChatMenuRouteScreen({ aiId, onOpenModelSettings, onOpenConversationSettings, onOpenSummary }: {
+  aiId: string;
+  onOpenModelSettings: () => void;
+  onOpenConversationSettings: () => void;
+  onOpenSummary: () => void;
+}) {
   const router = usePreparedConversation(aiId);
   const { state } = router;
   useSubScreenLifecycle(state.setCurrentSubScreen, 'menu', null);
@@ -403,9 +408,9 @@ export function ChatMenuRouteScreen({ aiId }: { aiId: string }) {
         state.handleCloseMenu();
         router.returnToConversation(aiId);
       }}
-      onModelSettings={() => router.openSubScreen('modelSettings')}
-      onChatSettings={() => router.openSubScreen('chatSettings')}
-      onChatSummary={() => router.openSubScreen('summary')}
+      onModelSettings={onOpenModelSettings}
+      onChatSettings={onOpenConversationSettings}
+      onChatSummary={onOpenSummary}
       onSearchMessages={() => router.openSubScreen('search')}
       onCallHistory={() => router.openSubScreen('callHistory')}
       onChatStatistics={() => router.openSubScreen('statistics')}
@@ -435,22 +440,6 @@ export function ChatProtocolRouteScreen({ aiId, onConvertToMemory }: {
       }}
     />
   );
-}
-
-export function ChatSummaryRouteScreen({ aiId, onCreateSummary, onEditSummary, onEditSecondary, onTask, onSettings }: {
-  aiId: string; onCreateSummary(): void; onEditSummary(segmentId: string): void;
-  onEditSecondary(): void; onTask(taskId: string): void; onSettings(): void;
-}) {
-  const router = usePreparedConversation(aiId);
-  useSubScreenLifecycle(router.state.setCurrentSubScreen, 'summary', 'menu');
-  if (router.unavailableReason) {
-    return <ConversationUnavailable reason={router.unavailableReason} onBack={router.returnToConversations} />;
-  }
-  if (router.preparing || !router.state.currentSession) return <RouteLoading />;
-  return <ChatSummaryScreen key={router.state.currentSession.id} conversationId={router.state.currentSession.id}
-    onBack={router.routeBack} onCreateSummary={onCreateSummary} onEditSummary={onEditSummary}
-    onEditSecondary={onEditSecondary} onTask={onTask} onSettings={onSettings}
-  />;
 }
 
 type MessageSearchRouteProps = { messageId: number; onOpenMessage?: never }
@@ -490,87 +479,6 @@ export function ChatStatisticsRouteScreen({ aiId }: { aiId: string }) {
   />;
 }
 
-export function ChatSummaryEditorRouteScreen({ aiId, segmentId, taskId, secondary = false, onSettings, onEditSource, onEditSecondary }: {
-  aiId: string; segmentId?: string; taskId?: string; secondary?: boolean; onSettings(): void; onEditSource(id: string): void; onEditSecondary(): void;
-}) {
-  const router = usePreparedConversation(aiId);
-  useSubScreenLifecycle(router.state.setCurrentSubScreen, 'summary', 'summary');
-  if (router.unavailableReason) {
-    return <ConversationUnavailable reason={router.unavailableReason} onBack={router.returnToConversations} />;
-  }
-  if (router.preparing || !router.state.currentSession) return <RouteLoading />;
-  if (taskId) return <ChatSummaryTaskScreen key={`${router.state.currentSession.id}:${taskId}`}
-    conversationId={router.state.currentSession.id} taskId={taskId} onBack={router.routeBack} onSettings={onSettings} onEditSummary={onEditSource} onEditSecondary={onEditSecondary} />;
-  if (secondary) return <ChatSecondarySummaryScreen key={router.state.currentSession.id}
-    conversationId={router.state.currentSession.id} onBack={router.routeBack} onEditSource={onEditSource} />;
-  return <ChatSummaryEditorScreen key={`${router.state.currentSession.id}:${segmentId ?? 'new'}`}
-    conversationId={router.state.currentSession.id} segmentId={segmentId} onBack={router.routeBack} onEditSource={onEditSource}
-  />;
-}
-export function ChatSummarySettingsRouteScreen({ aiId }: { aiId: string }) {
-  const router = usePreparedConversation(aiId);
-  useSubScreenLifecycle(router.state.setCurrentSubScreen, 'summary', 'summary');
-  if (router.unavailableReason) return <ConversationUnavailable reason={router.unavailableReason} onBack={router.returnToConversations} />;
-  if (router.preparing || !router.state.currentSession) return <RouteLoading />;
-  return <ChatSummarySettingsScreen key={router.state.currentSession.id} conversationId={router.state.currentSession.id} onBack={router.routeBack}
-    assistantId={aiId} />;
-}
-
-export function ChatModelSettingsRouteScreen({
-  aiId,
-  onManageModels,
-}: {
-  aiId: string;
-  onManageModels: (kind: 'ocr' | 'tts') => void;
-}) {
-  const router = usePreparedConversation(aiId);
-  const { state } = router;
-  useSubScreenLifecycle(state.setCurrentSubScreen, 'modelSettings', 'menu');
-  if (router.preparing || !state.currentAI) {
-    return <RouteLoading />;
-  }
-  return (
-    <AIModelSettings
-      key={state.currentAI.id}
-      aiAssistant={state.currentAI}
-      onBack={() => {
-        state.handleBackToMenu();
-        router.routeBack();
-      }}
-      onUpdated={state.handleModelSettingsUpdated}
-      auxiliaryModelSettings={(navigate) =>
-        <ChatImageModelPicker assistantId={state.currentAI.id} onManageModels={() => navigate(() => onManageModels('ocr'))} />
-      }
-      onManageVoiceModels={() => onManageModels('tts')}
-    />
-  );
-}
-
-export function ChatSettingsRouteScreen({ aiId }: { aiId: string }) {
-  const router = usePreparedConversation(aiId);
-  const { state } = router;
-  useSubScreenLifecycle(state.setCurrentSubScreen, 'chatSettings', 'menu');
-  if (router.preparing || !state.currentAI) {
-    return <RouteLoading />;
-  }
-  return (
-    <ChatSettings
-      key={state.currentAI.id}
-      aiAssistant={state.currentAI}
-      conversationId={state.currentSession!.id}
-      onChooseFixedStart={() => router.returnToConversation(aiId)}
-      chatBackgroundKey={state.currentSession?.id
-        ? `single:${state.currentSession.id}`
-        : `single:${state.currentAI.id}`}
-      onBack={() => {
-        state.handleBackToMenu();
-        router.routeBack();
-      }}
-      onUpdated={state.handleChatSettingsUpdated}
-    />
-  );
-}
-
 export function ChatFilePreviewRouteScreen({ aiId }: { aiId: string }) {
   const router = usePreparedConversation(aiId);
   useSubScreenLifecycle(router.state.setCurrentSubScreen, 'filePreview', null);
@@ -604,9 +512,11 @@ export function CreateGroupRouteScreen() {
 export function GroupConversationRouteScreen({
   groupId,
   routeFocused,
+  onOpenAssistantProfile,
 }: {
   groupId: string;
   routeFocused: boolean;
+  onOpenAssistantProfile: (aiId: string) => void;
 }) {
   const router = usePreparedGroup(groupId);
   const {
@@ -661,6 +571,7 @@ export function GroupConversationRouteScreen({
       isActive={routeFocused && groupChatVisible}
       currentUser={currentUser}
       aiAssistants={state.aiList}
+      onOpenAssistantProfile={onOpenAssistantProfile}
       onOpenFilePreview={(params) => router.openGroupFilePreview(groupId, params)}
       onOpenMenu={() => router.openGroupSubScreen(groupId, 'menu')}
       onGoBack={() => {

@@ -1,8 +1,8 @@
 /** Host 装配身份空间与 Memory 自有向量选择，不向 Memory 泄露其他 Feature 的仓储。 */
 import { getAssistantDisplayName, aiAssistantRepository, getAuxiliaryModelSelection, requireAuxiliaryModel, resolveAuxiliaryModel, subscribeAuxiliaryModelsChanged } from '@features/assistants';
 import { createAIClient } from '@platform/ai';
-import { configureMemoryRuntimeDependencies, memoryEntryRepository, memoryRepository, MemoryEmbeddingError } from '@features/memory/composition';
-import { configureMemoryEmbeddingQueue, refreshMemoryEmbeddingModel } from '../runtime/MemoryEmbeddingQueueCoordinator';
+import { configureMemoryRuntimeDependencies, memoryEntryRepository, memoryRepository, MemoryEmbeddingError, synchronizeMemoryEmbeddingModel } from '@features/memory/composition';
+import { configureMemoryEmbeddingQueue, refreshMemoryEmbeddingModel, updateMemoryEmbeddingModel } from '../runtime/MemoryEmbeddingQueueCoordinator';
 import { convertExitedGroupHistoryToMemory } from '../application/ConvertExitedGroupHistoryToMemory';
 
 let configured = false;
@@ -16,28 +16,48 @@ export function configureMemoryRuntime(): void {
     return { poolId: pool.id, assistantId: assistant.id, assistantName: getAssistantDisplayName(assistant),
       assistantAvatar: assistant.avatar, isHost: assistant.isHostAI };
   };
+  const resolveEmbeddingModel = async () => {
+    const settings = await memoryEntryRepository.getEmbeddingSettings();
+    if (!settings.enabled) return null;
+    const model = await resolveAuxiliaryModel({ capabilityKind: 'embedding', modelConfigId: settings.modelConfigId });
+    if (!model) return null;
+    return { id: model.modelConfigId, name: model.modelConfigName,
+      fingerprint: JSON.stringify([model.modelConfigId, model.modelConfigUpdatedAt, model.baseURL, model.model, model.metadataJson]),
+      baseURL: model.baseURL, apiKey: model.apiKey, model: model.model, metadataJson: model.metadataJson };
+  };
   configureMemoryRuntimeDependencies({
     repository: memoryEntryRepository,
     convertExitedGroupHistory: convertExitedGroupHistoryToMemory,
     resolveMemorySpace,
     async listMemorySpaces() {
-      const assistants = await aiAssistantRepository.getAll();
-      return Promise.all(assistants.map((assistant) => resolveMemorySpace(assistant.id)));
+      // 星空只消费身份摘要；已列出的身份不再逐个读取完整模型配置。
+      const assistants = await aiAssistantRepository.listSummaries();
+      return Promise.all(assistants.map(async (assistant) => {
+        const pool = await memoryRepository.getOrCreatePairPool({ aiAssistantId: assistant.id });
+        return { poolId: pool.id, assistantId: assistant.id, assistantName: getAssistantDisplayName(assistant),
+          assistantAvatar: assistant.avatar, isHost: assistant.isHostAI };
+      }));
     },
-    async resolveEmbeddingModel() {
-      const model = await resolveAuxiliaryModel({ capabilityKind: 'embedding', modelConfigId: await memoryEntryRepository.getEmbeddingModelId() });
-      if (!model) return null;
-      return { id: model.modelConfigId, name: model.modelConfigName,
-        fingerprint: JSON.stringify([model.modelConfigId, model.modelConfigUpdatedAt, model.baseURL, model.model, model.metadataJson]),
-        baseURL: model.baseURL, apiKey: model.apiKey, model: model.model, metadataJson: model.metadataJson };
-    },
+    resolveEmbeddingModel,
+    withEmbeddingMaintenance: updateMemoryEmbeddingModel,
     async getEmbeddingModelSettings() {
-      return getAuxiliaryModelSelection({ capabilityKind: 'embedding', modelConfigId: await memoryEntryRepository.getEmbeddingModelId() });
+      return getAuxiliaryModelSelection({ capabilityKind: 'embedding', modelConfigId: (await memoryEntryRepository.getEmbeddingSettings()).modelConfigId });
     },
     async selectEmbeddingModel(modelConfigId) {
       if (modelConfigId !== null) await requireAuxiliaryModel(modelConfigId, 'embedding');
-      await memoryEntryRepository.setEmbeddingModelId(modelConfigId);
-      refreshMemoryEmbeddingModel();
+      await updateMemoryEmbeddingModel(async () => {
+        await memoryEntryRepository.setEmbeddingModelId(modelConfigId);
+        await synchronizeMemoryEmbeddingModel();
+      });
+    },
+    async clearEmbeddings() {
+      await updateMemoryEmbeddingModel(async () => memoryEntryRepository.clearEmbeddings(await resolveEmbeddingModel()));
+    },
+    async setEmbeddingEnabled(enabled) {
+      await updateMemoryEmbeddingModel(async () => {
+        await memoryEntryRepository.setEmbeddingEnabled(enabled);
+        await synchronizeMemoryEmbeddingModel();
+      });
     },
     async embed(text, model, signal) {
       const controller = new AbortController();

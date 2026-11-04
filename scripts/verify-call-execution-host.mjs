@@ -34,7 +34,7 @@ const gate = load('src/host/composition/ensureHostDatabaseReady.ts', {
 });
 await gate.ensureHostDatabaseReady();
 assert.deepEqual(order, ['restore', 'database'], '没有备份恢复任务时也必须等待普通 bootstrap');
-const rejectTask = load('src/host/notifications/CallNotificationActionHeadlessTask.ts', {
+const rejectTask = load('src/host/notifications/CallNotificationAction.ts', {
   '../composition/ensureHostDatabaseReady': gate,
   '@features/calls': {
     async getCallSession(id) { order.push('query'); return { id, aiAssistantId: 'ai', chatSessionId: 'chat' }; },
@@ -42,10 +42,10 @@ const rejectTask = load('src/host/notifications/CallNotificationActionHeadlessTa
   },
 });
 order = [];
-await rejectTask.runCallNotificationActionHeadlessTask({ callId: 'call', aiId: 'ai', sessionId: 'chat', notificationAction: 'reject' });
+await rejectTask.executeCallNotificationAction({ callId: 'call', aiId: 'ai', sessionId: 'chat', notificationAction: 'reject' });
 assert.deepEqual(order, ['restore', 'database', 'query', 'reject']);
 
-const leaveTask = load('src/host/notifications/TogetherListeningNotificationActionHeadlessTask.ts', {
+const leaveTask = load('src/host/notifications/TogetherListeningNotificationAction.ts', {
   '../composition/ensureHostDatabaseReady': gate,
   '@features/togetherListening': {
     async getTogetherListeningActivityById(id) { order.push('query'); return { id, hostAiId: 'ai', chatSessionId: 'chat' }; },
@@ -53,7 +53,7 @@ const leaveTask = load('src/host/notifications/TogetherListeningNotificationActi
   },
 });
 order = [];
-await leaveTask.runTogetherListeningNotificationActionHeadlessTask({ activityId: 'activity', hostAiId: 'ai', chatSessionId: 'chat', notificationAction: 'leave' });
+await leaveTask.executeTogetherListeningNotificationAction({ activityId: 'activity', hostAiId: 'ai', chatSessionId: 'chat', notificationAction: 'leave' });
 assert.deepEqual(order, ['restore', 'database', 'query', 'leave']);
 
 function harness({ alive = true, pending = [], deferInitialize = false, failInitialize = false, deferDrain = false } = {}) {
@@ -75,7 +75,7 @@ function harness({ alive = true, pending = [], deferInitialize = false, failInit
     },
     getSnapshot: () => ({ isListening: true, async stopRealtimeSpeech() { calls.push('mute'); }, async startRealtimeSpeech() { calls.push('unmute'); } }),
   };
-  const entry = load('src/host/runtime/CallExecutionHeadlessTask.ts', {
+  const entry = load('src/host/runtime/ExecuteCall.ts', {
     '../composition/ensureHostDatabaseReady': { async ensureHostDatabaseReady() { calls.push('bootstrap'); } },
     '@features/calls': {
       async getCallSession(id) { return { id, state: 'active' }; },
@@ -102,7 +102,7 @@ function harness({ alive = true, pending = [], deferInitialize = false, failInit
     get finished() { return finished; },
     command(data) { commandListener?.(data); },
     cancel() { alive = false; cancellationListener?.({ callId: 'call' }); },
-    run: () => entry.runCallExecutionHeadlessTask({ callId: 'call' }),
+    run: () => entry.executeCall({ callId: 'call' }),
   };
 }
 const command = { callId: 'call', requestId: 'command', action: 'hangup', muted: false };

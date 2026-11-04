@@ -11,14 +11,16 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { History, Pin, PinOff, Star } from 'lucide-react-native';
+import { Check, History, Pin, PinOff, Star, Sticker, TextSelect } from 'lucide-react-native';
 import { useTheme } from '@shared/theme';
+import type { ChatStickerAction } from './useChatStickerAction';
 
 interface ChatMessageActionMenuProps {
   visible: boolean;
   onClose: () => void;
   position?: { x: number; y: number } | null;
   onCopy?: () => void;
+  onSelectText?: () => void;
   onForward?: () => void;
   onRewrite?: () => void;
   onRegenerate?: () => void;
@@ -29,6 +31,7 @@ interface ChatMessageActionMenuProps {
   onTranslate?: () => void;
   onFavorite?: () => void;
   isFavorited?: boolean;
+  stickerAction?: ChatStickerAction | null;
   onToggleVoiceTranscript?: () => void;
   isVoiceTranscriptExpanded?: boolean;
   onFixedStart?: () => void;
@@ -51,6 +54,7 @@ function ChatMessageActionMenu({
   onClose,
   position,
   onCopy,
+  onSelectText,
   onForward,
   onRewrite,
   onRegenerate,
@@ -61,6 +65,7 @@ function ChatMessageActionMenu({
   onTranslate,
   onFavorite,
   isFavorited = false,
+  stickerAction,
   onToggleVoiceTranscript,
   isVoiceTranscriptExpanded = false,
   onFixedStart,
@@ -69,9 +74,10 @@ function ChatMessageActionMenu({
   const theme = useTheme();
   const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = useWindowDimensions();
 
-  // 槽位只随屏幕宽度换行，不随消息能力增删，避免同一操作在不同消息间跳位。
-  const actions = [
+  // 通用槽位保持顺序，表情专属操作追加到末尾，避免原有操作跳位。
+  const actions: ActionItem[] = [
     { key: 'copy', label: '复制', icon: 'copy-outline', onPress: onCopy },
+    { key: 'selectText', label: '选择文字', icon: 'text-outline', onPress: onSelectText },
     { key: 'rewrite', label: '改写', icon: 'pencil-outline', onPress: onRewrite },
     { key: 'rewriteAI', label: '重写', icon: 'reload-outline', onPress: onRegenerate },
     { key: 'history', label: '历史版本', icon: 'time-outline', onPress: onHistory },
@@ -88,7 +94,12 @@ function ChatMessageActionMenu({
     { key: 'translate', label: '翻译', icon: 'language-outline', onPress: onTranslate },
     { key: 'forward', label: '分享', icon: 'arrow-redo-outline', onPress: onForward },
     { key: 'favorite', label: isFavorited ? '已收藏' : '收藏', icon: 'star-outline', onPress: onFavorite },
-  ] satisfies ActionItem[];
+  ];
+
+  if (stickerAction) actions.push({
+    key: 'addSticker', label: stickerAction.isAdded ? '已添加' : '添加表情包',
+    icon: 'happy-outline', onPress: stickerAction.add,
+  });
 
   if (!actions.some((item) => item.onPress)) return null;
 
@@ -137,11 +148,17 @@ function ChatMessageActionMenu({
         activeOpacity={0.6}
         accessibilityRole="button"
         accessibilityLabel={item.label}
-        accessibilityState={{ disabled: !action, ...(item.key === 'favorite' ? { selected: isFavorited } : {}) }}
+        accessibilityState={{ disabled: !action, ...(item.key === 'favorite'
+          ? { selected: isFavorited }
+          : item.key === 'addSticker' ? { selected: stickerAction!.isAdded } : {}) }}
         disabled={!action}
         onPress={action ? () => { action(); onClose(); } : undefined}
       >
-        {item.key === 'history' ? <History size={22} color={theme.colors.brand.onPrimary} /> : item.key === 'favorite' ? <Star size={22} color={theme.colors.brand.onPrimary} fill={isFavorited ? theme.colors.brand.onPrimary : 'none'} /> : item.key === 'fixedStart'
+        {item.key === 'addSticker'
+          ? (stickerAction!.isAdded
+            ? <Check size={22} color={theme.colors.brand.onPrimary} />
+            : <Sticker size={22} color={theme.colors.brand.onPrimary} />)
+          : item.key === 'selectText' ? <TextSelect size={22} color={theme.colors.brand.onPrimary} /> : item.key === 'history' ? <History size={22} color={theme.colors.brand.onPrimary} /> : item.key === 'favorite' ? <Star size={22} color={theme.colors.brand.onPrimary} fill={isFavorited ? theme.colors.brand.onPrimary : 'none'} /> : item.key === 'fixedStart'
           ? (isFixedStart ? <PinOff size={22} color={theme.colors.brand.onPrimary} /> : <Pin size={22} color={theme.colors.brand.onPrimary} />)
           : <Ionicons name={item.icon} size={22} color={theme.colors.brand.onPrimary} />}
         <Text style={[styles.actionLabel, { color: theme.colors.brand.onPrimary }]}>{item.label}</Text>

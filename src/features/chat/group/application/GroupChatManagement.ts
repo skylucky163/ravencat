@@ -25,6 +25,7 @@ export interface CreateGroupChatParams {
     model: string;
     apiKey: string;
     apiBaseUrl: string;
+    serviceConfigId?: string | null;
     systemPrompt?: string | null;
     temperature?: number | null;
     topP?: number | null;
@@ -259,6 +260,7 @@ export async function createGroupChat(
       model: normalized.adminModel,
       apiKey: normalized.adminApiKey,
       apiBaseUrl: normalized.adminApiBaseUrl,
+      serviceConfigId: params.admin.serviceConfigId,
       systemPrompt: normalized.adminSystemPrompt,
       temperature: params.admin.temperature ?? null,
       topP: params.admin.topP ?? null,

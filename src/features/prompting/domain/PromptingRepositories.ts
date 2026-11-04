@@ -10,7 +10,6 @@ import type {
   AssistantPromptDefinitionState,
   AssistantPromptDefinitionOverride,
   AssistantUserPrompt,
-  PromptMigrationOrphan,
   PromptLanguageMode,
 } from './Prompting';
 import type { PromptScenarioId } from '@shared/prompt';
@@ -54,5 +53,4 @@ export interface AssistantPromptConfigurationRepository {
   saveAssistantUserPrompt(prompt: AssistantUserPrompt): Promise<AssistantUserPrompt>;
   saveAssistantUserPrompts(prompts: AssistantUserPrompt[]): Promise<AssistantUserPrompt[]>;
   deleteAssistantUserPrompt(id: string, assistantId: string): Promise<boolean>;
-  listMigrationOrphans(): Promise<PromptMigrationOrphan[]>;
 }

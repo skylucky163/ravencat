@@ -154,7 +154,7 @@ export function BubbleSkinSettings() {
           </>
         )}
       </ThemedSurface>
-      <ModalSheet visible={renamingSkin !== null} onClose={() => setRenamingSkin(null)} title="修改装扮名称" avoidKeyboard>
+      <ModalSheet visible={renamingSkin !== null} onClose={() => setRenamingSkin(null)} title="修改装扮名称">
         <View style={styles.renameSheet}>
           <TextInput style={styles.nameInput} value={nameDraft} onChangeText={setNameDraft} maxLength={30} autoFocus selectTextOnFocus placeholder="输入装扮名称" placeholderTextColor={theme.colors.text.tertiary} />
           <Button title="保存" onPress={() => void saveRename()} disabled={busy || nameDraft.trim().length === 0} />

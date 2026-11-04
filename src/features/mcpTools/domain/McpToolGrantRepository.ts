@@ -15,5 +15,4 @@ export interface McpToolGrantRepository {
   listByServer(serverId: string): Promise<McpToolGrant[]>;
   listEnabledByServer(serverId: string): Promise<McpToolGrant[]>;
   upsert(input: UpsertMcpToolGrantInput): Promise<McpToolGrant>;
-  deleteByServer(serverId: string): Promise<number>;
 }

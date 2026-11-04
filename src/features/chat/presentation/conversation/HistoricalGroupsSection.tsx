@@ -72,7 +72,7 @@ export default function HistoricalGroupsSection({ assistantId }: { assistantId: 
           <Pressable accessibilityRole="button" disabled={busy} onPress={() => { setSelectedId(null); }}><Text style={styles.action}>‹ 历史群聊列表</Text></Pressable>
           <Text style={styles.description}>{selected.reason === 'removed' ? '已被移出该群聊' : '已退出该群聊'} · {new Date(selected.exitedAt).toLocaleString()}</Text>
           <ToggleField layout="inline" label="带入历史信息" value={selected.injectEnabled} onValueChange={enabled => { if (!busy) void toggle(selected, enabled); }}
-            hint="关闭不影响已转存的记忆；其他群聊背景为 0 时也不带入。" />
+            hint="关闭不影响已转存的记忆；其他群聊消息注入为 0 时也不带入。" />
           <Text selectable style={styles.text}>{historyText(selected) || '退出时没有可保留的摘要或聊天内容。'}</Text>
         </> : !loading && (histories.length === 0 ? <Text style={styles.description}>还没有已退出的群聊记录。重新加入的群使用正常群上下文，不在这里重复注入。</Text>
           : histories.map(record => <Pressable key={record.id} style={styles.row} accessibilityRole="button" onPress={() => { setSelectedId(record.id); setError(null); }}>

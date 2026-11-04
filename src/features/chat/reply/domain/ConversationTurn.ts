@@ -54,10 +54,12 @@ export interface ChatRegenerationState {
 
 /**
  * 本轮待提交条目：由 Agent timeline 转换边界提供已排序消息内容；
- * turn_run_id / turn_item_index 仍由 commit 事务统一赋值。
+ * turn_run_id 由提交事务赋值；提前提交的媒体在 T3 绑定最终 turn_item_index。
  */
 export interface ConversationTurnCommitItem {
   message: CreateMessageInput;
+  /** 工具阶段已经提交的消息；T3 只绑定该事实，用户已删除时不得重新插入。 */
+  committedMessageId?: number;
   /** fence 成功后、消息插入前，在同一 T3 transaction 中物化跨 Feature 事实。 */
   materializeInTransaction?: (
     transaction: import('@platform/persistence').DatabaseTransactionExecutor,

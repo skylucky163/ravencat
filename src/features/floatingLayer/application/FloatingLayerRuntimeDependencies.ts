@@ -18,15 +18,6 @@ export interface FloatingLayerRuntimeDependencies {
   native: {
     floatingLayer: FloatingLayerPort;
   };
-  executeFloatingMessage(data: FloatingMessageTaskData): Promise<void>;
-}
-
-export interface FloatingMessageTaskData {
-  action?: string;
-  text?: string;
-  correlationId?: string;
-  createdAtEpochMs?: number;
-  screenshotCorrelationId?: string;
 }
 
 const floatingLayerRuntimeSlot = createRuntimeSlot<FloatingLayerRuntimeDependencies>(

@@ -225,7 +225,7 @@ export default function McpServerConfigScreen({
   const [authMode, setAuthMode] = useState<McpServerAuthMode>('none');
   const [bearerToken, setBearerToken] = useState('');
   const [hasSavedToken, setHasSavedToken] = useState(false);
-  const [enabled, setEnabled] = useState(false);
+  const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [discovery, setDiscovery] = useState<McpConnectionTestResult | null>(null);
@@ -299,31 +299,28 @@ export default function McpServerConfigScreen({
     setSaving(true);
     setError(null);
     try {
-      await saveMcpServer({ id: serverId, name, url, description, assistantIds, enabled, authMode,
+      await saveMcpServer({ id: serverId, name, url, description, assistantIds,
+        enabled: initialServerId === null || enabled, authMode,
         bearerToken: bearerToken.trim() || undefined });
       onBack();
     } catch (saveError) {
       setError(getErrorMessage(saveError));
       setSaving(false);
     }
-  }, [serverId, name, url, description, assistantIds, enabled, authMode, bearerToken, onBack]);
+  }, [serverId, initialServerId, name, url, description, assistantIds, enabled, authMode, bearerToken, onBack]);
 
   const handleToggleEnabled = useCallback(async (next: boolean) => {
-    if (!serverId) {
-      setEnabled(next);
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
-      const updated = await setMcpServerEnabled(serverId, next);
+      const updated = await setMcpServerEnabled(initialServerId!, next);
       setEnabled(updated.enabled);
     } catch (toggleError) {
       setError(getErrorMessage(toggleError));
     } finally {
       setSaving(false);
     }
-  }, [serverId]);
+  }, [initialServerId]);
 
   const handleTestConnection = useCallback(async (protocolEra: McpProtocolEra) => {
     setTesting(true);
@@ -457,7 +454,7 @@ export default function McpServerConfigScreen({
           <Text style={styles.infoValue}>Streamable HTTP</Text>
         </View>
 
-        <ToggleField layout="inline" rowStyle={styles.infoRow}
+        {initialServerId !== null && <ToggleField layout="inline" rowStyle={styles.infoRow}
           label="启用 Server"
           value={enabled}
           onValueChange={(next) => {
@@ -466,7 +463,7 @@ export default function McpServerConfigScreen({
           disabled={saving || testing}
         >
           <Text style={styles.infoLabel}>启用 Server</Text>
-        </ToggleField>
+        </ToggleField>}
 
         {savedConnection !== null && savedConnection.connectionStatus === 'available' && (
           <View style={styles.infoRow}>

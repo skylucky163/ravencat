@@ -68,6 +68,11 @@ vm.runInNewContext(transpiled, {
   Reflect,
 });
 const timeline = module.exports;
+const pendingUser = { id: 1793441468716, isMe: true, clientMessageId: 'user-submission:stable' };
+assert.equal(timeline.getAgentTimelineRenderKey(pendingUser),
+  timeline.getAgentTimelineRenderKey({ ...pendingUser, id: 10349 }), '用户消息落库前后复用同一列表身份');
+assert.notEqual(timeline.getAgentTimelineRenderKey(pendingUser),
+  timeline.getAgentTimelineRenderKey({ ...pendingUser, clientMessageId: 'user-submission:next' }), '同文新消息不能复用上一条身份');
 
 const sessionId = 'session_case_5';
 const runId = 'run_case_5';

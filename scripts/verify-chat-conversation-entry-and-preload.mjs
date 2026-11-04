@@ -803,6 +803,7 @@ function createPreloadHarness() {
   });
   const navigation = load('src/features/chat/presentation/shell/useChatNavigation.ts', { 'react-native': { Keyboard: { dismiss() {} } } });
   const screen = load('src/features/chat/presentation/shell/useChatScreen.ts', {
+    '@features/assistants': { subscribeAIAssistantUpdated: () => () => {} },
     './useAIAssistants': { __esModule: true, default: () => ({ aiList: [ai], aiListReady: false, loadAIAssistants: async () => [ai], removeAIAssistant: async () => {} }) },
     './useChatConversationEntry': entry,
     './useChatNavigation': navigation,
@@ -831,6 +832,7 @@ function createPreloadHarness() {
     'expo-router': { Stack },
     'react-native-gesture-handler': { GestureHandlerRootView: 'Root' },
     '@host/KimiPhoneHost': { __esModule: true, default: ({ children }) => children },
+    '@host/navigation/StickerProgressNavigationBoundary': { __esModule: true, default: ({ children }) => children },
   });
   let layoutRenderer;
   let providerRenderer;

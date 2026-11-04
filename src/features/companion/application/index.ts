@@ -65,7 +65,7 @@ export type {
   CompanionNotificationDiagnostics,
   CompanionNotificationPort,
 } from './CompanionNotificationPort';
-export { runCompanionWakeHeadlessTask, cancelCompanionWakeExecution } from './CompanionWakeHeadlessTask';
+export { runCompanionWake, cancelCompanionWakeExecution } from './ExecuteCompanionWake';
 export {
   runAIScheduleAutonomousAgent,
   type RunAIScheduleAutonomousAgentInput,
@@ -113,23 +113,8 @@ export {
   reconcileProactiveNativeRuntimeState,
   recordProactiveAgentRunState,
 } from './ProactiveAgentRunState';
-export {
-  listProactiveLifeFuture,
-  listProactiveLifeHistory,
-  loadProactiveLifeOverview,
-} from './ProactiveLifeReadQueries';
-export type {
-  ProactiveLifeFutureCursor,
-  ProactiveLifeFutureItem,
-  ProactiveLifeFutureQuery,
-  ProactiveLifeHistoryCursor,
-  ProactiveLifeHistoryItem,
-  ProactiveLifeHistoryQuery,
-  ProactiveLifeOverview,
-  ProactiveLifeOverviewQuery,
-  ProactiveLifeRunningItem,
-  ProactiveLifeSourceType,
-} from './ProactiveLifeReadQueries';
+export { loadProactiveLifeCalendar, listProactiveLifeDay } from './ProactiveLifeReadQueries';
+export type { ProactiveLifeCalendarItem, ProactiveLifeCalendarCursor, ProactiveLifeDayCount, ProactiveLifeDayRange } from './ProactiveLifeReadQueries';
 
 export {
   classifyCompanionProviderError,

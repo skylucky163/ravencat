@@ -81,7 +81,7 @@ export default function CallHistoryScreen({ assistantId, onBack, onOpenRecord }:
           </View>
         </ThemedSurface>
       </Pressable>} />
-    <ModalSheet visible={editing !== null} title="修改通话标题" avoidKeyboard onClose={() => { if (!busy) setEditing(null); }}>
+    <ModalSheet visible={editing !== null} title="修改通话标题" onClose={() => { if (!busy) setEditing(null); }}>
       <View style={styles.form}>
         <InputField label="标题" value={title} onChangeText={setTitle} maxLength={100} editable={!busy} error={renameError} hint="同一个 AI 的通话标题不能重复" />
         <Button title={busy ? '保存中…' : '保存'} disabled={busy} onPress={() => { void save(); }} />

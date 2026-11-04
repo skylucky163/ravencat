@@ -327,20 +327,20 @@ export function useAttachmentDraft() {
     return draftAttachments.map(buildReadyAttachment).filter((attachment): attachment is ChatAttachment => attachment !== null);
   }, [draftAttachments]);
 
-  /** 发送持有源文件至结束；失败乐观气泡的重试持有由 send flow 独立负责。 */
+  /** 调用方在气泡接管或群聊提交成功时消费草稿；发送期间独立持有源文件。 */
   const withAttachmentSubmission = useCallback(async <T,>(
-    submit: (attachments: ChatAttachment[]) => Promise<T>,
-    shouldClearDraft: (result: T) => boolean,
+    submit: (attachments: ChatAttachment[], consumeDraft: () => void) => Promise<T>,
   ): Promise<T> => {
     const draft = draftRef.current;
     const operationId = operationIdRef.current;
     const attachments = draft.map(buildReadyAttachment).filter((attachment): attachment is ChatAttachment => attachment !== null);
     const releaseSubmission = retainChatAttachmentDraftFiles(attachments);
-    try {
-      const result = await submit(attachments);
+    const consumeDraft = () => {
       // 发送途中移除单张仍属于同批；重新选择的下一批不能被旧提交清空。
-      if (shouldClearDraft(result) && operationIdRef.current === operationId) clearAttachment();
-      return result;
+      if (operationIdRef.current === operationId) clearAttachment();
+    };
+    try {
+      return await submit(attachments, consumeDraft);
     } finally {
       releaseSubmission();
     }

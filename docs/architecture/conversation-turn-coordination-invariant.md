@@ -109,10 +109,14 @@ claim 必须写入固定输入区间、active run 身份和 claim 后 revision�
 
 ### T3：assistant 回合提交
 
-T3 是 canonical assistant 回合的唯一提交点。一个事务必须同时：
+同一回合 owner 区分“输出已提交”和“整轮已完成”。普通回复与自主回合的图片、表情在工具完成后，先经 `commitOutput` 的原 run/cursor/revision fence 提交消息、媒体引用和完整可见版本；不推进回复游标、不递增 revision、不释放执行槽，也不发出整轮完成回调。后续模型失败、取消或新输入只撤销未来输出，不回滚已经发送的媒体。
+
+提前输出使用稳定 `clientMessageId` 和正式消息 ID，`turn_item_index` 暂为空。T3 根据时间线返回的 `committedMessageId` 将原消息绑定到最终顺序，不重新插入、不重放交付或通知；用户已经删除的输出不重建。这个空索引在完成前表示独立提交的输出，完成后才取得整轮候选归属。`regenerate` 不提前发送，仍保留完整替换的原子性；语音暂存物化也仍属于 T3。
+
+T3 是 canonical assistant 回合的唯一终结提交点。一个事务必须同时：
 
 - 校验 cursor、revision 和 active run 身份；
-- 写入本轮全部 assistant、reasoning 和 tool timeline items；
+- 写入本轮其余 assistant、reasoning 和 tool timeline items，并绑定已提交输出的身份与最终顺序；
 - 更新 session preview；
 - 将 run 标记为 `committed`；
 - 有正式 assistant 回复时按工具实际执行顺序保存本会话、本 AI 的工具包开关；
@@ -124,9 +128,8 @@ T3 是 canonical assistant 回合的唯一提交点。一个事务必须同时�
 事务快照取得，提交后才交给 Media 裁决。页面隐藏是展示投影，不提前删除旧消息。
 已有摘要与处理任务按产品契约保留，不因重写回滚或阻止执行。
 
-fence 失败表示 run 已失去提交资格：事务不得写入任何 item、更新 preview 或推进游标，
-也不得为旧 run 写错误气泡或自动重新提交。canonical assistant 内容不得在 T3 前作为
-最终消息事实落库。
+fence 失败表示 run 已失去提交资格：本次事务不得写入任何 item、更新 preview 或推进游标，
+也不得为旧 run 写错误气泡或自动重新提交。此前已成功提交的图片、表情保留；其余 canonical 正文不提前落库。
 
 工具包状态随 T3 同事务提交；打开后持续保留，直到 AI 主动关闭，不按轮数到期。
 同一包多次开关以最后一次成功操作为准；失败、取消、supersede、fence 失败和事务回滚不改变持久状态。
@@ -188,7 +191,7 @@ revision 只在所有权或终态变化时递增，合法位置只有：
 T1 user message commit
 → executionMode: delegate_to_android_host
 → Android-backed execution host
-→ ConversationTurnExecutionTask
+→ ApplicationExecutionHost → ExecuteConversationTurns（共享应用运行身份）
 → coordinator claim + execute，并等待 terminal
 → T3 assistant commit
 → AIMessageDeliveryCoordinator
@@ -227,7 +230,7 @@ claim、孤儿接管、模型执行和 T3/T4，持续等待每个 run 到达 ter
 `AIMessageDeliveryCoordinator` 裁决。页面、Host、RavenCat 和通知模块不得分别维护
 第二套判定；delivery callback 只表达投影和交付观察，不表达 execution ownership。
 
-完整正文按稳定气泡身份逐条通知，不等待整轮工具结束；T3 仍独占 canonical 消息、回复游标和正式提交，已经交付的正文不重复通知。
+完整正文按稳定气泡身份逐条通知，不等待整轮工具结束；图片、表情随工具输出的正式提交立即交付。T3 独占回复游标推进与整轮终结，已经交付的正文或媒体不重复通知。
 
 UI、通知或 overlay 展示失败不得回滚已经提交的 Chat 事实。
 
@@ -242,7 +245,7 @@ T1～T4 事务内只允许 SQL、row/entity mapping、短小纯计算和不变�
 - canonical `user_reply` 只有一个产品级回合 owner；
 - 每个 run 使用固定输入区间；
 - active run 由持久事实、CAS 和数据库约束保护；
-- T3 fence 失败不产生部分 assistant 事实；
+- 每次输出或 T3 fence 失败均不产生该次提交的部分事实，先前已提交输出保持有效；
 - 页面不拥有普通 Chat 的后台执行生命周期；
 - recovery 只发现并委派，execution host 才 claim 和执行；
 - failed、cancelled 和 fence-failed 不被隐式 retry；

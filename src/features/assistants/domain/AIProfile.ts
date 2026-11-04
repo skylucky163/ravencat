@@ -25,7 +25,10 @@ export interface AIProfile {
   avatar: string | null;
   /** canonical 头像身份；avatar 是当前展示 URI，未迁移时直接来自 legacy 列。 */
   avatarMediaAssetId: string | null;
+  /** AI 个人空间封面，主页与朋友圈共用；空值使用打包的默认星空图。 */
+  profileCoverMediaAssetId: string | null;
   model: string;
+  serviceConfigId?: string | null;
   apiKey: string | null;
   apiBaseUrl: string | null;
   systemPrompt: string | null;
@@ -119,9 +122,11 @@ export function createAIProfile(
     nickname: data.nickname ?? null,
     avatar: data.avatar || null,
     avatarMediaAssetId: data.avatarMediaAssetId || null,
+    profileCoverMediaAssetId: data.profileCoverMediaAssetId ?? null,
     model: data.model || '',
     apiKey: data.apiKey || null,
     apiBaseUrl: data.apiBaseUrl || null,
+    serviceConfigId: data.serviceConfigId ?? null,
     systemPrompt: data.systemPrompt || null,
     temperature: data.temperature ?? null,
     topP: data.topP ?? null,

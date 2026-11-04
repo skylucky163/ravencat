@@ -1,0 +1,32 @@
+import { StyleSheet } from 'react-native';
+import type { PresentationTheme } from '@shared/theme';
+
+export const createBubbleSkinEditorStyles = (theme: PresentationTheme) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: theme.colors.background.screen },
+  body: { flex: 1 },
+  pageContent: { paddingBottom: 24 },
+  imageRow: { paddingHorizontal: 16, paddingTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  preview: { paddingVertical: 24, minHeight: 152, justifyContent: 'center' },
+  tabRow: { flexDirection: 'row', gap: 4, padding: 8, marginHorizontal: 8 },
+  tab: { flex: 1, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: theme.radius.md, backgroundColor: theme.colors.surface.muted },
+  tabSelected: { backgroundColor: theme.colors.brand.primary },
+  tabText: { fontSize: 13, color: theme.colors.text.primary },
+  tabSelectedText: { color: theme.colors.brand.onPrimary, fontWeight: '600' },
+  controlContent: { paddingHorizontal: 16, paddingTop: 8, gap: 8 },
+  parameterHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4 },
+  value: { fontSize: 13, color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  compactButton: { paddingHorizontal: 12, paddingVertical: 8 },
+  label: { fontSize: 13, color: theme.colors.text.secondary, lineHeight: 20 },
+  error: { color: theme.colors.feedback.error, fontSize: 12, paddingHorizontal: 16, paddingVertical: 4 },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  slots: { flexDirection: 'row', gap: 8 },
+  slot: { flex: 1, aspectRatio: 1, borderWidth: 1, borderStyle: 'dashed', borderColor: theme.colors.border.default,
+    borderRadius: theme.radius.md, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: theme.colors.surface.muted },
+  slotSelected: { borderColor: theme.colors.brand.primary, borderStyle: 'solid', borderWidth: 2 },
+  thumbnail: { width: '80%', height: '75%' },
+  slotLabel: { position: 'absolute', bottom: 2, fontSize: 10, color: theme.colors.text.secondary },
+  saveContent: { padding: 16, gap: 16 },
+  saveScroll: { flexShrink: 1 },
+  saveActions: { paddingHorizontal: 16, paddingBottom: 16 },
+});

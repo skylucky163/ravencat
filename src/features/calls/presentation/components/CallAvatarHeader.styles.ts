@@ -11,7 +11,7 @@ export const createCallAvatarHeaderStyles = (theme: PresentationTheme) =>
     avatar: {
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(255,255,255,0.22)',
+      backgroundColor: 'transparent',
       borderWidth: 1,
       borderColor: 'rgba(255,255,255,0.38)',
       overflow: 'hidden',

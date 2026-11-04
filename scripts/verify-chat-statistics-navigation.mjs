@@ -37,7 +37,7 @@ const shared = {
   '@shared/theme': { ThemedSurface: 'ThemedSurface', useTheme: () => theme, useThemedStyles: (factory) => factory(theme) },
   '@shared/ui': { NavigationHeader: 'NavigationHeader', AIInfoCard: 'AIInfoCard' },
   '@shared/ui/NavigationHeader': { __esModule: true, default: 'NavigationHeader' },
-  'lucide-react-native': { HeartHandshake: 'HeartHandshake', BookOpen: 'BookOpen', History: 'History', Search: 'Search' },
+  'lucide-react-native': { HeartHandshake: 'HeartHandshake', BookOpen: 'BookOpen', History: 'History', Search: 'Search', UserRound: 'UserRound' },
   '@expo/vector-icons': { Ionicons: 'Ionicons' },
   '@features/assistants': { getAssistantDisplayName: (assistant) => assistant.nickname || assistant.name },
 };

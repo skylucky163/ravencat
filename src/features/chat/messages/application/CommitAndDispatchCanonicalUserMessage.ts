@@ -21,6 +21,8 @@ export interface CommitAndDispatchCanonicalUserMessageParams {
   replyCallbacks?: ProcessAIReplyCallbacks;
   deliveryTiming?: 'paced' | 'immediate';
   correlationId?: string;
+  signal?: AbortSignal;
+  executionDeadlineAt?: number;
   repository?: IMessageRepository;
   materializeMessagesInTransaction?: (transaction: DatabaseTransactionExecutor, messages: readonly CommitMessageInput[]) => Promise<CommitMessageInput[]>;
   materializeMessageInTransaction?: (
@@ -70,6 +72,8 @@ export async function commitAndDispatchCanonicalUserMessage(
       },
       deliveryTiming: params.deliveryTiming,
       correlationId: params.correlationId,
+      signal: params.signal,
+      executionDeadlineAt: params.executionDeadlineAt,
     });
 
     return { userMessage: message, userMessages: messages, success: true, error: null };

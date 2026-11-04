@@ -31,7 +31,7 @@ const mocks = {
   'expo-router': { useFocusEffect: callback => React.useEffect(callback,[callback]) },
   '@expo/vector-icons': {Ionicons:'Ionicons'},
   'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
-  'lucide-react-native': Object.fromEntries(['Plus','Settings','Pin','PinOff','Star','History','ChevronRight','ChevronDown','Layers3'].map(name=>[name,name])),
+  'lucide-react-native': Object.fromEntries(['Plus','Settings','Pin','PinOff','Star','History','TextSelect','ChevronRight','ChevronDown','Layers3'].map(name=>[name,name])),
   '@shared/theme': { ThemedSurface:'ThemedSurface', useTheme: () => ({ colors: { brand: { primary: 'blue' }, text: { tertiary: 'gray',secondary:'gray' }, feedback: { error: 'red' }, border:{strong:'gray'} } }), useThemedStyles: () => ({}) },
   '@shared/ui': { AppTextInput: 'TextInput', KeyboardAvoidingContainer: 'KeyboardAvoidingContainer', NavigationHeader: 'NavigationHeader', Toggle: 'Toggle', ConfiguredModelPicker: 'ConfiguredModelPicker', useBusyBackHandler() {}, showAppDialog() {} },
   '@features/assistants': { getAuxiliaryModelSelection: async () => ({}), requireAuxiliaryModel: async () => {}, subscribeAuxiliaryModelsChanged: () => () => {} },
@@ -120,13 +120,13 @@ await act(async () => { input().props.onBlur(); });
 assert.equal(saves.length,0);
 assert.equal(input().props.value,'0','非法输入不写入，保留待修改');
 assert.equal(renderer.root.findByProps({accessibilityRole:'alert'}).children.join(''),'请填写正整数 token 阈值');
-await act(async () => { renderer.root.findByProps({accessibilityLabel:'自动生成摘要'}).props.onValueChange(false); });
+await act(async () => { renderer.root.findByProps({accessibilityLabel:'开启一级摘要'}).props.onValueChange(false); });
 assert.deepEqual(saves.pop(),{generationEnabled:false},'无效阈值不阻止独立开关保存');
 await act(async () => { renderer.update(React.createElement(Panel,{settings:{...settings,generationEnabled:false, injectEnabled:false},pendingTokens:9000,busy:false,onSave:value=>saves.push(value)})); });
 assert.equal(renderer.root.findByProps({accessibilityLabel:'开启二级摘要'}).props.disabled,false);
 assert.equal(input().props.editable,true,'暂停生成仍可调整保存的阈值');
 await act(async () => { renderer.update(React.createElement(Panel,{settings:{...settings,generationEnabled:false,fixedMessageId:41},pendingTokens:9000,busy:false,onSave:value=>saves.push(value)})); });
-assert.equal(renderer.root.findByProps({accessibilityLabel:'自动生成摘要'}).props.disabled,true);
+assert.equal(renderer.root.findByProps({accessibilityLabel:'开启一级摘要'}).props.disabled,true);
 assert.equal(renderer.root.findByProps({accessibilityLabel:'注入已有摘要'}).props.disabled,false);
 await act(async () => { renderer.root.findByProps({accessibilityLabel:'注入已有摘要'}).props.onValueChange(false); });
 assert.deepEqual(saves.pop(),{injectEnabled:false},'固定期间仍能独立关闭摘要注入');
@@ -258,9 +258,9 @@ await act(async () => {renderer.unmount();});
 
 const ContextSection = load('src/features/chat/presentation/conversation/ContextWindowSection.tsx').default;
 await act(async () => {renderer=TestRenderer.create(React.createElement(ContextSection,{values:{privatePrimary:'30',privateSecondary:'10',groupPrimary:'40',groupSecondary:'5'},fixed:true,onChange(){}}));});
-assert.equal(renderer.root.findByProps({accessibilityLabel:'当前单聊'}).props.editable,false);
-assert.equal(renderer.root.findByProps({accessibilityLabel:'当前单聊'}).props.value,'30');
-assert.equal(renderer.root.findByProps({accessibilityLabel:'单聊背景'}).props.editable,true);
+assert.equal(renderer.root.findByProps({accessibilityLabel:'当前单聊消息注入'}).props.editable,false);
+assert.equal(renderer.root.findByProps({accessibilityLabel:'当前单聊消息注入'}).props.value,'30');
+assert.equal(renderer.root.findByProps({accessibilityLabel:'单聊消息注入'}).props.editable,true);
 await act(async () => {renderer.unmount();});
 
 const Menu = load('src/features/chat/presentation/messages/components/ChatMessageActionMenu.tsx').default;

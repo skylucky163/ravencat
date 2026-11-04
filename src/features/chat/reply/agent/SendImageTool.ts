@@ -58,7 +58,7 @@ export const SendImageTool = {
           },
         },
         metadata: { fulfillsUserVisibleOutput: true, completionIntent: input.on_success },
-        modelContent: '图片消息已准备，等待与本轮 Chat 回复一起提交。无需重复发送或补充“已发送”。',
+        modelContent: '图片消息已准备，由 Chat 按当前回合策略提交与交付。无需重复发送或补充“已发送”。',
       };
     } catch (error) {
       const failure = mediaImageFailure(error);

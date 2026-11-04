@@ -115,7 +115,8 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
       const runs = await db.getAllAsync<{ run_id: string; kind: ChatTurnPresentationHistory['kind']; state: ChatTurnPresentationHistory['state']; reason: string | null; execution_status: string; created_at: string }>(
         `SELECT p.run_id, r.kind, p.state, p.reason, r.status AS execution_status, r.created_at FROM chat_turn_presentations p
            JOIN conversation_turn_runs r ON r.run_id = p.run_id JOIN sessions s ON s.id = p.session_id
-           LEFT JOIN messages origin ON origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
+           LEFT JOIN messages origin ON r.kind = 'autonomous' AND origin.session_id = r.session_id
+             AND origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
            WHERE p.session_id = ? AND CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END > COALESCE(s.visible_after_message_id, 0)
            AND (CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END >= ? OR r.run_id IN (SELECT value FROM json_each(?)))
          ORDER BY r.created_at, r.run_id`, [sessionId, window?.fromMessageId ?? 0, JSON.stringify(window?.runIds ?? [])]);
@@ -148,7 +149,8 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
         `WITH context_runs AS (
            SELECT r.rowid AS run_order, r.*, CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END AS context_anchor_id
            FROM conversation_turn_runs r
-           LEFT JOIN messages origin ON origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
+           LEFT JOIN messages origin ON r.kind = 'autonomous' AND origin.session_id = r.session_id
+             AND origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
          ) SELECT r.run_id, r.context_anchor_id AS input_high_watermark, r.created_at,
            CASE WHEN json_extract(i.snapshot_json, '$.kind') = 'tool' THEN i.snapshot_json ELSE i.shown_json END AS shown_json
          FROM context_runs r

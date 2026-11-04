@@ -10,9 +10,11 @@ import { getChatMessageRuntimeDependencies } from './ChatMessageRuntime';
 import { sendUserMessage, type AIAssistantConfig } from './SendUserMessage';
 import { canSelectChatMessage, getChatSelectionKey, MAX_CHAT_SELECTION_UNITS } from '../domain/ChatMessageSelection';
 import { sortChatTimelineMessages } from '../domain/ChatTimelineOrdering';
-import { buildGroupMentionModelText, buildReplyQuoteModelText, getMessageAttachments, getMessageSharedRecord, getMessageSticker, getMessageVoice, isToolStatusMessageMetadata, parseMessageMetadata } from '../domain/chatMessageMetadata';
+import { buildGroupMentionModelText, buildReplyQuoteModelText, getMessageAttachments, getMessageSharedRecord, getMessageSharedMoment, getMessageSticker, getMessageVoice, isToolStatusMessageMetadata, parseMessageMetadata } from '../domain/chatMessageMetadata';
 import type { SharedChatRecord, SharedChatRecordEntry } from '../domain/SharedChatRecord';
 import type { ChatMessage } from '../domain/ChatMessage';
+import { sharedContentInput, type SharedContent } from '../domain/SharedContent';
+
 
 export type ChatShareTarget = { kind: 'direct'; id: string; name: string; aiConfig: AIAssistantConfig }
   | { kind: 'group'; id: string; name: string };
@@ -77,7 +79,8 @@ export async function createChatShareSnapshot(source: { sessionId: string; name:
     ].filter(Boolean).join('\n');
     const attachments = getMessageAttachments(message).map((attachment) => ({ ...attachment, id: `share:${message.id}:${attachment.id}` }));
     const sticker = getMessageSticker(message);
-    if (text.trim() || attachments.length || sticker) entries.push({ author, createdAt: message.createdAt, kind: isTool ? 'tool_status' : 'speech', text, modelText, attachments, sticker });
+    const moment = getMessageSharedMoment(message);
+    if (text.trim() || attachments.length || sticker || moment) entries.push({ author, createdAt: message.createdAt, kind: isTool ? 'tool_status' : 'speech', text, modelText, attachments, sticker, ...(moment ? { moment } : {}) });
   }
   if (!entries.length) throw new Error('所选消息没有可分享的正文');
   // 与来源对象脱离；预览与发送消费同一份快照。
@@ -86,17 +89,18 @@ export async function createChatShareSnapshot(source: { sessionId: string; name:
   })) as SharedChatRecord;
 }
 
-export async function shareChatRecord(params: { target: ChatShareTarget; record: SharedChatRecord; comment: string; clientMessageId: string }): Promise<{ warning: string | null }> {
-  const { target, record, clientMessageId } = params;
+export async function shareChatContent(params: { target: ChatShareTarget; content: SharedContent; comment: string; clientMessageId: string }): Promise<{ warning: string | null }> {
+  const { target, content, clientMessageId } = params;
   const text = params.comment.trim();
+  const input = sharedContentInput(content);
   if (target.kind === 'group') {
     if (!await getGroupChat(target.id)) throw new Error('目标群聊已删除');
-    await sendGroupUserMessage({ groupId: target.id, text, sharedRecord: record, clientMessageId });
+    await sendGroupUserMessage({ groupId: target.id, text, ...input, clientMessageId });
     return { warning: null };
   }
   const session = await resolveCanonicalConversation({ aiId: target.id });
   if (isChatSendBlockedByCall(getActiveChatCall(), session.id, target.id)) throw new Error('目标 AI 正在通话，请结束通话后再分享');
-  const result = await sendUserMessage({ sessionId: session.id, text, sharedRecord: record, clientMessageId }, target.aiConfig);
+  const result = await sendUserMessage({ sessionId: session.id, text, ...input, clientMessageId }, target.aiConfig);
   if (!result.userMessage) throw new Error(result.error ?? '分享失败');
-  return { warning: result.success ? null : `记录已分享，AI 回复启动失败：${result.error}` };
+  return { warning: result.success ? null : `内容已分享，AI 回复启动失败：${result.error}` };
 }

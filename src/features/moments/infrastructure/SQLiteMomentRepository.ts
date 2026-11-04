@@ -273,11 +273,6 @@ async function insertSocialDelivery(
 export class SQLiteMomentRepository implements IMomentRepository {
   // ==================== 用户读路径 ====================
 
-  async listMomentsForUser(options?: MomentPageRequest): Promise<Moment[]> {
-    const database = this.#executor('moments.listMomentsForUser', 'runtime');
-    return this.readMomentsForUser(database, options);
-  }
-
   private async readMomentsForUser(database: DatabaseReadExecutor, options?: MomentPageRequest): Promise<Moment[]> {
     if (!options) {
       const rows = await database.getAllAsync<MomentRow>(
@@ -287,11 +282,17 @@ export class SQLiteMomentRepository implements IMomentRepository {
     }
 
     const cursor = createMomentCursorWhere(options.cursor, '');
+    const conditions = cursor.sql ? [cursor.sql] : [];
+    const params: (string | number)[] = [...cursor.params];
+    if (options.author) {
+      conditions.push('author_type = ? AND author_id = ?');
+      params.push(options.author.actorType, options.author.actorId);
+    }
     const rows = await database.getAllAsync<MomentRow>(
       `SELECT ${MOMENT_COLUMNS} FROM moments
-       ${cursor.sql ? `WHERE ${cursor.sql}` : ''}
+       ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
        ORDER BY created_at DESC, id DESC LIMIT ?`,
-      [...cursor.params, options.limit]
+      [...params, options.limit]
     );
     return rows.map(toMoment);
   }
@@ -334,6 +335,18 @@ export class SQLiteMomentRepository implements IMomentRepository {
       [momentId]
     );
     return row ? toMoment(row) : null;
+  }
+
+  async getMomentDetailForUser(momentId: string): Promise<MomentTimelineEntry | null> {
+    const database = this.#executor('moments.getMomentDetailForUser', 'surface');
+    return database.withExclusiveTransactionAsync(async transaction => {
+      const row = await transaction.getFirstAsync<MomentRow>(`SELECT ${MOMENT_COLUMNS} FROM moments WHERE id = ?`, [momentId]);
+      if (!row) return null;
+      const media = await transaction.getAllAsync<MomentMediaRow>(`SELECT ${MEDIA_COLUMNS} FROM moment_media WHERE moment_id = ? ORDER BY sort_order`, [momentId]);
+      const comments = await transaction.getAllAsync<MomentCommentRow>(`SELECT ${COMMENT_COLUMNS} FROM moment_comments WHERE moment_id = ? ORDER BY created_at, id`, [momentId]);
+      const likes = await transaction.getAllAsync<MomentLikeRow>(`SELECT ${LIKE_COLUMNS} FROM moment_likes WHERE moment_id = ? ORDER BY created_at, actor_id`, [momentId]);
+      return { ...toMoment(row), media: media.map(toMedia), comments: comments.map(toComment), likes: likes.map(toLike) };
+    });
   }
 
   // ==================== AI viewer 读路径 ====================

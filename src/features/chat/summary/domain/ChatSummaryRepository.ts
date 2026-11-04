@@ -115,13 +115,15 @@ export interface ChatBackgroundContext {
 export interface ChatSummaryRepository {
   captureGroupHistoryInTransaction(transaction: import('@platform/persistence').DatabaseTransactionExecutor, groupId: string, groupName: string): Promise<ChatBackgroundContext>;
   invalidateModelReferencesInTransaction(transaction: import('@platform/persistence').DatabaseTransactionExecutor, modelConfigId: string): Promise<void>;
+  invalidateServiceReferencesInTransaction(transaction: import('@platform/persistence').DatabaseTransactionExecutor, serviceConfigId: string): Promise<void>;
   readBackgroundContexts(assistantId: string, currentConversationId: string, options: ChatBackgroundContextOptions): Promise<ChatBackgroundContext[]>;
   readContext(conversationId: string, protectedMessageIds: readonly number[]): Promise<ChatSummarySnapshot>;
   prepareConversations(now: string, conversationIds?: readonly string[]): Promise<{ conversationIds: string[]; pausedConversationIds: string[] }>;
   readQueuedRevision(conversationId: string): Promise<number | null>;
   acknowledgeQueuedRevision(conversationId: string, revision: number): Promise<void>;
   getNextWakeAt(): Promise<string | null>;
-  claim(conversationId: string, batchSize: number, claimId: string, now: string, expiresAt: string, timeZone: string): Promise<ChatSummaryClaim | null>;
+  claim(conversationId: string, batchSize: number, claimId: string, now: string, expiresAt: string, timeZone: string, recentWindowLimit: number): Promise<ChatSummaryClaim | null>;
+  /** 空 additions 仍成功交接原文游标、通话标记与任务，不创建摘要记录。 */
   appendClaim(claim: ChatSummaryClaim, additions: readonly ChatSummaryAddition[], now: string): Promise<boolean>;
   releaseClaim(claim: ChatSummaryClaim): Promise<void>;
   readSettings(conversationId: string): Promise<ChatSummarySettings>;
@@ -131,7 +133,8 @@ export interface ChatSummaryRepository {
   failTask(claim: ChatSummaryTaskClaim, failure: ChatSummaryFailure, now: string): Promise<'failed' | 'waiting' | null>;
   retryTask(conversationId: string, taskId: string, now: string): Promise<void>;
   claimSecondary(conversationId: string, claimId: string, now: string, expiresAt: string, timeZone: string): Promise<SecondaryChatSummaryClaim | null>;
-  appendSecondary(claim: SecondaryChatSummaryClaim, segmentId: string, content: string, now: string): Promise<boolean>;
+  /** null 正文只消费来源；segmentId 仍作为持久归纳标记，不要求存在对应正文。 */
+  appendSecondary(claim: SecondaryChatSummaryClaim, segmentId: string, content: string | null, now: string): Promise<boolean>;
   releaseSecondaryClaim(claim: SecondaryChatSummaryClaim): Promise<void>;
   search(assistantId: string, input: ChatSummarySearchInput): Promise<ChatSummarySearchPage>;
   readSecondaryForAssistant(assistantId: string, conversationId: string): Promise<ChatSecondarySummary>;

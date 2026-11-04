@@ -20,6 +20,7 @@ interface AuxiliaryModelCenterScreenProps {
   capabilityItems: CapabilityEntryItem[];
   loading?: boolean;
   onBack: () => void;
+  onOpenServices(): void;
   onOpenCapabilityPool: (kind: CapabilityKind) => void;
 }
 
@@ -27,6 +28,7 @@ export default function AuxiliaryModelCenterScreen({
   capabilityItems,
   loading = false,
   onBack,
+  onOpenServices,
   onOpenCapabilityPool,
 }: AuxiliaryModelCenterScreenProps) {
   const theme = useTheme();
@@ -50,11 +52,16 @@ export default function AuxiliaryModelCenterScreen({
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.sectionBlock}>
           <ThemedSurface variant="card" style={styles.card}>
+            <ListItem title="服务配置" leftIcon={<Ionicons name="server-outline" size={20} color={theme.colors.brand.primary} />} showArrow onPress={onOpenServices} />
+          </ThemedSurface>
+        </View>
+        <Text style={{ color: theme.colors.text.secondary, marginHorizontal: theme.spacing.lg, marginTop: theme.spacing.md }}>模型用途</Text>
+        <View style={styles.sectionBlock}>
+          <ThemedSurface variant="card" style={styles.card}>
             {capabilityItems.map((item) => (
               <ListItem
                 key={item.kind}
                 title={item.label}
-                subtitle={item.description}
                 leftIcon={<Ionicons name={item.icon} size={20} color={item.iconColor} />}
                 showArrow
                 onPress={() => onOpenCapabilityPool(item.kind)}

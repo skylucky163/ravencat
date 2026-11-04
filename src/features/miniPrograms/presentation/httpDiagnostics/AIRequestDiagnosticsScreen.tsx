@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { ChevronDown, ChevronRight } from 'lucide-react-native';
+import { Animated, Easing, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { aiHttpDiagnostics, type AIHttpExchange } from '@platform/ai';
 import { copyTextToClipboard, TextSelectionScrollView } from '@platform/device';
-import { useTheme } from '@shared/theme';
-import { Button, ModalSheet, ToggleField, showAppDialog } from '@shared/ui';
+import { useTheme, ThemedSurface } from '@shared/theme';
+import { Button, EmptyState, ListItem, ModalSheet, ToggleField, showAppDialog } from '@shared/ui';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import { createHttpDiagnosticsStyles } from './AIRequestDiagnosticsScreen.styles';
 
@@ -23,6 +23,22 @@ function formatTime(time: string): string {
 function describeStatus(record: AIHttpExchange): string {
   return record.status === null ? '未收到 HTTP 状态' : `HTTP ${record.status}`;
 }
+
+// 说明性文字的唯一定义处：导航头的问号说明与开启确认弹窗都从这里取，避免同一条事实被写两遍后走样。
+const DIAGNOSTICS_COPY = {
+  retention: '最近 10 条记录持久保存在本机，超出后删除最旧记录；重启、覆盖更新或清理缓存不会删除记录。',
+  content: '记录可能包含私密聊天、提示词和工具内容；不记录鉴权头，也不会自动上传。',
+  sharing: '分享前请先检查正文中的个人信息。',
+  activation: '只记录开启后发出的请求，不补录历史；关闭开关只停止新增，已有记录保留，手动清空或恢复出厂时删除。',
+  scope: '只原样保存请求与响应，不分析也不修改内容。',
+} as const;
+
+const HELP_SECTIONS = [
+  { title: '保留范围', body: DIAGNOSTICS_COPY.retention },
+  { title: '内容与隐私', body: `${DIAGNOSTICS_COPY.content}${DIAGNOSTICS_COPY.sharing}` },
+  { title: '何时生效', body: DIAGNOSTICS_COPY.activation },
+  { title: '不做的事', body: DIAGNOSTICS_COPY.scope },
+];
 
 const BODY_PAGE_SIZE = 4000;
 
@@ -122,10 +138,17 @@ export function AIRequestDiagnosticsScreen({ onBack }: { onBack(): void }) {
   const [detail, setDetail] = useState<AIHttpExchange | null>(null);
   const [detailVisible, setDetailVisible] = useState(false);
   const refreshVersion = useRef(0);
+  // 点按即转一圈：本地快照读取通常瞬间返回，用 loading 驱动循环动画反而看不见。
+  const refreshSpin = useRef(new Animated.Value(0)).current;
+  const refreshRotate = useMemo(
+    () => refreshSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }),
+    [refreshSpin],
+  );
 
-  const refresh = useCallback(async () => {
+  // 记录变化触发的自动刷新不进入加载态，避免图标和开关跟着闪；只有首次和手动刷新才显示读取中。
+  const refresh = useCallback(async (showLoading = true) => {
     const version = ++refreshVersion.current;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     try {
       const next = await aiHttpDiagnostics.getSnapshot();
       if (version !== refreshVersion.current) return;
@@ -134,12 +157,13 @@ export function AIRequestDiagnosticsScreen({ onBack }: { onBack(): void }) {
     } catch (cause) {
       if (version === refreshVersion.current) setError(`读取失败：${describeError(cause)}`);
     } finally {
+      // 收尾不区分来源：落后的那次请求被新请求取代时不能清标志，最新一次必须清，否则会卡在读取中。
       if (version === refreshVersion.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const unsubscribe = aiHttpDiagnostics.subscribe(() => { void refresh(); });
+    const unsubscribe = aiHttpDiagnostics.subscribe(() => { void refresh(false); });
     void refresh();
     return () => {
       unsubscribe();
@@ -147,12 +171,20 @@ export function AIRequestDiagnosticsScreen({ onBack }: { onBack(): void }) {
     };
   }, [refresh]);
 
+  const refreshFromButton = () => {
+    refreshSpin.setValue(0);
+    Animated.timing(refreshSpin, {
+      toValue: 1, duration: 600, easing: Easing.linear, useNativeDriver: true,
+    }).start();
+    void refresh();
+  };
+
   const run = async (operation: () => Promise<void>, failure: string) => {
     setBusy(true);
     setError(null);
     try {
+      // 平台操作无论成败都会发出通知，快照由订阅统一刷新。
       await operation();
-      await refresh();
     } catch (cause) {
       setError(`${failure}：${describeError(cause)}`);
     } finally {
@@ -165,7 +197,7 @@ export function AIRequestDiagnosticsScreen({ onBack }: { onBack(): void }) {
     if (!enabled) { void save(); return; }
     showAppDialog({
       title: '开启 HTTP 记录',
-      message: '仅记录开启后发出的 AI HTTP 请求与响应，可能包含私密聊天、提示词和工具内容。不会记录鉴权头或自动上传；分享前仍需检查正文中的个人信息。',
+      message: `${DIAGNOSTICS_COPY.content}\n${DIAGNOSTICS_COPY.sharing}`,
       buttons: [
         { text: '取消', style: 'cancel' },
         { text: '开启记录', onPress: save },
@@ -183,29 +215,41 @@ export function AIRequestDiagnosticsScreen({ onBack }: { onBack(): void }) {
   });
 
   return <SafeAreaView style={styles.screen} edges={['top', 'left', 'right', 'bottom']}>
-    <NavigationHeader title="AI 请求诊断" onGoBack={onBack} />
+    <NavigationHeader title="AI 请求诊断" onGoBack={onBack} help={{ sections: HELP_SECTIONS }} />
     <TextSelectionScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-      <Text style={styles.hint}>仅保留最近 10 条，保存在应用私有缓存。开关会保存；关闭时会删除已有记录。这里不会分析或修改请求内容。</Text>
-      {snapshot ? <ToggleField label="记录后续 AI HTTP 请求" value={snapshot.enabled}
-        hint="仅记录开启后的请求，不会补录历史；诊断数据不会自动上传。"
-        disabled={busy || loading} onValueChange={setRecording} /> : null}
-      <View style={styles.actions}>
-        <Button title={loading ? '读取中…' : '刷新'} variant="secondary" disabled={busy || loading} onPress={() => { void refresh(); }} />
-        <Button title="清空记录" variant="outline" disabled={busy || loading || !snapshot} onPress={clear} />
-      </View>
+      {snapshot ? <ThemedSurface variant="card" style={styles.card}>
+        <ToggleField label="记录后续 AI HTTP 请求" style={styles.row} value={snapshot.enabled}
+          disabled={busy} onValueChange={setRecording} />
+      </ThemedSurface> : null}
       {error ? <Text selectable accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
       {snapshot?.error ? <Text selectable accessibilityRole="alert" style={styles.error}>诊断存储错误：{snapshot.error}</Text> : null}
-      {snapshot ? <Text style={styles.heading}>最近记录（{snapshot.records.length}/10）</Text> : null}
-      {snapshot?.records.length === 0 ? <Text style={styles.hint}>
-        {snapshot.enabled ? '暂无记录。现在发起一次 AI 请求，完成后会显示在这里。' : '暂无记录。开启后发起 AI 请求，再回来查看。'}
-      </Text> : null}
-      {snapshot?.records.map(record => <TouchableOpacity key={record.id} accessibilityRole="button"
-        style={styles.record}
-        onPress={() => { setDetail(record); setDetailVisible(true); }}>
-        <Text style={styles.text}>{record.model} · {record.transport === 'stream' ? '流式' : '非流式'}</Text>
-        <Text style={styles.hint}>{formatTime(record.startedAt)} · {describeStatus(record)}{record.error ? ' · 有错误' : ''}</Text>
-        <Text style={styles.hint}>{record.method} {record.url}</Text>
-      </TouchableOpacity>)}
+      <View style={styles.listHeader}>
+        <View style={styles.listTitle}>
+          <Text style={styles.heading}>最近记录</Text>
+          {snapshot ? <Text style={styles.hint}>{snapshot.records.length} / 10</Text> : null}
+        </View>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="刷新记录" activeOpacity={0.6}
+          disabled={busy || loading} style={styles.refresh} onPress={refreshFromButton}>
+          <Animated.View style={{ transform: [{ rotate: refreshRotate }] }}>
+            <RefreshCw size={18} color={loading ? theme.colors.text.tertiary : theme.colors.text.secondary} />
+          </Animated.View>
+        </TouchableOpacity>
+      </View>
+      {snapshot?.records.length === 0 ? <EmptyState title="暂无记录"
+        description={snapshot.enabled ? '现在发起一次 AI 请求，完成后会显示在这里。' : '开启记录后发起一次 AI 请求，再回来查看。'} /> : null}
+      {snapshot && snapshot.records.length > 0 ? <ThemedSurface variant="card" style={styles.card}>
+        {snapshot.records.map((record, index) => <ListItem key={record.id}
+          onPress={() => { setDetail(record); setDetailVisible(true); }}
+          titleContent={<View style={styles.recordMain}>
+            <Text style={styles.recordTitle} numberOfLines={1}>{record.model} · {record.transport === 'stream' ? '流式' : '非流式'}</Text>
+            <Text style={styles.recordMeta}>{formatTime(record.startedAt)} · {describeStatus(record)}{record.error ? ' · 有错误' : ''}</Text>
+            <Text style={styles.recordMeta} numberOfLines={1}>{record.method} {record.url}</Text>
+          </View>}
+          rightContent={<ChevronRight size={18} color={theme.colors.text.tertiary} />}
+          style={index === snapshot.records.length - 1 ? styles.lastItem : undefined} />)}
+      </ThemedSurface> : null}
+      {snapshot ? <Button title="清空记录" variant="text" style={styles.clear}
+        textStyle={styles.clearText} disabled={busy || loading} onPress={clear} /> : null}
     </TextSelectionScrollView>
     {/* detail 在关闭动画期间保留，避免弹窗内容先变空。 */}
     {detail ? <ModalSheet visible={detailVisible} title="记录详情" onClose={() => setDetailVisible(false)}>

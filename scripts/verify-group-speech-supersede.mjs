@@ -257,6 +257,12 @@ async function loadGroupChatRepository(coordinatorKey) {
   const repositorySource = read(
     'src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts',
   )
+    .replace(/from ['"]@features\/assistants['"]/g,
+      `from '${transpileToModuleUrl(`
+        export function bindModelServiceInTransaction() { throw new Error('换代验证不应修改模型服务'); }
+        export function readModelServiceConnection() { throw new Error('换代验证不应读取模型服务'); }
+        export function getModelServiceConnection() { throw new Error('换代验证不应解析模型服务'); }
+      `)}'`)
     .replace(/from ['"]@features\/profile['"]/g,
       `from '${transpileToModuleUrl('export async function removeConversationWallpaperInTransaction() {}')}'`)
     .replace(/from ['"]@features\/media['"]/g, `from '${mediaUrl}'`)

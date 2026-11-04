@@ -3,14 +3,14 @@
 > Architecture Invariant
 > Protected Contract
 
-`ConversationTurnHeadlessTask` 通过 Host 的 `ensureHostDatabaseReady()` 顺序等待恢复门与普通数据库初始化。设备固定回归需要独立证据，不能通过页面执行兜底解决。
+`ExecuteConversationTurns` 通过 Host 的 `ensureHostDatabaseReady()` 顺序等待恢复门与普通数据库初始化。设备固定回归需要独立证据，不能通过页面执行兜底解决。
 
-原有 Service 在一次任务执行期间进入有界前台执行，持有独立 CPU 锁；启动回执、软截止取消和十分钟原生收口的具体边界见 [宿主生命周期](./chat-background-execution-lifetime.md)。这不放宽本文的唯一执行宿主、恢复与真机验收约束。
+应用持续前台运行由独立总开关拥有，聊天任务共享项目 CPU 锁，不再逐条启停保活服务。共享身份、业务预算和取消收口的具体边界见 [宿主生命周期](./chat-background-execution-lifetime.md)。这不放宽本文的唯一执行宿主、恢复与真机验收约束。
 
 
 本文是普通 Chat AI 回复后台执行的永久架构约束。它保护的是执行生命周期的所有权，
 不是 UI 投影或通知策略。修改 `SendUserMessage`、`ConversationTurnCoordinator`、
-`ConversationTurnExecutionHost`、`ConversationTurnHeadlessTask`、`replyCallbacks` 或
+`ConversationTurnExecutionHost`、`ExecuteConversationTurns`、`replyCallbacks` 或
 相关 wiring 前，必须重新阅读本文并完成文末真机验收。
 
 回合固定输入区间、T1～T4、revision 与提交 fence 的持久化约束见
@@ -46,7 +46,7 @@ runtime；Activity 不可见后，该 runtime 的网络消费和 Promise 后续�
 → T1 user message commit
 → executionMode: delegate_to_android_host
 → Android-backed execution host
-→ ConversationTurnExecutionTask（Headless JS service）
+→ ApplicationExecutionHost → ExecuteConversationTurns（共用应用 RN 身份）
 → coordinator claim + execute，持续等待到 terminal
 → T3 assistant message commit
 → AIMessageDeliveryCoordinator 负责 delivery / notification
@@ -56,7 +56,7 @@ runtime；Activity 不可见后，该 runtime 的网络消费和 Promise 后续�
 执行或 fire-and-forget AI run。Android execution host 启动失败时，已持久化的 pending
 状态必须交给后续 host 或启动恢复接管，不能回退到页面执行。
 
-受控的 Headless execution host（例如 RavenCat `FloatingMessageHeadlessTask`）可以
+应用宿主内的受控业务用例（例如 RavenCat `executeFloatingMessage`）可以
 明确选择 `executionMode: inline_current_host`，由当前 host claim、执行并等待 terminal；
 该模式不得再次启动第二个 Android ConversationTurn execution host。
 
@@ -125,7 +125,7 @@ canonical 用户消息。`metadata.type = 'callStatus'` 的通话状态气泡即
 ```
 
 AI 只有在回到前台后才完成、落库或出现通知，均明确视为失败。还应单独确认
-RavenCat Floating Headless 调用以 `inline_current_host` 正常执行并展示回复。
+RavenCat 悬浮消息调用以 `inline_current_host` 正常执行并展示回复。
 
 静态检查和脚本 verifier 不能替代上述真机证据；在连续三次真机通过前，不得宣称后台
 冻结问题已关闭。

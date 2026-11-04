@@ -25,6 +25,8 @@ export interface CanonicalUserMessageCommittedPayload {
   replyCallbacks?: ProcessAIReplyCallbacks;
   deliveryTiming?: 'paced' | 'immediate';
   correlationId?: string;
+  signal?: AbortSignal;
+  executionDeadlineAt?: number;
 }
 
 /** Media Host 为 M3a 提供的 legacy Chat backing 定位结果。 */

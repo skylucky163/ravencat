@@ -1,8 +1,5 @@
 import { prepareMediaAssetBatch, MEDIA_ASSET_STORAGE_BACKEND } from '@features/media';
-import {
-  startVoiceMessageTranscription,
-  transcribeVoiceMessageRecording,
-} from '@features/speech';
+import { startVoiceMessageTranscription } from '@features/speech';
 import {
   createRandomUUID,
   requestMicrophonePermission,
@@ -161,7 +158,7 @@ export async function startUserVoiceMessageRecording(params: {
           await transcription.cancel().catch(() => undefined);
           return { success: false, code: 'VOICE_RECORDING_TOO_SHORT', message: '录音时间太短，请重新录制' };
         }
-        const transcribed = await transcribeVoiceMessageRecording(transcription, recorded);
+        const transcribed = await transcription.finish();
         if (transcribed.success === false) {
           return { success: false, code: transcribed.code, message: transcribed.errorInfo.message };
         }

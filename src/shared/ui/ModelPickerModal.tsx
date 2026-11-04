@@ -1,119 +1,73 @@
-/** 复用 ModalSheet 的通用模型选择弹窗。 */
-
+/** 模型 ID、用途资产和服务选择共用列表外观；查询与保存仍归调用方。 */
 import React from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  StyleSheet,
-} from 'react-native';
-import CheckIcon from './CheckIcon';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Check } from 'lucide-react-native';
+import { useTheme, useThemedStyles, type PresentationTheme } from '@shared/theme';
 import ModalSheet from './ModalSheet';
-import { useThemedStyles } from '@shared/theme';
-import type { PresentationTheme } from '@shared/theme';
+import NavigationHeaderHelp from './NavigationHeaderHelp';
 
-interface ModelItem {
-  id: string;
-  name: string;
-}
-
+export interface ModelPickerItem { id: string; name: string; model?: string }
 export interface ModelPickerModalProps {
   visible: boolean;
-  models: ModelItem[];
-  selectedModel?: string;
-  onSelect: (modelId: string) => void;
-  onClose: () => void;
+  models: ModelPickerItem[];
+  selectedModel?: string | null;
+  onSelect(modelId: string): void;
+  onClose(): void;
   title?: string;
+  description?: string;
   emptyText?: string;
+  disabled?: boolean;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  onClear?: () => void;
+  clearSelectionLabel?: string;
 }
-
+export default function ModelPickerModal({ visible, models, selectedModel, onSelect, onClose, title = '选择模型',
+  description, emptyText = '暂无可用模型，请到辅助模型中心添加配置', disabled = false, loading = false, error,
+  onRetry, onClear, clearSelectionLabel = '取消选择',
+}: ModelPickerModalProps) {
+  const theme = useTheme(), styles = useThemedStyles(createStyles);
+  const showClear = !!onClear && !loading && !error;
+  return <ModalSheet visible={visible} onClose={() => { if (!disabled) onClose(); }} title={title}
+    titleAccessory={description ? <NavigationHeaderHelp title={title} sections={[{ title: '选择说明', body: description }]} /> : undefined}
+    style={{ maxHeight: '70%', paddingBottom: 0 }}>
+    <FlatList data={loading || error ? [] : models} keyExtractor={item => item.id} contentContainerStyle={styles.content}
+      ListFooterComponent={showClear ? <Pressable accessibilityRole="button" disabled={disabled}
+        style={[styles.item, styles.clearItem]} onPress={onClear}>
+        <Text style={[styles.name, styles.grow]}>{clearSelectionLabel}</Text>
+        {selectedModel == null && <Check size={20} color={theme.colors.brand.primary} />}
+      </Pressable> : null}
+      ListEmptyComponent={<View style={styles.empty}>{loading ? <ActivityIndicator color={theme.colors.brand.primary} />
+        : <><Text style={error ? styles.error : styles.subtitle}>{error || emptyText}</Text>
+          {error && onRetry ? <Pressable accessibilityRole="button" onPress={onRetry}><Text style={styles.retry}>重新读取</Text></Pressable> : null}</>}
+      </View>}
+      renderItem={({ item }) => <Pressable accessibilityRole="button"
+        accessibilityState={{ selected: selectedModel === item.id, disabled }} disabled={disabled}
+        style={styles.item} onPress={() => onSelect(item.id)}>
+        <View style={styles.grow}><Text style={[styles.name, selectedModel === item.id && styles.selected]}>{item.name}</Text>
+          {item.model ? <Text style={styles.subtitle}>{item.model}</Text> : null}</View>
+        {selectedModel === item.id && <Check size={20} color={theme.colors.brand.primary} />}
+      </Pressable>} />
+  </ModalSheet>;
+}
 const createStyles = (theme: PresentationTheme) => StyleSheet.create({
-  listContent: {
-    paddingBottom: theme.spacing.lg,
-  },
-  modelItem: {
+  content: { padding: theme.spacing.lg, paddingTop: theme.spacing.sm },
+  // 选项直接铺在弹窗玻璃上，不再单独成卡：一层淡玻璃片叠一层淡蓝底只会互相吃掉。
+  item: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: 14,
-    borderBottomWidth: 0.5,
-    borderBottomColor: theme.colors.border.light,
+    gap: theme.spacing.md,
+    minHeight: 60,
+    paddingVertical: theme.spacing.md,
   },
-  modelItemSelected: {
-    backgroundColor: theme.colors.brand.primary + '08',
-  },
-  modelItemText: {
-    fontSize: 16,
-    color: theme.colors.text.primary,
-    flex: 1,
-  },
-  modelItemTextSelected: {
-    color: theme.colors.brand.primary,
-    fontWeight: '500',
-  },
-  emptyContainer: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 15,
-    color: theme.colors.text.tertiary,
-  },
+  // 「取消选择」不是候选项，靠上间距与列表分开。
+  clearItem: { marginTop: theme.spacing.sm },
+  grow: { flex: 1 },
+  name: { color: theme.colors.text.primary, fontSize: 16, fontWeight: '500' },
+  selected: { color: theme.colors.brand.primary },
+  subtitle: { color: theme.colors.text.secondary, fontSize: 13, lineHeight: 20, marginTop: theme.spacing.xs },
+  empty: { padding: theme.spacing.lg, alignItems: 'center' },
+  error: { color: theme.colors.feedback.error, fontSize: 14 },
+  retry: { color: theme.colors.brand.primary, fontSize: 15, paddingVertical: theme.spacing.md },
 });
-
-export default function ModelPickerModal({
-  visible,
-  models,
-  selectedModel,
-  onSelect,
-  onClose,
-  title = '选择模型',
-  emptyText = '暂无可用模型',
-}: ModelPickerModalProps) {
-  const styles = useThemedStyles(createStyles);
-
-  const renderModelItem = ({ item }: { item: ModelItem }) => (
-    <TouchableOpacity
-      style={[
-        styles.modelItem,
-        selectedModel === item.id && styles.modelItemSelected,
-      ]}
-      onPress={() => onSelect(item.id)}
-      activeOpacity={0.7}
-    >
-      <Text
-        style={[
-          styles.modelItemText,
-          selectedModel === item.id && styles.modelItemTextSelected,
-        ]}
-        numberOfLines={1}
-      >
-        {item.name}
-      </Text>
-      {selectedModel === item.id && <CheckIcon />}
-    </TouchableOpacity>
-  );
-
-  return (
-    <ModalSheet
-      visible={visible}
-      onClose={onClose}
-      title={title}
-      style={{ maxHeight: '70%', paddingBottom: 0 }}
-    >
-      <FlatList
-        data={models}
-        keyExtractor={(item) => item.id}
-        renderItem={renderModelItem}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>{emptyText}</Text>
-          </View>
-        }
-      />
-    </ModalSheet>
-  );
-}

@@ -1,5 +1,5 @@
 /** 在羽库历史路由与时间范围之间转换稳定、可序列化的标识。 */
-import type { TimeRange } from './HistoryScreen/types';
+import type { TimeRange } from './historyTypes';
 
 const RANGE_ID_PATTERN = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
 

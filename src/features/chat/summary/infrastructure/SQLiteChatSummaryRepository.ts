@@ -239,10 +239,10 @@ async function readItemPage(
 }
 
 async function readPrimaryRange(db: DatabaseReadExecutor, conversationId: string, fromCursor: ChatCanonicalCursor | null,
-  calls: CallSummarySource[], batchSize: number, replyCursor: number) {
+  calls: CallSummarySource[], batchSize: number, replyCursor: number, recentWindowLimit: number) {
   const items: ChatContextItem[] = [];
   let after = fromCursor;
-  let limit = Math.max(128, batchSize + 1);
+  let limit = Math.max(128, batchSize + recentWindowLimit + 1);
   while (true) {
     const page = await readItemPage(db, conversationId, { after, limit });
     items.push(...page.items);
@@ -252,7 +252,7 @@ async function readPrimaryRange(db: DatabaseReadExecutor, conversationId: string
     const protectedAt = protectedIndex < 0 ? null : items[protectedIndex].cursor[0];
     const timeline = buildConversationTimeline(available, calls);
     const eligible = protectedAt === null ? timeline : timeline.filter(item => item.source === 'chat' || item.timestamp < protectedAt);
-    const messages = selectSummaryRange(eligible, batchSize);
+    const messages = selectSummaryRange(eligible, batchSize, recentWindowLimit);
     const messageIds = new Set(messages.map(message => message.messageId));
     const selectedChat = available.filter(item => messageIds.has(item.messageId));
     // 已读到批次之后的原文才有完整边界；否则继续分页，避免拆开逻辑分段或漏掉通话内的消息。
@@ -308,21 +308,36 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
     const settings = await readSettings(tx, groupId);
     const raw = (await readItems(tx, groupId)).filter(item => item.pending !== true);
     // 保存可读历史，不复制可操作的媒体快照；原群删除后不保留悬空的媒体所有权。
-    const timeline = buildConversationTimeline(raw, []).map(({ sharedRecord: _record, sharedComment: _comment, ...item }) => item);
+    const timeline = buildConversationTimeline(raw, []).map(({ sharedRecord: _record, sharedComment: _comment, sharedMoment: _moment, ...item }) => item);
     return { conversationId: groupId, kind: 'group', name: groupName, timeline,
       summaryInjectionEnabled: settings.injectEnabled,
       contextSegments: selectContextSegments(await readSegments(tx, groupId), { ...settings, injectEnabled: true }) };
   }
   async invalidateModelReferencesInTransaction(transaction: DatabaseTransactionExecutor, modelConfigId: string): Promise<void> {
-    const sources = 'SELECT conversation_id FROM chat_summary_request_settings WHERE model_config_id = ?';
+    await this.invalidateConversationsInTransaction(transaction,
+      'SELECT conversation_id FROM chat_summary_request_settings WHERE model_config_id = ?', [modelConfigId]);
+  }
+
+  async invalidateServiceReferencesInTransaction(transaction: DatabaseTransactionExecutor, serviceConfigId: string): Promise<void> {
+    // 显式摘要资产由资产 owner 撤销；此处只处理跟随角色或管理员的会话。
+    await this.invalidateConversationsInTransaction(transaction, `SELECT s.id AS conversation_id FROM sessions s
+      JOIN ai_assistants a ON a.id = s.ai_assistant_id
+      LEFT JOIN chat_summary_request_settings r ON r.conversation_id = s.id
+      WHERE a.service_config_id = ? AND r.model_config_id IS NULL
+      UNION SELECT a.group_id AS conversation_id FROM group_chat_admin_configs a
+      LEFT JOIN chat_summary_request_settings r ON r.conversation_id = a.group_id
+      WHERE a.service_config_id = ? AND r.model_config_id IS NULL`, [serviceConfigId, serviceConfigId]);
+  }
+
+  private async invalidateConversationsInTransaction(transaction: DatabaseTransactionExecutor, sources: string, values: string[]): Promise<void> {
     // 尚未领取过的会话也可能因缺少模型而待机，不能只依靠已有 state 的资格撤销来入队。
     await transaction.runAsync(`INSERT INTO chat_summary_work_queue (conversation_id)
-      SELECT conversation_id FROM chat_summary_request_settings WHERE model_config_id = ?
-      ON CONFLICT(conversation_id) DO UPDATE SET revision = revision + 1`, [modelConfigId]);
+      SELECT conversation_id FROM (${sources}) WHERE true
+      ON CONFLICT(conversation_id) DO UPDATE SET revision = revision + 1`, values);
     await transaction.runAsync(`UPDATE chat_summary_state SET generation = generation + 1, revision = revision + 1,
-      claim_id = NULL, claim_to_cursor = NULL, claim_expires_at = NULL WHERE conversation_id IN (${sources})`, [modelConfigId]);
+      claim_id = NULL, claim_to_cursor = NULL, claim_expires_at = NULL WHERE conversation_id IN (${sources})`, values);
     await transaction.runAsync(`UPDATE chat_summary_tasks SET status = 'waiting', automatic_failures = 0, manual_retry = 0,
-      next_attempt_at = NULL WHERE conversation_id IN (${sources}) AND status <> 'completed'`, [modelConfigId]);
+      next_attempt_at = NULL WHERE conversation_id IN (${sources}) AND status <> 'completed'`, values);
   }
 
   async readBackgroundContexts(assistantId: string, currentConversationId: string, options: ChatBackgroundContextOptions) {
@@ -440,7 +455,7 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
     await executor('checked').runAsync(`UPDATE chat_summary_work_queue SET checked_revision = ?
       WHERE conversation_id = ? AND checked_revision < ?`, [revision, conversationId, revision]);
   }
-  async claim(conversationId: string, batchSize: number, claimId: string, now: string, expiresAt: string, timeZone: string): Promise<ChatSummaryClaim | null> {
+  async claim(conversationId: string, batchSize: number, claimId: string, now: string, expiresAt: string, timeZone: string, recentWindowLimit: number): Promise<ChatSummaryClaim | null> {
     return executor('claim').withExclusiveTransactionAsync(async (tx) => {
       const state = await readState(tx, conversationId);
       const settings = await readSettings(tx, conversationId);
@@ -460,7 +475,7 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
         FROM group_speech_plans WHERE group_id = ? AND status IN ('completed','failed','terminated','superseded')`, [conversationId])
         : await tx.getFirstAsync<{ reply_cursor: number }>('SELECT reply_cursor FROM conversation_turn_state WHERE session_id = ?', [conversationId]);
       const effectiveBatchSize = group ? settings.groupTriggerCount : batchSize;
-      const { messages, selectedChat } = await readPrimaryRange(tx, conversationId, fromCursor, calls, effectiveBatchSize, turn?.reply_cursor ?? 0);
+      const { messages, selectedChat } = await readPrimaryRange(tx, conversationId, fromCursor, calls, effectiveBatchSize, turn?.reply_cursor ?? 0, recentWindowLimit);
       if (!messages.length) return null;
       const toCursor = selectedChat.length ? selectedChat[selectedChat.length - 1].cursor : fromCursor;
       const callIds = new Set(messages.map((message) => message.callId));
@@ -500,7 +515,7 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
   async updateSettings(conversationId: string, patch: ChatSummarySettingsPatch) {
     await executor('settings').withExclusiveTransactionAsync(async (tx) => {
       const settings = { ...await readSettings(tx, conversationId), ...patch };
-      if (settings.fixedMessageId !== null && settings.generationEnabled) throw new Error('请先取消固定消息起点，再开启自动生成摘要');
+      if (settings.fixedMessageId !== null && settings.generationEnabled) throw new Error('请先取消固定消息起点，再开启一级摘要');
       await saveSettings(tx, conversationId, settings);
       if (patch.requestTimeoutSeconds !== undefined || patch.maxOutputTokens !== undefined || patch.modelConfigId !== undefined
         || patch.primaryLimit !== undefined) {
@@ -539,7 +554,7 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
       return { ...claim, taskId };
     });
   }
-  async appendSecondary(claim: SecondaryChatSummaryClaim, segmentId: string, content: string, now: string) {
+  async appendSecondary(claim: SecondaryChatSummaryClaim, segmentId: string, content: string | null, now: string) {
     return executor('secondaryAppend').withExclusiveTransactionAsync(async (tx) => {
       const current = new Map((await readSegments(tx, claim.conversationId)).map((segment) => [segment.id, segment]));
       // 只比较领取的来源，生成期间新增的第七批不会使前六批失效；编辑、删除来源则拒绝旧结果。
@@ -553,17 +568,19 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
         WHERE conversation_id = ? AND generation = ? AND claim_id = ? AND claim_to_cursor = 'secondary' AND claim_expires_at > ?`,
       [claim.conversationId, claim.generation, claim.claimId, now]);
       if (!result.changes) return false;
-      await insertSegment(tx, claim.conversationId, segmentId, content, now, claim.timeZone, null, [], new Set());
-      const starts = claim.segments.flatMap((segment) => segment.sourceStartAt === null ? [] : [segment.sourceStartAt]);
-      const ends = claim.segments.flatMap((segment) => segment.sourceEndAt === null ? [] : [segment.sourceEndAt]);
-      // 客视角的执行输入上界也约束摘要；二级保留领取来源的最大消息边界。
-      const cursor = await tx.getFirstAsync<{ to_cursor: string | null }>(`SELECT to_cursor FROM chat_summary_segments
-        WHERE id IN (${claim.segments.map(() => '?').join(',')}) AND to_cursor IS NOT NULL
-        ORDER BY json_extract(to_cursor,'$[3]') DESC LIMIT 1`, claim.segments.map((source) => source.id));
-      await tx.runAsync(`UPDATE chat_summary_segments SET level = 'secondary', context_sequence = ?, source_start_at = ?, source_end_at = ?, to_cursor = ? WHERE id = ?`,
-        [claim.segments[0].sequence, starts.length ? starts.sort()[0] : null, ends.length ? ends.sort().at(-1)! : null, cursor?.to_cursor ?? null, segmentId]);
+      if (content !== null) {
+        await insertSegment(tx, claim.conversationId, segmentId, content, now, claim.timeZone, null, [], new Set());
+        const starts = claim.segments.flatMap((segment) => segment.sourceStartAt === null ? [] : [segment.sourceStartAt]);
+        const ends = claim.segments.flatMap((segment) => segment.sourceEndAt === null ? [] : [segment.sourceEndAt]);
+        // 客视角的执行输入上界也约束摘要；二级保留领取来源的最大消息边界。
+        const cursor = await tx.getFirstAsync<{ to_cursor: string | null }>(`SELECT to_cursor FROM chat_summary_segments
+          WHERE id IN (${claim.segments.map(() => '?').join(',')}) AND to_cursor IS NOT NULL
+          ORDER BY json_extract(to_cursor,'$[3]') DESC LIMIT 1`, claim.segments.map((source) => source.id));
+        await tx.runAsync(`UPDATE chat_summary_segments SET level = 'secondary', context_sequence = ?, source_start_at = ?, source_end_at = ?, to_cursor = ? WHERE id = ?`,
+          [claim.segments[0].sequence, starts.length ? starts.sort()[0] : null, ends.length ? ends.sort().at(-1)! : null, cursor?.to_cursor ?? null, segmentId]);
+      }
       for (const source of claim.segments) await tx.runAsync('UPDATE chat_summary_segments SET compaction_id = ? WHERE id = ?', [segmentId, source.id]);
-      await completeTask(tx, claim.taskId, [segmentId], now);
+      await completeTask(tx, claim.taskId, content === null ? [] : [segmentId], now);
       return true;
     });
   }

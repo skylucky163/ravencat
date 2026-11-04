@@ -29,7 +29,7 @@ export function buildCompanionDiagnosticsReport(health: CompanionNativeHealth, d
     `当前状态：${powerState(device)}`,
     `伴随调度开关：${yesNo(diagnostics.companionSchedulingEnabled)}`,
     `剩余系统投影：${health.companionSchedulerActive ? '有' : '无'}；最近计划时间：${time(health.nextCompanionWakeAtEpochMs)}`,
-    `伴随执行期前台服务：${yesNo(health.companionExecutionForegroundRunning)}`,
+    `应用持续后台运行：${yesNo(health.applicationBackgroundRunning)}`,
     `悬浮窗前台服务：${yesNo(health.overlayForegroundServiceRunning)}（独立于日程执行）`,
     `最近宿主收口：${health.lastCompanionExecutionOutcome ?? '未记录'} / ${time(health.lastCompanionExecutionAtEpochMs)}`,
     `该次投递：${health.lastCompanionExecutionDeliveryEventId ?? '未记录'}；收口时前台服务：${yesNo(health.lastCompanionExecutionForegroundRunning)}`,

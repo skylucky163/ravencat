@@ -3,7 +3,8 @@ import type { DatabaseWriteExecutor } from '../runtime';
 
 export const MODEL_SELECTION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS memory_model_settings (
-  id INTEGER PRIMARY KEY CHECK (id = 1), embedding_model_config_id TEXT
+  id INTEGER PRIMARY KEY CHECK (id = 1), embedding_model_config_id TEXT,
+  embedding_enabled INTEGER NOT NULL DEFAULT 0 CHECK (embedding_enabled IN (0, 1))
 );
 INSERT OR IGNORE INTO memory_model_settings (id) VALUES (1);
 CREATE TABLE IF NOT EXISTS chat_assistant_image_settings (

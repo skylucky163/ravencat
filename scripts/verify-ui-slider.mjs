@@ -34,11 +34,11 @@ const native = {
   ...Object.fromEntries(['View', 'Text', 'TextInput', 'Image', 'TouchableOpacity', 'ActivityIndicator'].map((name) => [name, name])),
   StyleSheet: { create: (styles) => styles, hairlineWidth: 1 }, PixelRatio: { get: () => 2.625 },
 };
-const themed = { useTheme: () => theme, useThemedStyles: (factory) => factory(theme) };
+const themed = { useTheme: () => theme, useThemedStyles: (factory) => factory(theme), ThemedSurface: 'Surface' };
 // 模拟原生 Pan 的公开事件契约：只有激活后才有 onEnd，中断时 success=false。
 function pan() {
   const gesture = { config: {}, handlers: {} };
-  for (const name of ['enabled', 'minDistance', 'runOnJS']) {
+  for (const name of ['enabled', 'minDistance', 'runOnJS', 'activeOffsetX', 'failOffsetY', 'maxDistance']) {
     gesture[name] = (value) => { gesture.config[name] = value; return gesture; };
   }
   for (const name of ['onStart', 'onUpdate', 'onEnd']) {
@@ -65,10 +65,10 @@ const application = {
 const styles = load('src/features/floatingLayer/presentation/BubbleSkinSettings.styles.ts', { 'react-native': native });
 const { default: Slider } = load('src/shared/ui/Slider.tsx', {
   '@shared/theme': themed, 'react-native': native,
-  'react-native-gesture-handler': { Gesture: { Pan: pan }, GestureDetector: 'GestureDetector' },
+  'react-native-gesture-handler': { Gesture: { Pan: pan, Tap: pan, Race: (drag, tap) => ({ drag, tap }) }, GestureDetector: 'GestureDetector' },
 });
 const { BubbleSkinSettings } = load('src/features/floatingLayer/presentation/BubbleSkinSettings.tsx', {
-  '@shared/theme': themed, '@shared/ui': { Button: 'Button', ModalSheet: 'ModalSheet', Slider, showAppDialog: (dialog) => alerts.push(dialog) },
+  '@shared/theme': themed, '@shared/ui': { Button: 'Button', MimeAwareImage: 'MimeAwareImage', ModalSheet: 'ModalSheet', Slider, showAppDialog: (dialog) => alerts.push(dialog) },
   'react-native': native,
   'expo-document-picker': {}, 'react-native-svg': { SvgUri: 'SvgUri' },
   'lucide-react-native': Object.fromEntries(['Check', 'Minus', 'Pencil', 'Plus', 'Trash2', 'Upload'].map((name) => [name, name])),
@@ -78,7 +78,8 @@ let renderer;
 await act(async () => { renderer = create(React.createElement(BubbleSkinSettings)); });
 const sliderView = (label) => renderer.root.findAllByType('View').find((node) => node.props.accessibilityRole === 'adjustable' && node.props.accessibilityLabel === label);
 const slider = () => sliderView('当前皮肤大小');
-const gesture = () => renderer.root.findByType('GestureDetector').props.gesture;
+const gesture = () => renderer.root.findByType('GestureDetector').props.gesture.drag;
+const tapGesture = () => renderer.root.findByType('GestureDetector').props.gesture.tap;
 const size = () => slider().props.accessibilityValue.now;
 const finish = async () => { await act(async () => { finishSave(); }); };
 const select = async (name) => {
@@ -127,8 +128,8 @@ await finish();
 
 await select('装扮 B');
 assert.equal(size(), 80);
-const tap = gesture();
-await act(async () => { tap.handlers.onStart({ x: 0 }); tap.handlers.onEnd({ x: 0 }, true); });
+const tap = tapGesture();
+await act(async () => { tap.handlers.onEnd({ x: 0 }, true); });
 assert.equal(size(), 32);
 assert.deepEqual(saved[3], { id: 'user-b', sizeDp: 32 });
 await finish();
@@ -216,7 +217,7 @@ const writesBeforeEmptyDrag = modelWrites.length;
 await act(async () => { emptyTrack.handlers.onStart({ x: 60 }); });
 assert.equal(modelInput().props.value, '0.6');
 assert.equal(blueParts().length, 2);
-assert.equal(modelWrites.length, writesBeforeEmptyDrag, '空轨道按下后只预览，不提前保存');
+assert.equal(modelWrites.length, writesBeforeEmptyDrag, '空轨道横向激活后只预览，不提前保存');
 await act(async () => { emptyTrack.handlers.onEnd({ x: 80 }, true); });
 assert.equal(modelWrites.at(-1), 0.8);
 assert.equal(modelInput().props.value, '0.8');

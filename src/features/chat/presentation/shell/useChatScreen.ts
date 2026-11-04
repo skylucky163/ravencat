@@ -1,9 +1,9 @@
 /** 编排聊天 Shell 的助手列表、会话入口、预加载与子页面导航。 */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import useAIAssistants from './useAIAssistants';
-import type { AIProfile } from '@features/assistants';
+import { subscribeAIAssistantUpdated, type AIProfile } from '@features/assistants';
 import type { ChatSession } from '../../conversation/domain/SessionRepository';
 import type { UseChatScreenParams } from './chatScreenTypes';
 import { useChatConversationEntry } from './useChatConversationEntry';
@@ -30,17 +30,14 @@ export default function useChatScreen({
     loadAIAssistants: () => Promise<AIProfile[]>;
     removeAIAssistant: (aiId: string) => Promise<void>;
   };
-  useEffect(() => {
+  // 页面不再回填配置；提交事实只更新匹配的 AI，列表预览和会话置顶仍由原 owner 持有。
+  useEffect(() => subscribeAIAssistantUpdated(updated => {
     setCurrentAI(current => {
-      if (!current) return current;
-      const updated = aiList.find(ai => ai.id === current.id);
-      if (!updated) return current;
-      if (current.name === updated.name && current.nickname === updated.nickname
-        && current.avatar === updated.avatar && current.avatarMediaAssetId === updated.avatarMediaAssetId) return current;
-      return { ...current, name: updated.name, nickname: updated.nickname, avatar: updated.avatar,
-        avatarMediaAssetId: updated.avatarMediaAssetId };
+      if (!current || current.id !== updated.id) return current;
+      return { ...current, ...updated, lastMessage: current.lastMessage, lastTime: current.lastTime,
+        isPinned: current.isPinned, pinnedAt: current.pinnedAt };
     });
-  }, [aiList, currentAI?.id]);
+  }), []);
   const {
     currentSubScreen,
     filePreviewParams,
@@ -49,8 +46,6 @@ export default function useChatScreen({
     handleCloseMenu,
     handleBackToMenu,
     openProtocol,
-    openModelSettings,
-    openChatSettings,
     openFilePreview,
     closeFilePreview,
   } = useChatNavigation();
@@ -79,17 +74,6 @@ export default function useChatScreen({
     resolveConversation,
     onConversationViewed,
   });
-
-  const handleModelSettingsUpdated = useCallback((updatedAI: Partial<AIProfile> | null) => {
-    if (updatedAI && currentAI) {
-      setCurrentAI({ ...currentAI, ...updatedAI });
-    }
-  }, [currentAI]);
-
-  const handleChatSettingsUpdated = useCallback((updatedAI: Partial<AIProfile> | null) => {
-    if (!updatedAI) return;
-    setCurrentAI((current) => current ? { ...current, ...updatedAI } : current);
-  }, []);
 
   const sessionRefreshControllerRef = useRef({
     currentAIId: currentAI?.id || null,
@@ -167,14 +151,10 @@ export default function useChatScreen({
     handleOpenMenu,
     handleCloseMenu,
     handleBackToMenu,
-    handleModelSettingsUpdated,
-    handleChatSettingsUpdated,
     handleDeleteAI,
     handleAddAI: onAddAI,
     handleBackToList,
     openProtocol,
-    openModelSettings,
-    openChatSettings,
     openFilePreview,
     closeFilePreview,
     filePreviewParams,

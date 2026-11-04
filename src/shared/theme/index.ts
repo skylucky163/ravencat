@@ -25,6 +25,7 @@ export {
   getChatPresentationVariant,
   isMoonKimiTheme,
   isPaperNoteTheme,
+  supportsChatBubbleSkins,
 } from './themeVariants';
 export { legacyColorsFromTheme } from './legacyTokens';
 export {

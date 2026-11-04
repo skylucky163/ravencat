@@ -638,6 +638,8 @@ export class MessageRepository implements IMessageRepository {
     const db = databaseCoordinator.openTaskExecutor({ name: 'chat.arrived-conversation-preview', feature: 'chat', priority: 'interactive' });
     // 只读 shown_json：通知已经交付的正文不能继续等待整轮 T3，也不能把未交付快照带进列表。
     // 两种来源在同一 SQLite 快照内选取，展示投影不回写持久预览或回复游标。
+    // 来源消息按所属会话定位，使用已有的 (session_id, client_message_id) 索引；
+    // 后续用户输入只取一次最高 ID，避免每条历史展示记录重复扫描消息。
     const row = await db.getFirstAsync<{ text: string; metadata_json: string | null; created_at: string }>(
       `${timelineOrderedMessagesCte(`m.session_id = ? AND m.id > COALESCE(
         (SELECT visible_after_message_id FROM sessions WHERE id = m.session_id), 0)`)}
@@ -657,20 +659,23 @@ export class MessageRepository implements IMessageRepository {
            COALESCE(json_extract(i.shown_json, '$.segmentIndex'), 0) AS segment_index
          FROM chat_turn_presentations p JOIN conversation_turn_runs r ON r.run_id = p.run_id
          JOIN chat_turn_display_items i ON i.run_id = p.run_id JOIN sessions s ON s.id = p.session_id
-         LEFT JOIN messages origin ON origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
+         LEFT JOIN messages origin ON origin.session_id = r.session_id AND r.kind = 'autonomous'
+           AND origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
          WHERE p.session_id = ? AND i.shown_json IS NOT NULL
            AND json_extract(i.shown_json, '$.kind') = 'assistant' AND json_extract(i.shown_json, '$.status') = 'sent'
            AND (r.kind <> 'regenerate' OR r.status = 'committed')
            AND CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END > COALESCE(s.visible_after_message_id, 0)
-           AND NOT EXISTS (SELECT 1 FROM ordered_messages newer WHERE newer.sender_type = 'user'
-             AND newer.id > CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END
-             AND COALESCE(CASE WHEN json_valid(newer.metadata_json) THEN json_extract(newer.metadata_json, '$.type') END, '') <> 'callStatus')
+           AND CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END >= COALESCE((
+             SELECT MAX(newer.id) FROM chat_visible_messages newer
+             WHERE newer.session_id = ? AND newer.sender_type = 'user'
+               AND COALESCE(CASE WHEN json_valid(newer.metadata_json) THEN json_extract(newer.metadata_json, '$.type') END, '') <> 'callStatus'
+           ), 0)
          ORDER BY created_at DESC, anchor_id DESC, json_extract(i.shown_json, '$.sequence') DESC,
            json_extract(i.shown_json, '$.segmentIndex') DESC LIMIT 1
        ) SELECT text, metadata_json, created_at FROM (
          SELECT * FROM canonical_preview UNION ALL SELECT * FROM display_preview
        ) ORDER BY created_at DESC, source_sequence DESC, segment_index DESC, anchor_id DESC, source_rank DESC LIMIT 1`,
-      [sessionId, JSON.stringify(excludedMessageIds), sessionId],
+      [sessionId, JSON.stringify(excludedMessageIds), sessionId, sessionId],
     );
     return row ? { text: row.text, metadataJson: row.metadata_json, createdAt: row.created_at } : null;
   }
@@ -915,7 +920,8 @@ export class MessageRepository implements IMessageRepository {
          JOIN chat_turn_presentations p ON p.run_id = i.run_id
          JOIN conversation_turn_runs r ON r.run_id = p.run_id
          JOIN sessions s ON s.id = p.session_id
-         LEFT JOIN messages origin ON origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
+         LEFT JOIN messages origin ON origin.session_id = r.session_id AND r.kind = 'autonomous'
+           AND origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
          WHERE s.ai_assistant_id = ? AND i.message_id IS NULL AND i.is_read = 0
            AND json_extract(i.shown_json, '$.kind') = 'assistant' AND json_extract(i.shown_json, '$.status') = 'sent'
            AND (r.kind <> 'regenerate' OR r.status = 'committed')
@@ -1329,7 +1335,7 @@ export class MessageRepository implements IMessageRepository {
    *
    * @returns 是否实际更新了 preview
    */
-  private async updateSessionPreviewForCommittedMessageInTransaction(
+  async updateSessionPreviewForCommittedMessageInTransaction(
     transaction: DatabaseTransactionExecutor,
     input: {
       sessionId: string;
@@ -1340,7 +1346,8 @@ export class MessageRepository implements IMessageRepository {
     const latest = await transaction.getFirstAsync<Pick<MessageRow, 'id' | 'created_at'>>(
       `${timelineOrderedMessagesCte('m.session_id = ?')}
        SELECT id, created_at FROM ordered_messages
-       WHERE 1 = 1
+       WHERE sender_type NOT IN ('reasoning', 'tool')
+         AND COALESCE(CASE WHEN json_valid(metadata_json) THEN json_extract(metadata_json, '$.type') END, '') NOT IN ('toolStatus', 'agentActivity')
        ORDER BY ${timelineProjectionOrderBy('DESC')}
        LIMIT 1`,
       [input.sessionId],
@@ -1367,6 +1374,16 @@ export class MessageRepository implements IMessageRepository {
       'SELECT * FROM messages WHERE turn_run_id = ? AND turn_item_index IS NOT NULL ORDER BY turn_item_index', [runId],
     );
     return rows.map(row => this.mapRowToEntity(row));
+  }
+
+  async bindTurnMessageInTransaction(transaction: DatabaseTransactionExecutor, messageId: number, itemIndex: number): Promise<ChatMessage | null> {
+    await transaction.runAsync('UPDATE messages SET turn_item_index = ? WHERE id = ?', [itemIndex, messageId]);
+    const message = await this.getMessageByIdInTransaction(transaction, messageId);
+    if (!message) return null;
+    // 提前提交的第一项通过 UPDATE 绑定，不经过原有 INSERT 锚点 trigger。
+    if (itemIndex === 1) await transaction.runAsync(`INSERT OR IGNORE INTO chat_timeline_run_anchors(session_id, turn_run_id, id, created_at)
+      VALUES (?, ?, ?, ?)`, [message.sessionId, message.turnRunId!, message.id, message.createdAt]);
+    return message;
   }
 
   async editMessageTextInTransaction(

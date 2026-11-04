@@ -206,12 +206,7 @@ internal class BubbleSkinStore(private val context: Context) {
 
   fun backupRootUri(): String = Uri.fromFile(skinDirectory()).toString()
 
-  /**
-   * 本 owner 唯一允许存放自定义装扮文件的目录。
-   *
-   * 打包只遍历这个 root，因此 strict export 必须据此做 canonical 归属校验；
-   * 与 `BubbleSkinAssetResolver` 共用同一个目录常量，避免两处 root 定义漂移。
-   */
+  /** 本 owner 唯一允许存放自定义装扮文件的目录；strict export 据此做 canonical 归属校验。 */
   private fun skinDirectory(): File = File(context.filesDir, SKIN_DIRECTORY)
 
   fun select(id: String): BubbleSkin {
@@ -574,8 +569,7 @@ internal class BubbleSkinStore(private val context: Context) {
     const val DEFAULT_SIZE_DP = 56
     const val MIN_SIZE_DP = 32
     const val MAX_SIZE_DP = 96
-    // 与 BubbleSkinAssetResolver 共用同一 owner root 常量：备份打包 root 与 key 解析边界必须一致。
-    private const val SKIN_DIRECTORY = BubbleSkinAssetResolver.STORAGE_DIRECTORY
+    private const val SKIN_DIRECTORY = "ravencat/bubble-skins"
     private const val MAX_CUSTOM_SKINS = 20
     private const val MAX_NAME_LENGTH = 30
     private const val MAX_FILE_BYTES = 5L * 1024 * 1024

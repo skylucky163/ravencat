@@ -12,7 +12,6 @@ import type { AIProfile } from '@features/assistants';
 import type { QuickAction, WalletCategories, WalletRecord } from '../domain/WalletRecord';
 import { DEFAULT_WALLET_CATEGORIES } from '../domain/WalletRecord';
 import type { UpdateWalletRecordInput } from '../domain/LedgerRepository';
-import type { LedgerAIReplyPayload } from '../application/TriggerLedgerAIReply';
 import { setLedgerAIAssistant } from '@features/assistants';
 import {
   addWalletQuickAction,
@@ -31,7 +30,6 @@ import { useWalletRecordActions } from './useWalletRecordActions';
 
 interface WalletScreenProps {
   onOpenHistory?: () => void;
-  onLedgerAIReply?: (payload: LedgerAIReplyPayload) => void | Promise<void>;
 }
 
 interface MonthlyStats {
@@ -68,7 +66,7 @@ const createStyles = (theme: PresentationTheme) =>
     addBtnText: { color: theme.colors.text.inverse, fontSize: 16, fontWeight: '500' },
   });
 
-const WalletScreen: React.FC<WalletScreenProps> = ({ onOpenHistory, onLedgerAIReply }) => {
+const WalletScreen: React.FC<WalletScreenProps> = ({ onOpenHistory }) => {
   const styles = useThemedStyles(createStyles);
   const theme = useTheme();
 
@@ -121,10 +119,7 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ onOpenHistory, onLedgerAIRe
   }, [loadData]));
 
   const handleAddRecord = async (data: Required<UpdateWalletRecordInput>): Promise<boolean> => {
-    const result = await addWalletRecord(
-      data,
-      { onLedgerAIReply }
-    );
+    const result = await addWalletRecord(data);
 
     if (!result.success || !result.record) {
       showAppDialog({ title: '错误', message: result.error || '保存记账失败', tone: 'error' });
@@ -142,10 +137,7 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ onOpenHistory, onLedgerAIRe
 
     setMutatingQuickActionId(action.id);
     try {
-      const result = await applyQuickActionAndReply(
-        { quickActionId: action.id },
-        { onLedgerAIReply }
-      );
+      const result = await applyQuickActionAndReply({ quickActionId: action.id });
 
       if (!result.success) {
         showAppDialog({ title: '错误', message: result.error || '快捷记账失败', tone: 'error' });
@@ -162,10 +154,10 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ onOpenHistory, onLedgerAIRe
   };
 
   const handleAddQuick = async (
-    data: Omit<QuickAction, 'id' | 'createdAt' | 'updatedAt'>
+    data: Omit<QuickAction, 'id' | 'sortOrder' | 'createdAt' | 'updatedAt'>
   ): Promise<void> => {
     try {
-      await addWalletQuickAction(data as QuickAction);
+      await addWalletQuickAction(data);
       await loadData();
       setShowQuickModal(false);
     } catch (error) {

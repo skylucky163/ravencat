@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import NavigationHeader from '@shared/ui/NavigationHeader';
-import { BackgroundPickerCard, CheckIcon, ModalSheet, showAppDialog } from '@shared/ui';
+import { BackgroundPickerCard, ModelPickerModal, showAppDialog } from '@shared/ui';
 import { useTheme, type PresentationTheme } from '@shared/theme';
 import type {
   MomentImageAnalysisModelRef,
@@ -29,18 +29,7 @@ function createStyles(theme: PresentationTheme) {
     label: { color: theme.colors.text.primary, fontSize: 15 },
     value: { color: theme.colors.text.secondary, fontSize: 14, maxWidth: '60%', textAlign: 'right' },
     note: { color: theme.colors.text.tertiary, fontSize: 12, lineHeight: 18, marginTop: theme.spacing.sm },
-    modelRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: theme.spacing.lg,
-      paddingVertical: 14,
-      borderBottomWidth: 0.5,
-      borderBottomColor: theme.colors.border.light,
-    },
-    modelRowText: { flex: 1 },
-    modelName: { color: theme.colors.text.primary, fontSize: 15, fontWeight: '600' },
-    modelModel: { color: theme.colors.text.secondary, fontSize: 12, marginTop: 3 },
-    clearText: { color: theme.colors.feedback.error, fontSize: 15, fontWeight: '600' },
+
   });
 }
 
@@ -104,25 +93,9 @@ export default function MomentsSettingsView({ onClose }: Props) {
         />
       </ScrollView>
 
-      <ModalSheet
-        visible={pickerVisible}
-        onClose={() => setPickerVisible(false)}
-        title="选择图片理解模型"
-        style={{ maxHeight: '70%' }}
-      >
-        <TouchableOpacity style={styles.modelRow} onPress={() => void selectModel(null)} activeOpacity={0.7}>
-          <Text style={styles.clearText}>清除选择</Text>
-        </TouchableOpacity>
-        {candidates.map((candidate) => (
-          <TouchableOpacity key={candidate.id} style={styles.modelRow} onPress={() => void selectModel(candidate.id)} activeOpacity={0.7}>
-            <View style={styles.modelRowText}>
-              <Text style={styles.modelName}>{candidate.name}</Text>
-              <Text style={styles.modelModel}>{candidate.model}</Text>
-            </View>
-            {selection?.modelConfigId === candidate.id ? <CheckIcon /> : null}
-          </TouchableOpacity>
-        ))}
-      </ModalSheet>
+      <ModelPickerModal visible={pickerVisible} onClose={() => setPickerVisible(false)} title="选择图片理解模型"
+        models={candidates} selectedModel={selection?.modelConfigId} onSelect={id => { void selectModel(id); }}
+        onClear={() => { void selectModel(null); }} />
       <MomentsCoverPreviewModal
         visible={coverPreviewVisible}
         coverSource={cover.coverSource}

@@ -143,14 +143,12 @@ await update('self', { nickname: null });
 assert.equal((await nickname.getAssistantNicknamePromptContext('self')).content, '');
 assert.match(db.prepare("SELECT text FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1").get(session.id).text, /修改为未设置昵称/);
 
-const { parseChatSettingsDraft } = load('src/features/chat/presentation/conversation/chatSettingsDraft.ts', {
-  '@shared/ui/draftValidation': {},
-});
-assert.deepEqual(parseChatSettingsDraft({ nickname: '  老公  ' }, ['nickname']).patch, { nickname: '老公' });
-assert.deepEqual(parseChatSettingsDraft({ nickname: '   ' }, ['nickname']).patch, { nickname: null });
-assert.ok(parseChatSettingsDraft({ nickname: 'a\nb' }, ['nickname']).errors.nickname);
-assert.ok(parseChatSettingsDraft({ nickname: '长'.repeat(21) }, ['nickname']).errors.nickname);
-assert.deepEqual(parseChatSettingsDraft({ nickname: '🐈'.repeat(20) }, ['nickname']).patch, { nickname: '🐈'.repeat(20) });
+const { parseAssistantProfileDraft } = load('src/features/assistants/presentation/profile/assistantProfileDraft.ts');
+assert.deepEqual(parseAssistantProfileDraft({ nickname: '  老公  ' }, ['nickname']).patch, { nickname: '老公' });
+assert.deepEqual(parseAssistantProfileDraft({ nickname: '   ' }, ['nickname']).patch, { nickname: null });
+assert.ok(parseAssistantProfileDraft({ nickname: 'a\nb' }, ['nickname']).errors.nickname);
+assert.ok(parseAssistantProfileDraft({ nickname: '长'.repeat(21) }, ['nickname']).errors.nickname);
+assert.deepEqual(parseAssistantProfileDraft({ nickname: '🐈'.repeat(20) }, ['nickname']).patch, { nickname: '🐈'.repeat(20) });
 
 const metadata = load('src/features/chat/messages/domain/chatMessageMetadata.ts');
 // 原始 UTC 时刻与给模型的本地发生时间同时保留，避免把八点 UTC 说成上午八点。

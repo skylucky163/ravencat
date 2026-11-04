@@ -15,10 +15,10 @@ export interface AuxiliaryModelConfigItem {
   name: string;
   model: string;
   baseUrl: string;
-  enabled: boolean;
 }
 
 export interface AuxiliaryModelFormData {
+  serviceConfigId?: string | null;
   id?: string;
   name: string;
   baseUrl: string;
@@ -27,6 +27,5 @@ export interface AuxiliaryModelFormData {
   temperature: number | null;
   topP: number | null;
   maxTokens: number | null;
-  enabled: boolean;
   metadataJson?: string | null;
 }

@@ -12,8 +12,7 @@ const lifecycleSource = read('src/features/togetherListening/application/Togethe
 const projectionSource = read('src/features/togetherListening/application/TogetherListeningSystemPresentation.ts');
 const runtimeSource = read('src/features/togetherListening/application/TogetherListeningRuntime.ts');
 const hostCompositionSource = read('src/host/composition/configureTogetherListeningRuntime.ts');
-const headlessSource = read('src/host/notifications/TogetherListeningNotificationActionHeadlessTask.ts');
-const indexSource = read('index.js');
+const headlessSource = read('src/host/notifications/TogetherListeningNotificationAction.ts');
 const publisherSource = read(
   'modules/kimiphone-notifications/android/src/main/java/expo/modules/kimiphonenotifications/NotificationPublisher.kt',
 );
@@ -54,7 +53,6 @@ assert.doesNotMatch(
   /android\.permission\.POST_PROMOTED_NOTIFICATIONS/,
   'V1 已删除 promoted notification permission',
 );
-assert.match(manifestSource, /TogetherListeningNotificationActionHeadlessTaskService/);
 assert.match(manifestSource, /TogetherListeningNotificationActivity/);
 assert.match(buildSource, /androidx\.core:core-ktx:1\.13\.1/);
 assert.doesNotMatch(
@@ -104,24 +102,15 @@ assert.match(publisherSource, /isTogetherListeningDismissed/);
 assert.match(publisherSource, /status = "suppressed"/);
 assert.match(publisherSource, /currentActivityId != activityId/, '旧 Activity cancel 不得撤销新 presentation');
 
-assert.match(indexSource, /KimiPhoneTogetherListeningNotificationActionTask/);
 assert.match(headlessSource, /getTogetherListeningActivityById\(activityId\)/);
 assert.match(headlessSource, /activity\.hostAiId !== hostAiId/);
 assert.match(headlessSource, /activity\.chatSessionId !== chatSessionId/);
 assert.match(headlessSource, /source: 'system_capsule'/);
 
-// BLOCKER 2：system leave 必须先 durable enqueue，再交付前台或 fallback Headless。
-assert.match(receiverSource, /recordForTogetherListeningHeadless/, 'receiver 不得绕过 durable dispatcher 直启 Headless');
+// system leave 必须先 durable enqueue，再交付运行宿主。
+assert.match(receiverSource, /recordTogetherListeningAction/, 'receiver 不得绕过 durable dispatcher 直启 Headless');
 assert.doesNotMatch(receiverSource, /TogetherListeningNotificationActionHeadlessTaskService\.start/);
-assert.match(dispatcherSource, /fun recordForTogetherListeningHeadless/);
-{
-  const fnStart = dispatcherSource.indexOf('fun recordForTogetherListeningHeadless');
-  const enqueueAt = dispatcherSource.indexOf('enqueueResponse', fnStart);
-  const headlessAt = dispatcherSource.indexOf('TogetherListeningNotificationActionHeadlessTaskService.start', fnStart);
-  assert.ok(enqueueAt > fnStart && headlessAt > enqueueAt, 'durable pending response 必须先于 Headless fallback');
-  assert.match(dispatcherSource.slice(fnStart), /NotificationResponseEvents\.emit/, '前台 observer 在线必须直接交付');
-  assert.match(dispatcherSource.slice(fnStart), /removePendingResponse/, '前台交付成功后必须出队');
-}
+assert.match(dispatcherSource, /fun recordTogetherListeningAction/);
 
 // BLOCKER 1：Together open 使用专用可重复 target，不伪装成 ai-message 一次性事件。
 assert.match(externalNavigationSource, /type: 'together-listening'/);

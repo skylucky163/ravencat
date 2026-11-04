@@ -1,3 +1,4 @@
+import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /**
  * deleteChatMessage application-level 的删除编排回归测试。
@@ -90,14 +91,14 @@ const timeSeparatorUrl = transpileToModuleUrl(
 const chatStickerUrl = transpileToModuleUrl(
   read('src/features/chat/messages/domain/ChatSticker.ts'),
 );
-const sharedChatRecordUrl = transpileToModuleUrl(read('src/features/chat/messages/domain/SharedChatRecord.ts'));
+const sharedChatRecordUrl = sharedChatRecordModuleUrl;
 
 const chatMessageMetadataSource = transpileSource(
   'src/features/chat/messages/domain/chatMessageMetadata.ts',
 ).replaceAll(
   `from './ChatSticker'`,
   `from '${chatStickerUrl}'`,
-).replaceAll(`from './SharedChatRecord'`, `from '${sharedChatRecordUrl}'`);
+).replaceAll(`from './SharedChatRecord'`, `from '${sharedChatRecordUrl}'`).replaceAll(`from './SharedMoment'`, `from '${sharedMomentModuleUrl}'`);
 const chatMessageMetadataUrl = `data:text/javascript;base64,${Buffer.from(chatMessageMetadataSource).toString('base64')}`;
 const chatEventsUrl = transpileToModuleUrl(read('src/features/chat/messages/events/ChatEvents.ts'));
 

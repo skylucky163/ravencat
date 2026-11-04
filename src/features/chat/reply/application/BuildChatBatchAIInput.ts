@@ -18,12 +18,14 @@ import {
   getMessageAttachments,
   getMessageSticker,
   getMessageSharedRecord,
+  getMessageSharedMoment,
   stringifyAttachmentSummary,
 } from '@features/chat/messages/domain';
 import { buildStickerModelText } from '../../messages/domain/ChatSticker';
 import { resolveChatImageModelInput } from './ResolveChatImageModelInput';
 import { getChatReplyRuntimeDependencies } from './ChatReplyRuntimeDependencies';
 import { buildSharedChatRecordText, sharedRecordAuthorLabel } from '../../messages/domain/SharedChatRecord';
+import { buildSharedMomentText } from '../../messages/domain/SharedMoment';
 import { mediaImageFailure } from '@features/media';
 
 export type ModelInputContentPart =
@@ -180,6 +182,11 @@ export async function buildChatUserMessageModelInput(
   assistantId: string,
   currentAgentId?: string,
 ): Promise<ChatUserMessageModelInput> {
+  const moment = getMessageSharedMoment(message);
+  if (moment) {
+    const displayText = buildSharedMomentText(moment, currentAgentId);
+    return { displayText, modelInput: displayText };
+  }
   const record = getMessageSharedRecord(message);
   if (record) {
     const displayText = buildSharedChatRecordText(record, message.text, currentAgentId);
@@ -202,7 +209,7 @@ export async function buildChatUserMessageModelInput(
   const attachments = getMessageAttachments(message);
   const text = String(message.text || '').trim();
 
-  const quoteText = buildReplyQuoteModelText(message);
+  const quoteText = buildReplyQuoteModelText(message, currentAgentId);
   if (quoteText) {
     parts.push({ type: 'text', text: quoteText });
   }

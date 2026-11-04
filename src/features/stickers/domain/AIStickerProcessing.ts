@@ -21,4 +21,5 @@ export interface AIStickerProcessingRepository {
   finish(claim: AIStickerClaim, result: { metadata?: StickerAnnotationMetadata; embedding?: StickerEmbedding; error?: string }, now: string, guard: AIStickerCommitGuard): Promise<boolean>;
   cancel(claim: AIStickerClaim, now: string): Promise<void>;
   getTask(stickerId: string): Promise<AIStickerTask | null>;
+  getTasks(stickerIds: readonly string[]): Promise<Map<string, AIStickerTask>>;
 }

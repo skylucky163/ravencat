@@ -7,14 +7,9 @@ export { configureMemoryRuntime } from './composition/configureMemoryRuntime';
 export { configureMcpToolsRuntime } from './composition/configureMcpToolsRuntime';
 export { configureChatRuntime } from './composition/configureChatRuntime';
 export { configureHostRuntime } from './composition/configureHostRuntime';
-export { configureCompanionHeadlessRuntime } from './composition/configureCompanionHeadlessRuntime';
-export { runCallNotificationActionHeadlessTask } from './notifications/CallNotificationActionHeadlessTask';
-export {
-  runTogetherListeningNotificationActionHeadlessTask,
-} from './notifications/TogetherListeningNotificationActionHeadlessTask';
-export { runConversationTurnHeadlessTask } from './runtime/ConversationTurnHeadlessTask';
-export { runHostRelationshipReplyHeadlessTask } from './runtime/HostRelationshipReplyHeadlessTask';
-export { runCallExecutionHeadlessTask } from './runtime/CallExecutionHeadlessTask';
+export { configureBackgroundExecutionRuntime } from './composition/configureBackgroundExecutionRuntime';
+export { configureApplicationExecutionHost } from './runtime/ApplicationExecutionHost';
 export { configurePromptingRuntime } from './composition/configurePromptingRuntime';
 export { default as AuxiliaryModelsRouteContent, parseCapabilityKind } from './navigation/AuxiliaryModelsRouteContent';
 export { default as useRetainedRouteRefreshRevision } from './navigation/useRetainedRouteRefreshRevision';
+export { default as AssistantModelSettingsRouteContent } from './navigation/AssistantModelSettingsRouteContent';

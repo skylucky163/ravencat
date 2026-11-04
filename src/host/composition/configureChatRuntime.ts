@@ -1,9 +1,11 @@
 /** 将 Chat 的仓储端口与数据库维护能力连接到具体实现。 */
 import { chatSummaryRepository } from './chatSummaryRepository';
-import { resolveImageGroundingPrompt } from '@features/prompting';
+import { resolveImageGroundingPrompt, resolveVisionOCRPrompt } from '@features/prompting';
 import {
   configureChatRuntimeDependencies,
   configureChatTextDrafts,
+  configureChatBubbleSkins,
+  SQLiteChatBubbleSkinRepository,
   SQLiteChatTextDraftRepository,
   configureChatImageModels,
   resolveChatRecognitionModel,
@@ -77,6 +79,7 @@ export function configureChatRuntime(): void {
   }
   configured = true;
   configureChatTextDrafts(new SQLiteChatTextDraftRepository());
+  configureChatBubbleSkins(new SQLiteChatBubbleSkinRepository());
   configureChatFavoriteRuntime(new SQLiteChatFavoriteRepository());
   configureChatTurnPresentation(chatTurnPresentationRepository);
   configureTurnDisplayPacing(awaitTurnDisplayArrival, setTurnDisplayOpen, async messageIds => {
@@ -192,6 +195,7 @@ export function configureChatRuntime(): void {
     },
     prompt: {
       readImageGroundingReminder: resolveImageGroundingPrompt,
+      resolveVisionOCRPrompt,
       assembleChat: assembleResolvedChatPromptPack,
       assembleLedger: assembleResolvedLedgerPromptPack,
       assembleStandalone: assembleResolvedStandalonePromptPack,

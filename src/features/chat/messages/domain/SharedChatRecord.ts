@@ -1,6 +1,7 @@
 /** 分享保存原作者快照；“自己”只在接收者读取时按稳定身份生成，不写入事实。 */
 import type { ChatAttachment } from './ChatAttachment';
 import type { StickerMessageSnapshot } from './ChatSticker';
+import { buildSharedMomentText, type SharedMoment } from './SharedMoment';
 
 export interface SharedChatRecordEntry {
   author: { kind: 'user' | 'assistant'; name: string; agentId: string | null };
@@ -11,6 +12,7 @@ export interface SharedChatRecordEntry {
   modelText?: string;
   attachments: ChatAttachment[];
   sticker: StickerMessageSnapshot | null;
+  moment?: SharedMoment;
 }
 
 export interface SharedChatRecord {
@@ -46,6 +48,7 @@ export function buildSharedChatRecordText(record: SharedChatRecord, comment: str
       entry: index + 1,
       author: sharedRecordAuthorLabel(entry, currentAgentId), authorKind: entry.author.kind,
       agent_id: entry.author.agentId, timestamp: entry.createdAt, kind: entry.kind, text: readSnapshotModelText(entry),
+      ...(entry.moment ? { moment: buildSharedMomentText(entry.moment, currentAgentId) } : {}),
       ...(entry.sticker ? { sticker: { name: entry.sticker.name, description: entry.sticker.description, tags: entry.sticker.tags, emotion: entry.sticker.emotion } } : {}),
       ...(entry.attachments.length ? { attachments: entry.attachments.map((attachment) => ({
         type: attachment.type, fileName: attachment.fileName,

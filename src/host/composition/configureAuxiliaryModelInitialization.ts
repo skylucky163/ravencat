@@ -1,22 +1,26 @@
 /** 跨 Feature 初始选择只在 Host 装配；SQL 与用户选择保护留在各 owner。 */
 import { configureAuxiliaryModelInitialization, initializeAssistantVoiceModelInTransaction } from '@features/assistants/composition';
-import { initializeChatImageModelInTransaction, invalidateChatSummaryModelReferencesInTransaction } from '@features/chat/composition';
-import { initializeMemoryEmbeddingModelInTransaction } from '@features/memory/composition';
+import { initializeChatImageModelInTransaction, invalidateChatSummaryModelReferencesInTransaction, invalidateChatSummaryServiceReferencesInTransaction } from '@features/chat/composition';
 import { initializeSpeechRecognitionModelInTransaction } from '@features/speech/composition';
 import { initializeTranslationModelInTransaction } from '@features/integrations/composition';
 import { momentRepository } from '@features/moments/composition';
-import { SQLiteStickerRepository, emitStickerAnnotationPending, emitStickerEmbeddingPending } from '@features/stickers/composition';
+import { stickerRepository, emitStickerAnnotationPending, emitStickerEmbeddingPending } from '@features/stickers/composition';
+import { memoryEntryRepository } from '@features/memory/composition';
 
 export function configureAuxiliaryModelInitializationRuntime(): void {
-  const stickers = new SQLiteStickerRepository();
   configureAuxiliaryModelInitialization({
-    invalidateModelReferencesInTransaction: invalidateChatSummaryModelReferencesInTransaction,
+    async invalidateModelReferencesInTransaction(transaction, modelConfigId) {
+      await invalidateChatSummaryModelReferencesInTransaction(transaction, modelConfigId);
+      await memoryEntryRepository.invalidateEmbeddingModelInTransaction(transaction, modelConfigId);
+      await stickerRepository.invalidateEmbeddingModelInTransaction(transaction, modelConfigId);
+    },
+    invalidateServiceReferencesInTransaction: invalidateChatSummaryServiceReferencesInTransaction,
     async initializeModelSelections(transaction, model) {
       switch (model.capabilityKind) {
         case 'ocr':
           await initializeChatImageModelInTransaction(transaction, model.id);
           await momentRepository.initializeImageAnalysisModelInTransaction(transaction, model.id, model.updatedAt);
-          await stickers.initializeSystemModelInTransaction(transaction, 'ocr', model.id, model.updatedAt);
+          await stickerRepository.initializeSystemModelInTransaction(transaction, 'ocr', model.id, model.updatedAt);
           break;
         case 'tts':
           await initializeAssistantVoiceModelInTransaction(transaction, model.id);
@@ -25,8 +29,8 @@ export function configureAuxiliaryModelInitializationRuntime(): void {
           await initializeSpeechRecognitionModelInTransaction(transaction, model.id);
           break;
         case 'embedding':
-          await initializeMemoryEmbeddingModelInTransaction(transaction, model.id);
-          await stickers.initializeSystemModelInTransaction(transaction, 'embedding', model.id, model.updatedAt);
+          // Memory 的空选择明确表示关闭，只能由用户在记忆设置中开启。
+          await stickerRepository.initializeSystemModelInTransaction(transaction, 'embedding', model.id, model.updatedAt);
           break;
         case 'translation':
           await initializeTranslationModelInTransaction(transaction, model.id);

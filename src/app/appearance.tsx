@@ -4,5 +4,5 @@ import { ThemePickerView } from '@features/miniPrograms';
 
 export default function AppearanceRoute() {
   const router = useRouter();
-  return <ThemePickerView onBack={() => router.back()} />;
+  return <ThemePickerView onBack={() => router.back()} onOpenBubbleSkins={() => router.push('/bubble-skins')} />;
 }

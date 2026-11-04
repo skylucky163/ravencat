@@ -591,20 +591,6 @@ function asset(overrides = {}) {
     MediaAssetBackingNotFoundError,
   );
 
-  const { NativeBubbleSkinAssetBacking } = loadTypeScriptModuleWithMocks(
-    'src/features/media/infrastructure/NativeBubbleSkinAssetBacking.ts',
-    {
-      '../../../../modules/ravencat-floating-layer': {
-        resolveBubbleSkinAsset: async () => null,
-      },
-      '../application/MediaAssetBacking': mediaAssetBackingModule,
-    },
-  );
-  await assert.rejects(
-    new NativeBubbleSkinAssetBacking().resolve('user-missing.png'),
-    MediaAssetBackingNotFoundError,
-  );
-
   const { PersistentMediaStore: FailingPersistentMediaStore } = loadTypeScriptModuleWithMocks(
     'src/platform/device/PersistentMediaStore.ts',
     {
@@ -654,7 +640,6 @@ function asset(overrides = {}) {
     {
       '@shared/runtime/abortSignal': loadTypeScriptModuleWithMocks('src/shared/runtime/abortSignal.ts', {}),
       '@platform/ai': { createAIClient: () => assert.fail('direct vision 不应创建 OCR client') },
-      '@shared/prompt': { readAuxiliaryTaskPromptOverride: () => null },
       './ChatReplyRuntimeDependencies': {
         getChatReplyRuntimeDependencies: () => dependencies,
       },

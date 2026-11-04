@@ -2,7 +2,6 @@
 import type { Tool, ToolContext } from '@shared/aiTools';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { addWalletRecord } from '../application/AddRecord';
-import { deleteWalletRecord, updateWalletRecord } from '../application/WalletPresentation';
 import type { ILedgerRepository, UpdateWalletRecordInput } from '../domain/LedgerRepository';
 import { DEFAULT_WALLET_CATEGORIES, type WalletRecordType } from '../domain/WalletRecord';
 
@@ -79,7 +78,7 @@ export const UpdateLedgerRecordTool: Tool<UpdateLedgerRecordArgs, ToolContext> =
     const ledgerRepository = context.repositories.ledger as ILedgerRepository | null;
     if (!ledgerRepository) return { success: false, error: '账本仓储未注入，无法编辑账单' };
     throwIfAbortSignalAborted(context.abortSignal);
-    const changed = await updateWalletRecord(recordId, updates, { ledgerRepository });
+    const changed = await ledgerRepository.updateRecord(recordId, updates);
     if (!changed) return { success: false, error: '账单不存在，可能已被删除，请重新查询' };
     return {
       success: true,
@@ -103,7 +102,7 @@ export const DeleteLedgerRecordTool: Tool<{ recordId: string }, ToolContext> = {
     const ledgerRepository = context.repositories.ledger as ILedgerRepository | null;
     if (!ledgerRepository) return { success: false, error: '账本仓储未注入，无法删除账单' };
     throwIfAbortSignalAborted(context.abortSignal);
-    const changed = await deleteWalletRecord(recordId, { ledgerRepository });
+    const changed = await ledgerRepository.deleteRecord(recordId);
     if (!changed) return { success: false, error: '账单不存在，可能已被删除，请重新查询' };
     return { success: true, message: `已删除账单 ID=${recordId}`, data: { recordId } };
   },

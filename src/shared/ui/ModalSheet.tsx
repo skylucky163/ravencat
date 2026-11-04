@@ -26,10 +26,11 @@ export interface ModalSheetProps {
   /** 入场动画完成且窗口可交互后调用，供表单请求焦点；内容更新不会重新触发。 */
   onOpened?: () => void;
   title?: string;
+  titleAccessory?: ReactNode;
   children: ReactNode;
   style?: ViewStyle;
-  /** 表单弹窗在自己的 Modal 窗口内避让，内容无需再包避让容器。 */
-  avoidKeyboard?: boolean;
+  /** 弹层浮在深色场景上（玻璃底透出深色背景）时，标题与关闭改用亮色。 */
+  onDark?: boolean;
 }
 
 const createStyles = (theme: PresentationTheme) =>
@@ -38,7 +39,7 @@ const createStyles = (theme: PresentationTheme) =>
       flex: 1,
       backgroundColor: theme.colors.surface.overlay,
     },
-    keyboardContainer: {
+    windowContent: {
       flex: 1,
       justifyContent: 'flex-end',
     },
@@ -58,10 +59,13 @@ const createStyles = (theme: PresentationTheme) =>
       borderBottomWidth: 0.5,
       borderBottomColor: theme.colors.border.light,
     },
+    titleGroup: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm },
     title: {
       ...theme.typography.title,
       color: theme.colors.text.primary,
+      flexShrink: 1,
     },
+    titleOnDark: { color: theme.colors.text.inverse },
     closeBtn: {
       padding: theme.spacing.sm,
       marginRight: -theme.spacing.sm,
@@ -70,6 +74,7 @@ const createStyles = (theme: PresentationTheme) =>
       ...theme.typography.body,
       color: theme.colors.text.secondary,
     },
+    closeTextOnDark: { color: theme.colors.text.inverse, opacity: 0.65 },
   });
 
 export default function ModalSheet({
@@ -77,9 +82,10 @@ export default function ModalSheet({
   onClose,
   onOpened,
   title,
+  titleAccessory,
   children,
   style,
-  avoidKeyboard = false,
+  onDark = false,
 }: ModalSheetProps) {
   const [internalVisible, setInternalVisible] = useState(visible);
   const [windowShown, setWindowShown] = useState(false);
@@ -150,10 +156,7 @@ export default function ModalSheet({
       onRequestClose={onClose}
     >
       <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
-        <KeyboardAvoidingContainer
-          style={styles.keyboardContainer}
-          enabled={avoidKeyboard && visible}
-        >
+        <KeyboardAvoidingContainer style={styles.windowContent} enabled={visible} fillsNativeWindow>
           <TouchableWithoutFeedback onPress={onClose}>
             <View style={StyleSheet.absoluteFill} />
           </TouchableWithoutFeedback>
@@ -174,13 +177,16 @@ export default function ModalSheet({
             />
             {title ? (
               <View style={styles.header}>
-                <Text style={styles.title}>{title}</Text>
+                <View style={styles.titleGroup}>
+                  <Text style={[styles.title, onDark && styles.titleOnDark]}>{title}</Text>
+                  {titleAccessory}
+                </View>
                 <TouchableOpacity
                   onPress={onClose}
                   style={styles.closeBtn}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.closeText}>关闭</Text>
+                  <Text style={[styles.closeText, onDark && styles.closeTextOnDark]}>关闭</Text>
                 </TouchableOpacity>
               </View>
             ) : null}

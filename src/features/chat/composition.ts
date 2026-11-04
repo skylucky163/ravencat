@@ -33,6 +33,8 @@ import type {
   GroupAvatarMediaAssetMigrationCandidate,
 } from './group/domain/GroupChatRepository';
 
+export { configureChatBubbleSkins } from './appearance/application/ChatBubbleSkinRuntime';
+export { SQLiteChatBubbleSkinRepository } from './appearance/infrastructure/SQLiteChatBubbleSkinRepository';
 export { configureChatTextDrafts } from './conversation/application/ChatTextDraftRuntime';
 export { SQLiteChatTextDraftRepository } from './conversation/infrastructure/SQLiteChatTextDraftRepository';
 export { interruptAbandonedGroupSpeechPlans } from './group/application/GroupSpeechTermination';
@@ -53,7 +55,7 @@ export type { ChatSummaryCallDiagnostics, ChatSummaryRequestSettings } from './s
 export { buildChatSummaryModelInput } from './summary/application/ChatSummary';
 
 export { processChatSummary, prepareChatSummaryConversations, getNextChatSummaryWakeAt } from './summary/application/ChatSummary';
-export { invalidateChatSummaryModelReferencesInTransaction } from './summary/application/ChatSummary';
+export { invalidateChatSummaryModelReferencesInTransaction, invalidateChatSummaryServiceReferencesInTransaction } from './summary/application/ChatSummary';
 
 // Host runtime 依赖、执行入口与运行时类型。
 export type {
@@ -274,3 +276,4 @@ export { chatImageSettingsRepository } from './reply/infrastructure/SQLiteChatIm
 export { initializeChatImageModelInTransaction } from './reply/infrastructure/SQLiteChatImageSettingsRepository';
 
 export { recordAssistantNicknameChangeInTransaction } from './messages/application/RecordAssistantNicknameChange';
+export { createSharedMomentSendIntent } from './reply/agent/SharedMomentSendIntent';

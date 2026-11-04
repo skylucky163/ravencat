@@ -77,6 +77,7 @@ export interface GroupChatAdminConfig {
   groupId: string;
   name: string;
   model: string;
+  serviceConfigId?: string | null;
   apiKey: string | null;
   apiBaseUrl: string | null;
   systemPrompt: string | null;
@@ -89,6 +90,7 @@ export interface GroupChatAdminConfig {
 }
 
 export interface UpdateGroupChatAdminConfigInput {
+  serviceConfigId?: string | null;
   model?: string;
   apiKey?: string | null;
   apiBaseUrl?: string | null;
@@ -160,6 +162,7 @@ export interface CreateGroupChatRecordInput {
     avatarMediaAssetId?: string | null;
   };
   adminConfig: {
+    serviceConfigId?: string | null;
     name: string;
     model: string;
     apiKey?: string | null;

@@ -1,3 +1,4 @@
+import { chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 import { CHAT_PROMPT_READING_FLOW } from './helpers/prompt-reading-flow.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -70,7 +71,7 @@ assert.equal(confidentialityBlock.content, builtInContent.resolveBuiltInPromptCo
 }), '静态目录和实际群聊保密正文使用同一内容，不在运行时追加隐藏指引');
 
 const chatMetadata = loadTypeScriptModule('src/features/chat/messages/domain/chatMessageMetadata.ts', {
-  './SharedChatRecord': loadTypeScriptModule('src/features/chat/messages/domain/SharedChatRecord.ts', {}),
+  ...chatSharingDependencies,
   './ChatSticker': loadTypeScriptModule('src/features/chat/messages/domain/ChatSticker.ts', {}),
 });
 const { PromptHistoryBuilder } = loadTypeScriptModule(
@@ -89,6 +90,7 @@ const { PromptHistoryBuilder } = loadTypeScriptModule(
         }),
       }),
       getMessageSharedRecord: chatMetadata.getMessageSharedRecord,
+      getMessageSharedMoment: chatMetadata.getMessageSharedMoment,
       buildChatSystemEventModelText: chatMetadata.buildChatSystemEventModelText,
       buildReplyQuoteModelText: chatMetadata.buildReplyQuoteModelText,
       buildChatUserMessageModelInput: async (message) => {

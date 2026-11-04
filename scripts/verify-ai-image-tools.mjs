@@ -1,3 +1,4 @@
+import { sharedChatRecord, sharedMoment, chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 /** AI 图片与收藏的行为测试：真实 SQLite 所有权、迁移、claim/fence 和工具视觉输入。 */
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,25 +10,32 @@ import { loadTypeScriptModule as load } from './helpers/load-typescript-module.m
 const domain = load('src/features/stickers/domain/Sticker.ts');
 const chatSticker = load('src/features/chat/messages/domain/ChatSticker.ts');
 const chatMetadata = load('src/features/chat/messages/domain/chatMessageMetadata.ts', { './ChatSticker': chatSticker,
-  './SharedChatRecord': load('src/features/chat/messages/domain/SharedChatRecord.ts') });
-const sharedRecord = load('src/features/chat/messages/domain/SharedChatRecord.ts');
+  ...chatSharingDependencies });
+const sharedRecord = sharedChatRecord;
 const embeddingDomain = load('src/features/stickers/domain/StickerEmbedding.ts');
 const abort = load('src/shared/runtime/abortSignal.ts');
 const runState = load('src/platform/agentRuntime/AgentRunState.ts');
 const slot = load('src/shared/runtime/RuntimeSlot.ts');
 const runtime = load('src/features/stickers/application/StickerRuntime.ts', { '@shared/runtime/RuntimeSlot': slot });
+const progressSignals = load('src/features/stickers/application/StickerProcessingSignal.ts', {
+  './StickerAnnotationChangedSignal': load('src/features/stickers/application/StickerAnnotationChangedSignal.ts'),
+});
 const models = load('src/features/stickers/application/StickerSystemModels.ts', {
   './StickerRuntime': runtime,
   './StickerAnnotationPendingSignal': {}, './StickerEmbeddingPendingSignal': {},
+  './StickerProcessingSignal': progressSignals,
+  './StickerAnnotationChangedSignal': load('src/features/stickers/application/StickerAnnotationChangedSignal.ts'),
   '../domain/StickerSystemConfig': load('src/features/stickers/domain/StickerSystemConfig.ts'),
 });
 const { SQLiteStickerRepository } = load('src/features/stickers/infrastructure/SQLiteStickerRepository.ts', {
+  '@shared/runtime/abortSignal': abort,
   '@platform/persistence': { ...databaseErrors, databaseCoordinator: { openTaskExecutor: () => ({}) } },
   '../domain/Sticker': domain,
 });
 const processingModule = load('src/features/stickers/infrastructure/SQLiteAIStickerProcessingRepository.ts', {
   '../domain/Sticker': domain,
   './SQLiteStickerRepository': load('src/features/stickers/infrastructure/SQLiteStickerRepository.ts', {
+    '@shared/runtime/abortSignal': abort,
     '@platform/persistence': { ...databaseErrors, databaseCoordinator: { openTaskExecutor: () => ({}) } }, '../domain/Sticker': domain,
   }),
 });
@@ -38,7 +46,7 @@ const { ConversationTurnRepository } = load('src/features/chat/reply/infrastruct
 });
 const turns = new ConversationTurnRepository();
 const { GroupChatRepository } = load('src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts', {
-  '@platform/persistence': {}, '@features/media': {}, '@features/profile': {},
+  '@platform/persistence': {}, '@features/media': {}, '@features/profile': {}, '@features/assistants': {},
 });
 const groups = new GroupChatRepository();
 const { assertImageToolRunCurrent } = load('src/host/composition/agent/assertImageToolRunCurrent.ts', {
@@ -48,14 +56,19 @@ const { assertImageToolRunCurrent } = load('src/host/composition/agent/assertIma
     isGroupSpeechTaskRunCurrentInTransaction: (tx, id) => groups.isSpeechTaskRunCurrentInTransaction(tx, id) },
 });
 
-function coordinated(db) {
-  return createCoordinatedSqliteFixture(createSqliteExecutor(db)).executor;
+function coordinated(db, reads = []) {
+  const raw = createSqliteExecutor(db);
+  return createCoordinatedSqliteFixture({ ...raw,
+    getFirstAsync: (sql, ...args) => { reads.push(sql); return raw.getFirstAsync(sql, ...args); },
+    getAllAsync: (sql, ...args) => { reads.push(sql); return raw.getAllAsync(sql, ...args); },
+  }).executor;
 }
 const now = '2026-10-11T00:00:00.000Z';
 const db = new DatabaseSync(':memory:');
 db.exec('PRAGMA foreign_keys=ON');
 await bootstrapSqlite(createSqliteExecutor(db));
-const executor = coordinated(db);
+const sqlReads = [];
+const executor = coordinated(db, sqlReads);
 for (const id of ['ai-one', 'ai-two']) db.prepare(`INSERT INTO ai_assistants (id,agent_id,name,model,created_at,updated_at)
   VALUES (?,?,?,'model',?,?)`).run(id, id, id, now, now);
 const asset = { id: 'image-1', storageBackend: 'persistent-media', storageKey: 'catalog/media/image-1.png',
@@ -81,6 +94,7 @@ assert.deepEqual((await repo.searchStickers({ assistantId: 'ai-one' })).map(s =>
 assert.equal(await repo.deleteSticker('one-sticker'), false, '用户删除口不能删除 AI 收藏');
 assert.equal(await repo.deleteSticker('two-sticker', 'ai-one'), false, '角色不能删除其他角色的收藏');
 assert.equal((await aiRepo.create('ai-one', asset, '重复', null, 'ignored', now, noFence)).reused, true);
+await repo.setAutomaticRecognitionEnabled(true, now);
 assert.equal(await repo.claimNextAnnotation('user-worker', now), null, 'AI 识别失败项不能进用户自动队列');
 
 let inspect = { mimeType: 'image/png', isAnimated: false, byteSize: 10, width: 120, height: 120 };
@@ -89,10 +103,11 @@ let embeddingFailure = true;
 let recognize = async () => { recognitionCalls++; return { name: '小猫', description: '给你摸摸头', tags: ['安慰'], emotion: '温柔' }; };
 let embed = async () => { embeddingCalls++; if (embeddingFailure) throw new Error('网络断开'); return [[1, 0]]; };
 const model = { id: 'embedding', capabilityKind: 'embedding', enabled: true, baseUrl: 'https://example.invalid',
-  apiKey: '', name: '向量模型', model: 'embed', updatedAt: now };
+  apiKey: 'test', name: '向量模型', model: 'embed', updatedAt: now };
 let generated = 0;
+let modelConfigReads = 0;
 runtime.configureStickersRuntime({ repository: repo, media: { resolveMediaAsset: async id => ({ asset: { ...asset, id }, localUri: 'file:///cat.png' }),
-  releaseMediaAssetCandidates: async () => {} }, auxiliaryModels: { getModelConfigById: async () => model,
+  releaseMediaAssetCandidates: async () => {} }, auxiliaryModels: { getModelConfigById: async () => { modelConfigReads++; return model; },
     listModelConfigsByRequirement: async () => [model] }, embeddings: { embedTexts: (...args) => embed(...args) },
   generateId: () => `new-${++generated}`, now: () => now,
   aiProcessing: { repository: aiRepo, executionId: 'process-1', recognize: (...args) => recognize(...args), assertCurrent: assertImageToolRunCurrent },
@@ -257,13 +272,15 @@ await executor.withExclusiveTransactionAsync(tx => repo.createStickerInTransacti
 assert.equal((await repo.listStickers()).length, 2, 'AI 满库不能占用用户配额');
 
 // 浏览和选择时带素材 ID 与缺向量提醒；不把本地路径或文件内容交给模型。
+let searchResults = [], pageStickers = [userSticker];
 const stickerTools = load('src/features/stickers/aiTools/StickerAgentTools.ts', {
   '@shared/runtime/abortSignal': abort, '@features/media': { mediaImageFailure: () => null },
   '@shared/aiTools': load('src/shared/aiTools/ToolCompletionIntent.ts'),
   '../application/StickerRuntime': runtime, '../application/AIStickerCommands': commands,
   '../application/StickerQueries': { getStickerById: id => repo.getStickerById(id, 'ai-one'),
-    listStickersInGroupForAI: async () => ({ stickers: [userSticker], nextCursor: null }) },
-  '../application/StickerSearch': {}, '../domain/StickerSearch': { encodeStickerGroupPageCursor: cursor => cursor },
+    listStickersInGroupForAI: async () => ({ stickers: pageStickers, nextCursor: null }) },
+  '../application/StickerSearch': { searchStickersForAI: async () => searchResults },
+  '../domain/StickerSearch': { encodeStickerGroupPageCursor: cursor => cursor },
   '../domain/Sticker': domain,
 });
 const groupPage = await stickerTools.listStickersInGroup({ group_id: 'group' }, actor);
@@ -274,6 +291,53 @@ assert.equal(Object.hasOwn(groupPage.data.stickers[0], 'uri'), false);
 assert.equal(Object.hasOwn(groupPage.data.stickers[0], 'base64'), false);
 const selected = await stickerTools.selectSticker({ sticker_id: userSticker.id, on_success: 'continue' }, actor);
 assert.equal(JSON.parse(selected.modelContent).sticker.vector.status, 'missing_or_stale');
+
+// 满页结果的读取成本不随张数增长，且有效、缺失、过期向量与失败原因仍各自归属正确。
+await executor.withExclusiveTransactionAsync(async tx => {
+  for (let i = 1; i <= 47; i++) await repo.createStickerInTransaction(tx,
+    { ...userSticker, id: `batch-user-${i}`, mediaAssetId: `capacity-${i}` });
+});
+const ownSticker = await repo.getStickerById('one-sticker', 'ai-one');
+const failedClaim = await aiRepo.claim('ai-one', ownSticker.id, 'embed', 'batch-failure', 'process-1', now, noFence);
+await aiRepo.finish(failedClaim, { error: '向量服务不可用' }, now, noFence);
+const spareSticker = await repo.getStickerById('user-spare');
+db.prepare(`INSERT INTO sticker_embeddings
+  (sticker_id,model_config_id,model_config_updated_at,semantic_revision,dimension,vector_json,created_at,updated_at)
+  VALUES (?,?,?,?,2,'[1,0]',?,?)`).run(spareSticker.id, model.id, now, spareSticker.semanticRevision, now, now);
+pageStickers = await repo.listStickers({ limit: 50 });
+searchResults = [ownSticker, ...pageStickers];
+assert.equal(searchResults.length, 50);
+const embeddingsBeforeSearch = embeddingCalls;
+sqlReads.length = 0;
+modelConfigReads = 0;
+const searched = await stickerTools.searchStickers({ limit: 50 }, actor);
+assert.deepEqual(searched.data.stickers.map(s => s.stickerId), searchResults.map(s => s.id), '保留搜索顺序与发送 ID');
+assert.equal(JSON.parse(searched.modelContent).stickers[0].mediaAssetId, ownSticker.mediaAssetId);
+assert.equal(searched.data.stickers.find(s => s.stickerId === spareSticker.id).vector.status, 'ready');
+assert.equal(searched.data.stickers.find(s => s.stickerId === userSticker.id).vector.status, 'missing_or_stale');
+assert.equal(searched.data.stickers[0].vector.status, 'missing_or_stale', '旧语义向量不能被当成有效向量');
+assert.equal(searched.data.stickers[0].vector.error, '向量服务不可用');
+assert.equal(searched.data.stickers.find(s => s.stickerId === userSticker.id).vector.error, null);
+assert.ok(sqlReads.length <= 3, `50 张结果的状态整理不能逐张查库，实际读取 ${sqlReads.length} 次`);
+assert.equal(modelConfigReads, 1, '同批状态使用同一模型配置');
+assert.equal(embeddingCalls, embeddingsBeforeSearch, '状态整理不能请求向量模型');
+sqlReads.length = 0;
+modelConfigReads = 0;
+const batchPage = await stickerTools.listStickersInGroup({ group_id: 'group', limit: 50 }, actor);
+assert.deepEqual(batchPage.data.stickers.map(s => s.stickerId), pageStickers.map(s => s.id));
+assert.equal(batchPage.data.stickers.find(s => s.stickerId === spareSticker.id).vector.status, 'ready');
+assert.ok(sqlReads.length <= 2, '用户分组列表不能逐张查库或读取 AI 私有处理状态');
+assert.equal(modelConfigReads, 1);
+await repo.saveStickerSystemConfig({ recognitionModelConfigId: 'ocr', embeddingModelConfigId: null, updatedAt: now }, now);
+assert.ok((await commands.getStickerVectorStates(searchResults)).every(state => state.status === 'missing_or_stale'), '取消模型配置后不能沿用旧状态');
+await repo.saveStickerSystemConfig({ recognitionModelConfigId: 'ocr', embeddingModelConfigId: model.id, updatedAt: now }, now);
+searchResults = [];
+sqlReads.length = 0;
+modelConfigReads = 0;
+assert.equal((await stickerTools.searchStickers({}, actor)).data.stickers.length, 0);
+assert.equal(sqlReads.length, 0, '空结果无需读取向量或配置');
+assert.equal(modelConfigReads, 0);
+assert.deepEqual(await aiRepo.getTasks([]), new Map());
 
 // 媒体生命周期枚举下载引用，删除角色才撤销下载记录；其他库的同图引用仍保留。
 const { SQLiteMediaAssetRepository } = load('src/features/media/infrastructure/SQLiteMediaAssetRepository.ts');
@@ -299,6 +363,7 @@ for (const [key, sql] of Object.entries(SCHEMAS)) {
 legacy.exec('ALTER TABLE ai_assistants DROP COLUMN show_token_usage; ALTER TABLE ai_assistants DROP COLUMN nickname; ALTER TABLE ai_assistants DROP COLUMN show_action_steps; ALTER TABLE ai_assistants DROP COLUMN streaming_reply;');
 legacy.exec('ALTER TABLE chat_summary_request_settings DROP COLUMN model_config_id; ALTER TABLE chat_summary_request_settings DROP COLUMN group_trigger_count; ALTER TABLE chat_summary_request_settings DROP COLUMN primary_limit;');
 legacy.exec('ALTER TABLE group_chat_members DROP COLUMN muted; ALTER TABLE group_chat_members DROP COLUMN joined_during_plan_id;');
+for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) legacy.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id;`);
 const schema = loadSqliteModule('stickerSchema');
 const oldStickers = schema.STICKERS_SCHEMA.replace('media_asset_id TEXT NOT NULL CHECK', 'media_asset_id TEXT NOT NULL UNIQUE CHECK')
   .replace('    owner_assistant_id TEXT,\n', '').replace(',\n    FOREIGN KEY (owner_assistant_id) REFERENCES ai_assistants(id) ON DELETE CASCADE', '');
@@ -479,11 +544,11 @@ let selection = { status: 'unconfigured' }, visionOptions;
 let respond = async () => ({ success: true, text: '图中文字是晚安' });
 const resolver = load('src/features/chat/reply/application/ResolveChatImageModelInput.ts', {
   '@platform/ai': { createAIClient: () => ({ chat: async (_, options) => { visionOptions = options; return respond(); } }) },
-  '@shared/runtime/abortSignal': abort, '@shared/prompt': { readAuxiliaryTaskPromptOverride: () => null },
+  '@shared/runtime/abortSignal': abort,
   './ReplyTaskPromptBlocks': { buildVisionOCRPromptBlocks: () => [] },
   './ChatReplyRuntimeDependencies': { getChatReplyRuntimeDependencies: () => ({
     media: { readVisionImage: async () => ({ base64: 'AAA', mimeType: 'image/png' }) }, vision: { resolveOCRModel: async () => selection },
-    prompt: { assembleStandalone: async () => ({ systemPrompt: '看图' }) },
+    prompt: { assembleStandalone: async () => ({ systemPrompt: '看图' }), resolveVisionOCRPrompt: async () => '图片任务说明' },
   }) },
 });
 const visionInput = { assistantId: 'ai-two', imageUri: 'file:///cat.png', mimeType: 'image/png', contextText: '查看图片' };
@@ -507,6 +572,7 @@ const search = load('src/features/stickers/application/StickerSearch.ts', {
   '../domain/StickerEmbedding': embeddingDomain,
   '../domain/StickerSearch': load('src/features/stickers/domain/StickerSearch.ts'),
   './StickerSystemModels': { resolveStickerEmbeddingModel: async () => model },
+  '@shared/runtime/abortSignal': abort,
   './StickerRuntime': { getStickersRuntimeDependencies: () => ({
     embeddings: { embedTexts: async () => [[-1, 0]] }, repository: {
       searchStickers: async () => [failedSticker], listReadyStickersForSemanticSearch: async () => [userSticker],
@@ -521,6 +587,7 @@ assert.equal((await search.searchStickersForAI({ assistantId: 'ai-two', query: '
 const { projectChatContextMessage } = load('src/features/chat/summary/domain/ChatContext.ts', {
   '../../messages/domain/chatMessageMetadata': chatMetadata, '../../messages/domain/ChatSticker': chatSticker,
   '../../messages/domain/SharedChatRecord': sharedRecord,
+  '../../messages/domain/SharedMoment': sharedMoment,
 });
 const legacyImage = { id: 'legacy-attachment', type: 'image', source: 'gallery', fileName: 'legacy.png', localUri: 'file:///legacy.png' };
 const historical = { ...receivedMessage, replyToText: '上一张是哪张？', metadataJson: JSON.stringify({ kind: 'mixed', attachments: [
@@ -548,6 +615,7 @@ const { buildChatUserMessageModelInput } = load('src/features/chat/reply/applica
   '@features/media': { mediaImageFailure: error => ({ status: 'error', code: 'IMAGE_UNREADABLE', modelContent: error.message }) },
   '@features/chat/messages/domain': chatMetadata, '../../messages/domain/ChatSticker': chatSticker,
   '../../messages/domain/SharedChatRecord': sharedRecord,
+  '../../messages/domain/SharedMoment': sharedMoment,
   './ChatReplyRuntimeDependencies': { getChatReplyRuntimeDependencies: () => ({ prompt: {
     readImageGroundingReminder: async assistantId => { assert.equal(assistantId, 'ai-two'); reminderReads++; return imageReminder; },
   } }) },

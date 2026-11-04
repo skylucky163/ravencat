@@ -130,8 +130,8 @@ function hookHost() {
   let draft = render(); await draft.selectImageAttachment(); draft = render();
   const uri = draft.readyAttachments[0].localUri;
   const first = deferred(); const second = deferred();
-  const sendingFirst = draft.withAttachmentSubmission(async () => first.promise, () => true);
-  const sendingSecond = draft.withAttachmentSubmission(async () => second.promise, () => true);
+  const sendingFirst = draft.withAttachmentSubmission(async (_attachments, consumeDraft) => { await first.promise; consumeDraft(); });
+  const sendingSecond = draft.withAttachmentSubmission(async (_attachments, consumeDraft) => { await second.promise; consumeDraft(); });
   draft.clearAttachment(); await tick();
   assert.ok(drafts.has(uri), '移除正在发送的草稿只撤销展示，不抢删源文件');
   first.resolve(); await sendingFirst;
@@ -139,13 +139,13 @@ function hookHost() {
   second.resolve(); await sendingSecond; await tick();
   assert.equal(drafts.has(uri), false);
   await draft.selectImageAttachment(); draft = render();
-  await assert.rejects(draft.withAttachmentSubmission(async () => { throw new Error('send failed'); }, () => true), /send failed/);
+  await assert.rejects(draft.withAttachmentSubmission(async () => { throw new Error('send failed'); }), /send failed/);
   assert.ok(drafts.has(draft.readyAttachments[0].localUri), '提交失败后保留当前草稿供重试');
   await draft.selectImageAttachment(); draft = render();
   assert.equal(drafts.size, 1, '替换草稿回收旧副本');
   const oldUri = draft.readyAttachments[0].localUri;
   const sendGate = deferred();
-  const oldSend = draft.withAttachmentSubmission(async () => sendGate.promise, () => true);
+  const oldSend = draft.withAttachmentSubmission(async (_attachments, consumeDraft) => { await sendGate.promise; consumeDraft(); });
   await draft.selectImageAttachment(); draft = render();
   const newUri = draft.readyAttachments[0].localUri;
   sendGate.resolve(); await oldSend; await tick();
@@ -167,11 +167,12 @@ function hookHost() {
   assert.equal(await draft.selectImageAttachment(), false);
   assert.equal(render().readyAttachments.length, 8, '取消重选保留整批已有草稿');
   let submissions = 0;
-  await draft.withAttachmentSubmission(async (attachments) => {
+  await draft.withAttachmentSubmission(async (attachments, consumeDraft) => {
     submissions++;
     assert.equal(attachments.length, 8, '剩余图片通过一次提交交接');
+    consumeDraft();
     return true;
-  }, result => result);
+  });
   assert.equal(submissions, 1);
   assert.equal(render().draftAttachments.length, 0);
   assert.equal(drafts.size, 0);
@@ -188,12 +189,13 @@ function hookHost() {
   pickedImages = [picked, { ...picked, uri: 'content://second', fileName: 'second.png' }];
   await draft.selectImageAttachment(); draft = render();
   const batchSendGate = deferred();
-  const sendingBatch = draft.withAttachmentSubmission(async attachments => {
+  const sendingBatch = draft.withAttachmentSubmission(async (attachments, consumeDraft) => {
     assert.equal(attachments.length, 2);
     await batchSendGate.promise;
     assert.ok(attachments.every(item => drafts.has(item.localUri)), '整批发送完成前每张源文件都仍可读取');
+    consumeDraft();
     return true;
-  }, result => result);
+  });
   draft.removeAttachment(draft.draftAttachments[0].id);
   batchSendGate.resolve(); await sendingBatch; await tick(); draft = render();
   assert.equal(draft.draftAttachments.length, 0, '提交期间单张移除不能让其余已发送草稿留在输入区');
@@ -307,7 +309,9 @@ const ownerMocks = {
       '../../reply/infrastructure/ChatReplyVersionSql': chatReplyVersionSql,
   './SQLiteAuxiliaryModelDefaults': {}, './SQLiteAuxiliaryModelRepository': {},
   '@platform/persistence': persistence, '@features/media': {}, '@features/profile': {},
+  '@features/assistants': { bindModelServiceInTransaction: async () => {}, readModelServiceConnection: async () => null, getModelServiceConnection: async () => null },
   '@shared': { SELF_USER_ID: 'self', DEFAULT_SELF_NAME: 'user' },
+  '@shared/runtime/RuntimeSlot': load('src/shared/runtime/RuntimeSlot.ts'),
   '../domain/AIProfile': {},
 };
 const profile = load('src/features/profile/infrastructure/SQLiteUserProfileRepository.ts', ownerMocks);

@@ -5,6 +5,7 @@
  * - T1：ensureTurnStateRowInTransaction + supersedeActiveRunInTransaction
  * - T2：claimIfIdle（CAS 含 active_run_id IS NULL）/ takeOverOrphan（事务内 supersede 孤儿）
  * - T3：commitTurn（fence + 全量 items + preview + run 终态 + 游标 + revision 单事务）
+ * - commitOutput：同一 fence 提交媒体与可见版本，不推进游标或终结 run
  * - T4：revoke（cancel / fail）
  *
  * 所有关键条件 UPDATE 检查影响行数；0 行即整事务回滚并报 invariant violation，
@@ -35,6 +36,7 @@ import { buildSessionPreviewTextFromMessage } from '../../messages/domain';
 import type { IConversationTurnRepository } from '../domain/ConversationTurnRepository';
 import type { ChatReplyVersionHistory } from '../domain/ChatReplyVersion';
 import { decodeReplyVersion, findReplyVersionSet, saveReplyVersion } from './ChatReplyVersionSql';
+import type { ChatMessage } from '../../messages/domain/ChatMessage';
 
 interface TurnRunRow {
   run_id: string;
@@ -657,41 +659,12 @@ export class ConversationTurnRepository implements IConversationTurnRepository {
             [run.sessionId, run.regenerationSourceRunId],
           );
         }
-        const readDisplayItems = await transaction.getAllAsync<{ identity: string }>(
-          'SELECT identity FROM chat_turn_display_items WHERE run_id = ? AND is_read = 1', [run.runId],
-        );
-        const readIdentities = new Set(readDisplayItems.map(item => item.identity));
-        const messages = [];
-        for (const [index, item] of items.entries()) {
-          const materialized = item.materializeInTransaction
-            ? await item.materializeInTransaction(transaction, item.message)
-            : item.message;
-          messages.push({
-            ...materialized,
-            // 展示已读与 T3 共用事务边界：先看后提交的气泡不能重新变成未读。
-            ...(readIdentities.has(materialized.clientMessageId!) ? { isRead: true } : {}),
-            turnRunId: run.runId,
-            turnItemIndex: index + 1,
-          });
-        }
-        // Agent timeline 已在 application 边界完成顺序转换；工具/系统/推理展示项
-        // 可以和 assistant 一起写入同一 T3，但 session preview 只能来自最后一条
-        // assistant 可见消息。没有 assistant 可见消息时保留原 preview。
-        const lastAssistantMessage = [...messages]
-          .reverse()
-          .find((message) => message.senderType === 'assistant');
-        const previewText = lastAssistantMessage
-          ? buildSessionPreviewTextFromMessage(lastAssistantMessage)
-          : null;
-        const inserted = await messageRepository.commitMessagesInTransaction(transaction, {
-          messages,
-          previewText,
-        });
+        const inserted = await commitRunItemsInTransaction(transaction, run, items, true);
         if (replyVersionSetId) {
           await saveReplyVersion(transaction, replyVersionSetId, run.runId, inserted);
         }
 
-        if (messages.some((message) => message.senderType === 'assistant')) {
+        if (inserted.some((message) => message.senderType === 'assistant')) {
           // 开关与正式回复共用 T3 fence；按执行顺序应用，同包的最后一次决定生效。
           const scope = [run.sessionId, toolPackages.assistantId];
           for (const { packageId, action } of toolPackages.changes) {
@@ -716,32 +689,9 @@ export class ConversationTurnRepository implements IConversationTurnRepository {
            WHERE run_id = ? AND status = 'active'`,
           [now, run.runId],
         );
-        const presentation = await transaction.getFirstAsync(`SELECT 1 FROM chat_turn_presentations WHERE run_id = ?`, [run.runId]);
-        if (presentation) await transaction.runAsync(`UPDATE chat_turn_presentations SET phase = 'delivering', phase_at = ?, updated_at = ?
+        await transaction.runAsync(`UPDATE chat_turn_presentations SET phase = 'delivering', phase_at = ?, updated_at = ?
           WHERE run_id = ? AND state = 'open'`, [now, now, run.runId]);
-        if (presentation) for (const message of inserted) {
-          const metadata = message.metadataJson ? JSON.parse(message.metadataJson) : {};
-          const snapshot = {
-            runId: run.runId, sequence: metadata.timelineSequence ?? message.turnItemIndex,
-            stepIndex: metadata.stepIndex ?? 1,
-            kind: message.senderType === 'reasoning' ? 'reasoning' : message.senderType === 'assistant' ? 'assistant' : 'tool',
-            status: message.status === 'streaming' ? 'streaming' : 'sent', text: message.text,
-            metadataJson: message.metadataJson, segmentIndex: message.segmentIndex,
-            tokensUsed: message.tokensUsed, promptTokens: message.promptTokens,
-            completionTokens: message.completionTokens, cachedTokens: metadata.cachedTokens,
-            clientMessageId: message.clientMessageId, createdAt: message.createdAt, time: message.time,
-            toolNames: metadata.toolNames, toolDisplayNames: metadata.displayNames,
-            toolExecutions: metadata.toolExecutions,
-          };
-          await transaction.runAsync(`INSERT INTO chat_turn_display_items(run_id, identity, version, snapshot_json, message_id)
-            VALUES (?, ?, 1, ?, ?) ON CONFLICT(run_id, identity) DO UPDATE
-            SET message_id = excluded.message_id, snapshot_json = excluded.snapshot_json,
-                version = chat_turn_display_items.version + 1`,
-          [run.runId, message.clientMessageId!, JSON.stringify(snapshot), message.id]);
-        }
-        // 过程记录已随执行交付；折叠卡片无需展开才能完成本轮交付。
-        if (presentation) await transaction.runAsync(`UPDATE chat_turn_display_items SET shown_version = version, shown_json = snapshot_json
-          WHERE run_id = ? AND message_id IS NOT NULL AND json_extract(snapshot_json, '$.kind') <> 'assistant'`, [run.runId]);
+        await bindRunDisplayItemsInTransaction(transaction, run.runId, inserted, false);
         if (terminal.changes !== 1) {
           throw new ConversationTurnInvariantError(
             `commitTurn：run ${run.runId} 期望为 active，实际影响 ${terminal.changes} 行`,
@@ -755,6 +705,29 @@ export class ConversationTurnRepository implements IConversationTurnRepository {
         };
       },
     );
+  }
+
+  async commitOutput(
+    run: ConversationTurnRun,
+    item: ConversationTurnCommitItem,
+    execution?: { deadlineAt?: number; signal?: AbortSignal },
+  ): Promise<ConversationTurnCommitResult> {
+    return databaseCoordinator.transaction({ name: 'chat.commit-output', feature: 'chat', priority: 'interactive' }, async transaction => {
+      // 同一持久 owner 裁决部分输出，保持游标、revision 和执行槽不变。
+      const current = await transaction.getFirstAsync(`SELECT 1 FROM conversation_turn_runs r
+        JOIN conversation_turn_state s ON s.session_id = r.session_id
+        WHERE r.run_id = ? AND r.status = 'active' AND s.active_run_id = r.run_id
+          AND s.revision = r.revision_at_claim AND s.reply_cursor = ?
+          AND NOT EXISTS (SELECT 1 FROM chat_turn_presentations p WHERE p.run_id = r.run_id AND p.state <> 'open')`,
+      [run.runId, run.replyCursorAtClaim]);
+      if (!current) return { outcome: 'fence_failed' };
+      if (execution?.deadlineAt !== undefined && performance.now() >= execution.deadlineAt) throw new Error('execution_host_timeout');
+      if (execution?.signal?.aborted) throw new Error('execution_host_stopped');
+      const messages = await commitRunItemsInTransaction(transaction, run, [item], false);
+      // 图片／表情没有流式尾部：消息引用与完整可见版本同事务提交，取消不能撤销已发出的图片。
+      await bindRunDisplayItemsInTransaction(transaction, run.runId, messages, true);
+      return { outcome: 'committed', messages, messageIds: messages.map(message => message.id) };
+    });
   }
 
   async revoke(
@@ -883,6 +856,68 @@ export class ConversationTurnRepository implements IConversationTurnRepository {
         }));
       },
     );
+  }
+}
+
+/** 部分输出和 T3 共用消息提交；T3 只把已存在的稳定身份绑定到最终顺序，不重建事实。 */
+async function commitRunItemsInTransaction(
+  transaction: DatabaseTransactionExecutor,
+  run: ConversationTurnRun,
+  items: ConversationTurnCommitItem[],
+  complete: boolean,
+): Promise<ChatMessage[]> {
+  const readDisplayItems = await transaction.getAllAsync<{ identity: string }>(
+    'SELECT identity FROM chat_turn_display_items WHERE run_id = ? AND is_read = 1', [run.runId],
+  );
+  const readIdentities = new Set(readDisplayItems.map(item => item.identity));
+  const reused = new Map<number, ChatMessage>();
+  const pending: ConversationTurnCommitItem['message'][] = [];
+  for (const [index, item] of items.entries()) {
+    if (item.committedMessageId !== undefined) {
+      const existing = await messageRepository.bindTurnMessageInTransaction(transaction, item.committedMessageId, index + 1);
+      if (existing) reused.set(index, existing);
+      continue;
+    }
+    const message = item.materializeInTransaction
+      ? await item.materializeInTransaction(transaction, item.message) : item.message;
+    pending.push({ ...message, ...(readIdentities.has(message.clientMessageId!) ? { isRead: true } : {}),
+      turnRunId: run.runId, turnItemIndex: complete ? index + 1 : null });
+  }
+  const inserted = await messageRepository.commitMessagesInTransaction(transaction, { messages: pending, previewText: null });
+  let next = 0;
+  const messages = items.flatMap((item, index) => item.committedMessageId === undefined ? [inserted[next++]]
+    : reused.has(index) ? [reused.get(index)!] : []);
+  const lastAssistant = [...messages].reverse().find(message => message.senderType === 'assistant');
+  if (lastAssistant) await messageRepository.updateSessionPreviewForCommittedMessageInTransaction(transaction, {
+    sessionId: run.sessionId, messageId: lastAssistant.id, previewText: buildSessionPreviewTextFromMessage(lastAssistant),
+  });
+  return messages;
+}
+
+async function bindRunDisplayItemsInTransaction(
+  transaction: DatabaseTransactionExecutor,
+  runId: string,
+  messages: ChatMessage[],
+  publish: boolean,
+): Promise<void> {
+  if (!await transaction.getFirstAsync('SELECT 1 FROM chat_turn_presentations WHERE run_id = ?', [runId])) return;
+  for (const message of messages) {
+    const metadata = message.metadataJson ? JSON.parse(message.metadataJson) : {};
+    const snapshot = {
+      runId, sequence: metadata.timelineSequence ?? message.turnItemIndex, stepIndex: metadata.stepIndex ?? 1,
+      kind: message.senderType === 'reasoning' ? 'reasoning' : message.senderType === 'assistant' ? 'assistant' : 'tool',
+      status: message.status === 'streaming' ? 'streaming' : 'sent', text: message.text,
+      metadataJson: message.metadataJson, segmentIndex: message.segmentIndex,
+      tokensUsed: message.tokensUsed, promptTokens: message.promptTokens, completionTokens: message.completionTokens,
+      cachedTokens: metadata.cachedTokens, clientMessageId: message.clientMessageId, createdAt: message.createdAt, time: message.time,
+      toolNames: metadata.toolNames, toolDisplayNames: metadata.displayNames, toolExecutions: metadata.toolExecutions,
+    };
+    await transaction.runAsync(`INSERT INTO chat_turn_display_items(run_id, identity, version, snapshot_json, message_id)
+      VALUES (?, ?, 1, ?, ?) ON CONFLICT(run_id, identity) DO UPDATE
+      SET message_id = excluded.message_id, snapshot_json = excluded.snapshot_json, version = chat_turn_display_items.version + 1`,
+    [runId, message.clientMessageId!, JSON.stringify(snapshot), message.id]);
+    if (publish || snapshot.kind !== 'assistant') await transaction.runAsync(`UPDATE chat_turn_display_items
+      SET shown_version = version, shown_json = snapshot_json WHERE message_id = ?`, [message.id]);
   }
 }
 

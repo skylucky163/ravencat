@@ -68,8 +68,8 @@ export interface CompanionNativeHealth {
   floatingServiceRunning: boolean;
   /** Overlay FGS 的 owner 是 Floating Interaction，不代表 Companion 正在运行。 */
   overlayForegroundServiceRunning: boolean;
-  /** 一次 wake 执行期临时建立的前台执行；没有执行时必须为 false。 */
-  companionExecutionForegroundRunning: boolean;
+  /** 应用总开关的持续后台保障，独立于日程是否正在执行。 */
+  applicationBackgroundRunning: boolean;
   visibleLivenessIndicatorRunning: boolean;
   companionRuntimeRunning: boolean;
   companionSchedulerActive: boolean;

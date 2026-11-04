@@ -24,13 +24,12 @@ export default function AuxiliaryModelPoolScreen({ label, description, models, l
   return <SafeAreaView style={styles.screenContainer} edges={['top', 'left', 'right']}>
     <NavigationHeader title={label} onGoBack={onBack} help={{ sections: [
       { title: '用途', body: description },
-      { title: '选择规则', body: '首个配置可用后会自动选好；后续可在对应功能中更换或取消。' },
+      { title: '选择规则', body: '实际使用的模型由对应功能选择；后续新增配置不会覆盖已有选择。' },
     ] }} rightButton={<TouchableOpacity accessibilityLabel="新增模型配置" onPress={onAddModel} style={styles.headerIconBtn}><Plus size={24} color={theme.colors.brand.primary} /></TouchableOpacity>} />
     {loading ? <View style={styles.stateCard}><ActivityIndicator color={theme.colors.brand.primary} /></View> : <ScrollView style={styles.scrollView}>
       {selection && <View style={[styles.sectionBlock, styles.selectionBlock]}>{selection}</View>}
       <View style={styles.sectionBlock}>{models.length === 0 ? <EmptyState title={`暂无${label}`} description="点击右上角 + 创建模型配置。" /> : <View style={styles.card}>
-        {models.map((model, index) => <ListItem key={model.id} title={model.name} subtitle={`${model.model}${model.enabled ? '' : ' · 已停用'}`}
-          titleStyle={model.enabled ? undefined : styles.poolItemTitleDisabled} onPress={() => onEditModel(model.id)}
+        {models.map((model, index) => <ListItem key={model.id} title={model.name} subtitle={model.model} onPress={() => onEditModel(model.id)}
           style={index === models.length - 1 ? styles.itemLast : undefined} />)}
       </View>}</View><View style={styles.bottomGap} />
     </ScrollView>}

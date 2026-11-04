@@ -92,26 +92,6 @@ const createStyles = (theme: PresentationTheme) =>
       fontSize: 14,
       color: theme.colors.text.tertiary,
     },
-    // EmptyState 样式
-    emptyContainer: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingVertical: 60,
-    },
-    emptyIcon: {
-      fontSize: 48,
-      marginBottom: 16,
-    },
-    emptyTitle: {
-      fontSize: 16,
-      color: theme.colors.text.secondary,
-      marginBottom: 8,
-    },
-    emptySubtitle: {
-      fontSize: 14,
-      color: theme.colors.text.tertiary,
-    },
     // 加载状态
     loadingContainer: {
       paddingVertical: 20,

@@ -84,17 +84,21 @@ function BallGlyph({ tab, active, color, badgeCount }: {
   );
 }
 
-export function TabBarItems({ activeTab, onTabChange, unreadCount = 0, height, iconOffset }: BottomTabBarVariantProps & {
-  height: number; iconOffset: number;
+export function TabBarItems({ activeTab, onTabChange, unreadCount = 0, height, headroom }: BottomTabBarVariantProps & {
+  height: number; headroom: number;
 }) {
   return (
-    <View style={[styles.items, { height }]} role="tablist">
+    <View pointerEvents="box-none" style={[styles.items, { height }]} role="tablist">
       {TABS.map(tab => (
-        <TabBarButton key={tab.id} tab={tab} active={activeTab === tab.id}
-          onPress={() => onTabChange(tab.id)} badgeCount={tab.id === 'ai' ? unreadCount : 0}>
-          <InactiveTabGlyph tab={tab} active={activeTab === tab.id} iconOffset={iconOffset}
-            badgeCount={tab.id === 'ai' ? unreadCount : 0} />
-        </TabBarButton>
+        // 凸起空间只属于选中项；未选中项上方的透明留白让触摸回到页面。
+        <View key={tab.id} pointerEvents="box-none"
+          style={{ flex: 1, paddingTop: activeTab === tab.id ? 0 : headroom }}>
+          <TabBarButton tab={tab} active={activeTab === tab.id}
+            onPress={() => onTabChange(tab.id)} badgeCount={tab.id === 'ai' ? unreadCount : 0}>
+            <InactiveTabGlyph tab={tab} active={activeTab === tab.id}
+              badgeCount={tab.id === 'ai' ? unreadCount : 0} />
+          </TabBarButton>
+        </View>
       ))}
     </View>
   );
@@ -110,15 +114,15 @@ export function TabBarButton({ tab, active, onPress, badgeCount, children }: {
     </Pressable>
   );
 }
-function InactiveTabGlyph({ tab, active, badgeCount, iconOffset }: {
-  tab: Tab; active: boolean; badgeCount: number; iconOffset: number;
+function InactiveTabGlyph({ tab, active, badgeCount }: {
+  tab: Tab; active: boolean; badgeCount: number;
 }) {
   const theme = useTheme();
   const style = useGlyphOpacity(!active);
   return (
     <Animated.View pointerEvents="none" accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      style={[{ transform: [{ translateY: iconOffset }] }, style]}>
+      style={style}>
       <TabGlyph tab={tab} solid={false} color={theme.colors.text.secondary} badgeCount={badgeCount} />
     </Animated.View>
   );

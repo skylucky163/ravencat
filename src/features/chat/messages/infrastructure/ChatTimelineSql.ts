@@ -11,13 +11,13 @@ export interface TimelineOrderRow {
  * 同一 run 以 turn_item_index=1 的首项作为锚点，再按 turn_item_index 排列；
  * 不同 run 之间使用各自最早成员的 created_at + id，普通消息使用自身历史键。
  *
- * turn_item_index 为 NULL 的 run 行是 run-associated external item（如工具执行
- * 期间写入的 Together Listening 业务卡片）：组内槽位取「created_at 不晚于自身的
+ * turn_item_index 为 NULL 的 run 行是独立提交项（业务卡片或尚未绑定最终顺序的
+ * 图片／表情）：组内槽位取「created_at 不晚于自身的
  * 最后一个 canonical 成员」之后的半槽位（MAX + 0.5，无成员则为 0.5），同槽位
  * 按 id 排列；它不参与锚点候选。run 没有任何已提交成员时（失败/取消/非
  * canonical run），锚点回退为自身历史键，该行等同普通消息排序。
  *
- * T3 在一个事务中写入完整 run，锚点只用于把同一 run 的条目作为一个稳定区间；
+ * T3 在一个事务中写入其余条目并绑定已提交媒体，锚点把完整 run 作为一个稳定区间；
  * Chat 持久保存最小锚点，使删除首项之后的处理游标仍稳定；不保存消息副本，
  * 也不改变消息的真实 created_at。
  */

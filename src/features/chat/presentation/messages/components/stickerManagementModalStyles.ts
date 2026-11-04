@@ -2,6 +2,9 @@
 
 import type { PresentationTheme } from '@shared/theme';
 
+/** 弹窗卡片圆角；原生玻璃材质需要数值圆角，与样式共用同一来源。 */
+export const STICKER_MODAL_CARD_RADIUS = 14;
+
 export const createStickerManagementModalStyles = (theme: PresentationTheme) => ({
   overlay: {
     flex: 1,
@@ -10,9 +13,19 @@ export const createStickerManagementModalStyles = (theme: PresentationTheme) => 
     backgroundColor: theme.effects.overlay.strong,
   },
   card: {
-    borderRadius: 14,
+    borderRadius: STICKER_MODAL_CARD_RADIUS,
     padding: 16,
-    backgroundColor: theme.colors.surface.default,
+    // 弹窗独立拥有材质：卡片自身不再铺底色，由内部材质层负责，避免玻璃主题下透出底层文字。
+    overflow: 'hidden' as const,
+  },
+  managementCard: {
+    maxHeight: '100%' as const,
+  },
+  groupNameField: {
+    marginBottom: 4,
+  },
+  progressSection: {
+    marginTop: 16,
   },
   header: {
     flexDirection: 'row' as const,

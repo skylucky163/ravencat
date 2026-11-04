@@ -238,7 +238,10 @@ assert.deepEqual(
 
 // 真实页面请求配置与宿主配置装配共用同一角色偏好，主题仅提供默认。
 const variants = loadTypeScriptModule('src/shared/theme/themeVariants.ts');
-const chatTypes = loadTypeScriptModule('src/features/chat/presentation/messages/components/chatTypes.ts');
+const chatTypes = loadTypeScriptModule('src/features/chat/presentation/messages/components/chatTypes.ts', name => ({
+  '../../../messages/domain/chatMessageMetadata': {},
+  '@features/assistants': {},
+})[name]);
 let currentTheme;
 let pageRequest;
 const { useChatDetail: renderChatDetail } = loadTypeScriptModule('src/features/chat/presentation/messages/ChatDetail/useChatDetail.ts', name => ({

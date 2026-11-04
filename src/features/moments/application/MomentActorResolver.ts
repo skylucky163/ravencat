@@ -17,10 +17,15 @@ import type { MomentActorType } from '../domain/MomentRepository';
 export interface ResolvedMomentActor {
   actorType: MomentActorType;
   actorId: string;
+  /** 当前 AI 的资料 ID；用户或已删除的 AI 没有主页入口。 */
+  assistantId: string | null;
   /** 当前名称；作者已删除时退回写入时快照。 */
   displayName: string;
+  /** 模型可见的公开名称，不含用户给 AI 设置的界面备注。 */
+  publicName: string;
   /** 当前头像；作者已删除或未设置时为 null。 */
   avatar: string | null;
+  avatarMediaAssetId: string | null;
   /** 当前是否仍能解析到 owner；本机用户恒为 true。 */
   exists: boolean;
 }
@@ -50,12 +55,15 @@ export async function loadMomentActorDirectory(
     listAIAssistants(),
   ]);
 
-  const assistantByAgentId = new Map<string, { name: string; avatar: string | null }>();
+  const assistantByAgentId = new Map<string, { id: string; name: string; publicName: string; avatar: string | null; avatarMediaAssetId: string | null }>();
   for (const assistant of assistants) {
     const agentId = typeof assistant.agentId === 'string' ? assistant.agentId.trim() : '';
     if (agentId) {
       assistantByAgentId.set(agentId, {
+        id: assistant.id,
         name: nameAudience === 'user' ? getAssistantDisplayName(assistant) : assistant.name,
+        publicName: assistant.name,
+        avatarMediaAssetId: assistant.avatarMediaAssetId,
         avatar: assistant.avatar ?? null,
       });
     }
@@ -63,9 +71,11 @@ export async function loadMomentActorDirectory(
 
   return {
     actors: [
-      { actorType: 'user', actorId: SELF_USER_PROFILE_ID, displayName: profile.name, avatar: profile.avatar ?? null, exists: true },
+      { actorType: 'user', actorId: SELF_USER_PROFILE_ID, assistantId: null, displayName: profile.name, publicName: profile.name, avatar: profile.avatar ?? null, avatarMediaAssetId: profile.avatarMediaAssetId, exists: true },
       ...assistants.map((assistant): ResolvedMomentActor => ({
-        actorType: 'ai', actorId: assistant.agentId, displayName: nameAudience === 'user' ? getAssistantDisplayName(assistant) : assistant.name,
+        actorType: 'ai', actorId: assistant.agentId, assistantId: assistant.id, displayName: nameAudience === 'user' ? getAssistantDisplayName(assistant) : assistant.name,
+        publicName: assistant.name,
+        avatarMediaAssetId: assistant.avatarMediaAssetId,
         avatar: assistant.avatar ?? null, exists: true,
       })),
     ],
@@ -75,7 +85,10 @@ export async function loadMomentActorDirectory(
         return {
           actorType: 'user',
           actorId: ref.actorId,
+          assistantId: null,
           displayName: isSelf ? profile.name : ref.nameSnapshot,
+          publicName: isSelf ? profile.name : ref.nameSnapshot,
+          avatarMediaAssetId: isSelf ? profile.avatarMediaAssetId : null,
           avatar: isSelf ? profile.avatar ?? null : null,
           exists: isSelf,
         };
@@ -85,7 +98,10 @@ export async function loadMomentActorDirectory(
       return {
         actorType: 'ai',
         actorId: ref.actorId,
+        assistantId: assistant?.id ?? null,
         displayName: assistant?.name || ref.nameSnapshot,
+        publicName: assistant?.publicName || ref.nameSnapshot,
+        avatarMediaAssetId: assistant?.avatarMediaAssetId ?? null,
         avatar: assistant?.avatar ?? null,
         exists: Boolean(assistant),
       };

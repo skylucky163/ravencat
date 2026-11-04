@@ -15,10 +15,10 @@
  * 执行宿主契约（execution host）：
  * - 页面 React runtime 不得在后台继续持有的 fire-and-forget Promise 中独占执行生命周期；
  *   delegate_to_android_host 的 onCommitted（页面发送）只 abort 被 supersede 的旧句柄，
- *   然后启动 Android-backed execution host（Headless JS service），由任务侧
+ *   然后提交共享应用 execution host，由执行用例
  *   executeTurnFromHost 完成 claim 并等待 run 到达 terminal；
  * - inline_current_host 只允许本身会等待回复终态的受控 execution host 使用
- *   （如 RavenCat 悬浮 Headless 任务），允许就地 claim + 执行；
+ *   （如 RavenCat 悬浮消息执行用例），允许就地 claim + 执行；
  * - replyCallbacks 只描述投影/交付观察，绝不参与 execution ownership 判定；
  * - 同一进程只有一个 JS runtime，activeHandles + single-flight 保证不双 claim；
  *   跨进程正确性由持久化 fence 兜底。
@@ -134,7 +134,7 @@ export interface ConversationTurnCoordinator {
    */
   onCanonicalUserMessageCommitted(payload: CanonicalUserMessageCommittedPayload): Promise<void>;
   /**
-   * execution host（Headless 任务）入口：claim 并等待 run 到达 terminal 才返回。
+   * 应用 execution host 入口：claim 并等待 run 到达 terminal 才返回。
    * claimIfIdle 落空时按孤儿语义接管（无终态覆盖才 takeOverOrphan）。
    */
   executeTurnFromHost(
@@ -477,6 +477,8 @@ export function createConversationTurnCoordinator(
       if (payload.executionMode === 'inline_current_host') {
         // 只有显式声明、且会等待回复终态的受控 execution host 才能就地 claim + 执行。
         await launch(sessionId, 'claimIfIdle', {
+          signal: payload.signal,
+          executionDeadlineAt: payload.executionDeadlineAt,
           aiConfig: payload.aiConfig,
           replyCallbacks: payload.replyCallbacks,
           deliveryTiming: payload.deliveryTiming,

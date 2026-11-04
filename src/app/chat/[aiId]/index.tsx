@@ -1,9 +1,13 @@
 /** 单聊详情路由。 */
 import { useCallback, useState } from 'react';
-import { Redirect, type Href, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { Redirect, type Href, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { ChatConversationRouteScreen } from '@features/chat';
 
 export default function ChatConversationRoute() {
+  const router = useRouter();
+  const openAssistantProfile = useCallback((assistantId: string) => {
+    router.push(`/assistants/${encodeURIComponent(assistantId)}` as Href);
+  }, [router]);
   const [routeFocused, setRouteFocused] = useState(false);
   useFocusEffect(useCallback(() => {
     setRouteFocused(true);
@@ -31,6 +35,7 @@ export default function ChatConversationRoute() {
       sessionId={sessionId?.trim() || null}
       anchorMessageId={anchorMessageId}
       routeFocused={routeFocused}
+      onOpenAssistantProfile={openAssistantProfile}
     />
   );
 }

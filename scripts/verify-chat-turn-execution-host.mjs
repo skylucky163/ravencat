@@ -1,5 +1,5 @@
 /**
- * 普通聊天 AI 回复 execution host（ConversationTurnExecutionTask）契约验证。
+ * 普通聊天 AI 回复与共享应用 execution host 契约验证。
  *
  * 以 data: URL 动态编译 ConversationTurnCoordinator.ts 与 AIMessageDeliveryCoordinator.ts，
  * 桩掉跨 Feature / platform / shared / react-native 值导入，用内存 fake 验证：
@@ -608,6 +608,8 @@ for (const previewAccepted of [true, false]) {
   const previews = [];
   const receipts = [];
   const completions = [];
+  let cancelWithoutReply = false;
+  let receivedExecution;
   const floating = loadTypeScriptModule('src/features/companion/application/ExecuteFloatingMessage.ts', {
     '@features/assistants': { getAssistantDisplayName: ai => ai.name },
     '@features/screenCapture': { ScreenCaptureError: class extends Error {} },
@@ -623,7 +625,13 @@ for (const previewAccepted of [true, false]) {
     './CompanionScreenCapture': {},
     './CompanionRuntimeDependencies': { getCompanionRuntimeDependencies: () => ({
       initializeDatabase: async () => {},
-      chat: { sendUserMessageFromExecutionHost: async ({ replyCallbacks }) => {
+      chat: { sendUserMessageFromExecutionHost: async ({ replyCallbacks, execution }) => {
+        receivedExecution = execution;
+        if (cancelWithoutReply) return { userMessage: { id: 2 }, success: true };
+        for (const [index, text] of ['提前图片1', '提前图片2'].entries()) {
+          receipts.push(await replyCallbacks.onReplySegment({ sessionId: 's', clientMessageId: `agent-timeline:preview:media-${index}:0`,
+            messageId: index + 10, segmentIndex: 0, segmentTotal: 1, text, previewText: text }));
+        }
         for (const [index, text] of ['第一泡', '第二泡'].entries()) {
           const clientMessageId = `agent-timeline:preview:${index + 1}:0`;
           receipts.push(await replyCallbacks.onReplyDisplaySegment({ sessionId: 's', clientMessageId, text, previewText: text }));
@@ -638,19 +646,30 @@ for (const previewAccepted of [true, false]) {
       } },
     }) },
   });
-  await floating.executeFloatingMessage({ action: 'message', text: '测试', correlationId: 'preview' });
+  await floating.executeFloatingMessage({ action: 'message', text: '测试', correlationId: 'preview' }, { signal: new AbortController().signal, executionDeadlineAt: performance.now() + 60_000 });
   const replyPreviews = new Map(previews.filter(item => item.status === 'reply').map(item => [item.correlationId, item]));
-  assert.deepEqual([...replyPreviews.values()].map(item => item.text), ['第一泡', '第二泡']);
-  assert.equal(replyPreviews.size, 2);
+  assert.deepEqual([...replyPreviews.values()].map(item => item.text), ['提前图片1', '提前图片2', '第一泡', '第二泡']);
+  assert.equal(replyPreviews.size, 4, '独立提交的媒体即使段序号相同，也不能互相覆盖或覆盖前言');
   assert.ok(receipts.every(receipt => receipt.userNotificationHandled === previewAccepted),
     '原生拒绝预览时保持未处理回执，由统一协调器发送系统通知');
   assert.equal(completions[0].succeeded, true);
+  cancelWithoutReply = true;
+  const cancelled = new AbortController();
+  const cancellationResult = assert.rejects(floating.executeFloatingMessage(
+    { action: 'message', text: '取消测试', correlationId: 'cancelled-preview' },
+    { signal: cancelled.signal, executionDeadlineAt: performance.now() + 60_000 },
+  ), /后台执行已取消或超时/);
+  await flush();
+  assert.equal(receivedExecution.signal, cancelled.signal, '悬浮发送必须将同一取消信号传入 Chat');
+  cancelled.abort();
+  await cancellationResult;
+  assert.equal(completions.at(-1).succeeded, false, '撤销 owner 后没有回复回调，悬浮等待也必须结束');
 }
 
 // 真实后台入口与启动门组合；不以 helper 名称或源码循环写法代替业务行为。
 const runnerUrl = transpileToModuleUrl(read('src/host/composition/runPendingBackupRestoreCompletion.ts'));
 const { runPendingBackupRestoreCompletion } = await import(runnerUrl);
-const bootstrapState = { events: [], ready: false, bootstrapGate: null, firstSessionGate: null, fail: false, execution: [], hostStops: new Map(), hostFinishes: [] };
+const bootstrapState = { events: [], ready: false, bootstrapGate: null, firstSessionGate: null, fail: false, execution: [] };
 globalThis.__HEADLESS_BOOTSTRAP_TEST__ = bootstrapState;
 globalThis.__HEADLESS_RESTORE_RUNNER__ = runPendingBackupRestoreCompletion;
 const restoreStubUrl = transpileToModuleUrl(`
@@ -674,19 +693,6 @@ const readyUrl = transpileToModuleUrl(read('src/host/composition/ensureHostDatab
 const taskNativeUrl = transpileToModuleUrl(`export const AppState = { currentState: 'background' };`);
 const taskChatUrl = transpileToModuleUrl(`export function emitChatMessagesUpdated() {}`);
 const taskLogUrl = transpileToModuleUrl(`export function logTurnTimeline() {}`);
-const taskLifetimeNativeUrl = transpileToModuleUrl(`
-export async function getConversationExecutionRemainingTime() { return 60_000; }
-export function waitForConversationExecutionStop(id) {
-  return new Promise(resolve => globalThis.__HEADLESS_BOOTSTRAP_TEST__.hostStops.set(id, resolve));
-}
-export async function finishConversationExecution(id) {
-  const state = globalThis.__HEADLESS_BOOTSTRAP_TEST__;
-  state.hostFinishes.push(id);
-  state.hostStops.get(id)('completed');
-}`);
-const taskLifetimeUrl = transpileToModuleUrl(read('src/host/runtime/ConversationExecutionLifetime.ts')
-  .replace("from '@platform/device'", `from '${taskLifetimeNativeUrl}'`)
-  .replace("from '@shared/diagnostics/TurnTimelineLog'", `from '${taskLogUrl}'`));
 const taskCoordinatorUrl = transpileToModuleUrl(`
   export function getConversationTurnCoordinator() {
     return { async executeTurnFromHost(id, options) {
@@ -698,17 +704,17 @@ const taskCoordinatorUrl = transpileToModuleUrl(`
     } };
   }
 `);
-const taskUrl = transpileToModuleUrl(read('src/host/runtime/ConversationTurnHeadlessTask.ts')
+const taskUrl = transpileToModuleUrl(read('src/host/runtime/ExecuteConversationTurns.ts')
   .replace("from 'react-native'", `from '${taskNativeUrl}'`)
   .replace("from '@features/chat/composition'", `from '${taskChatUrl}'`)
   .replace("from '@shared/diagnostics/TurnTimelineLog'", `from '${taskLogUrl}'`)
   .replace("from '../composition/ensureHostDatabaseReady'", `from '${readyUrl}'`)
-  .replace("from './ConversationTurnCoordinator'", `from '${taskCoordinatorUrl}'`)
-  .replace("from './ConversationExecutionLifetime'", `from '${taskLifetimeUrl}'`));
-const { runConversationTurnHeadlessTask } = await import(taskUrl);
+  .replace("from './ConversationTurnCoordinator'", `from '${taskCoordinatorUrl}'`));
+const { executeConversationTurns } = await import(taskUrl);
 bootstrapState.bootstrapGate = deferred();
 bootstrapState.firstSessionGate = deferred();
-const headless = runConversationTurnHeadlessTask({ sessionIds: ['first', 'second'], deliveryTiming: 'paced', hostId: 'normal-host', executionDeadlineAt: Date.now() + 60_000 });
+const execution = { requestId: 'application-request', signal: new AbortController().signal, executionDeadlineAt: performance.now() + 60_000 };
+const headless = executeConversationTurns({ sessionIds: ['first', 'second'], deliveryTiming: 'paced' }, execution);
 await flush();
 assert.deepEqual(bootstrapState.events, ['restore', 'bootstrap']);
 assert.deepEqual(bootstrapState.execution, [], 'bootstrap 完成前禁止 claim');
@@ -719,15 +725,7 @@ bootstrapState.firstSessionGate.resolve();
 await headless;
 assert.deepEqual(bootstrapState.execution, [['first', 'immediate'], ['second', 'immediate']]);
 bootstrapState.execution = []; bootstrapState.fail = true; bootstrapState.ready = false;
-await assert.rejects(runConversationTurnHeadlessTask({ sessionIds: ['fail'], hostId: 'failed-host', executionDeadlineAt: Date.now() + 60_000 }), /bootstrap failed/);
-assert.deepEqual(bootstrapState.hostFinishes, ['normal-host', 'failed-host'], '成功或启动门失败都必须释放自己的原生执行期');
-const { withConversationExecutionLifetime } = await import(taskLifetimeUrl);
-await withConversationExecutionLifetime({ hostId: 'timeout-host', executionDeadlineAt: Date.now() + 60_000 }, async ({ signal }) => {
-  bootstrapState.hostStops.get('timeout-host')('execution_host_timeout');
-  await flush();
-  assert.equal(signal.aborted, true, '原生截止事件须传播到模型与工具使用的取消信号');
-  assert.equal(signal.reason, 'execution_host_timeout');
-});
+await assert.rejects(executeConversationTurns({ sessionIds: ['fail'] }, execution), /bootstrap failed/);
 assert.deepEqual(bootstrapState.execution, [], '初始化失败不开放业务读取');
 delete globalThis.__HEADLESS_BOOTSTRAP_TEST__; delete globalThis.__HEADLESS_RESTORE_RUNNER__;
 
@@ -849,4 +847,4 @@ const priority = (minute, scheduleId) => ({ plannedAt: `2026-10-28T09:${minute}:
 }
 
 console.log('ConversationTurn execution host 契约验证通过：页面委派 / 就地执行 / host 等待 terminal / 孤儿接管 / recovery 委派 / 交付策略 / 冷启动 bootstrap / 日程共享所有权与用户优先。');
-console.log('真机后台链路（Headless service 启动与 XHR/SSE 消费）仍需 Android 验收。');
+console.log('真机后台链路（常驻应用身份与 XHR/SSE 消费）仍需 Android 验收。');

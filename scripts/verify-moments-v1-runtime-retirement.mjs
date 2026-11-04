@@ -37,12 +37,23 @@ const moments = load('src/features/moments/index.ts', (specifier) => (
 ));
 const { AgentToolRegistry } = load('src/platform/agentRuntime/AgentToolRegistry.ts');
 const adapter = load('src/host/composition/agent/LegacyAgentToolAdapter.ts');
+// 非 Moments 工具不执行，但注册表加载时仍校验真实的产品包绑定。
+const phoneTools = new Proxy(load('src/features/phoneTools/toolPackages/ToolPackageCatalog.ts'), {
+  get: (target, name) => target[name] ?? placeholder[String(name).startsWith('Xiaohongshu')
+    ? String(name).replace(/Tool$/, '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()
+    : name],
+});
+const momentShareTool = load('src/host/composition/agent/ShareMomentTool.ts', () => placeholder);
 const registration = load('src/host/composition/agent/createAgentToolRegistry.ts', (specifier) => {
   if (specifier === '@platform/ai') return load('src/platform/ai/moonshotEndpoint.ts');
+  if (specifier === '@shared/aiTools') return load('src/shared/aiTools/ToolCompletionIntent.ts');
   if (specifier === '@features/moments') return moments;
+  if (specifier === '@features/phoneTools') return phoneTools;
   if (specifier === '@platform/agentRuntime') return { AgentToolRegistry };
   if (specifier === './LegacyAgentToolAdapter') return adapter;
   if (specifier === './ApplicationSettingsTools') return { applicationSettingsTools: [] };
+  if (specifier === './ShareMomentTool') return momentShareTool;
+  if (specifier === './GroupManagementTools') return { groupManagementTools: [] };
   if (specifier === '@features/phoneTools/neteaseComposition') return { productionNetEaseChildTools: [] };
   assert.ok(specifier.startsWith('@features/'), `Registry 未声明依赖：${specifier}`);
   return placeholder;
@@ -50,14 +61,14 @@ const registration = load('src/host/composition/agent/createAgentToolRegistry.ts
 const expectedNames = [
   'searchMoments', 'getMomentDetail', 'readSocialInbox', 'aiLikeMoment', 'aiCommentMoment',
   'aiCreateMoment', 'aiReplyMomentComment', 'aiUnlikeMoment', 'aiDeleteOwnMoment',
-  'aiDeleteOwnMomentComment',
+  'aiDeleteOwnMomentComment', 'share_moment',
 ];
 const registry = registration.createAgentToolRegistry({ createLegacyContext: () => ({}) });
 const descriptors = registry.list().filter((tool) => tool.owner === 'moments');
 assert.deepEqual(descriptors.map((tool) => tool.name).sort(), [...expectedNames].sort());
 for (const descriptor of descriptors) {
-  const publicTool = Object.values(moments).find((tool) => tool?.name === descriptor.name);
-  assert.ok(publicTool, `${descriptor.name} 必须来自 Feature 公共出口`);
+  const publicTool = Object.values({ ...moments, ...momentShareTool }).find((tool) => tool?.name === descriptor.name);
+  assert.ok(publicTool, `${descriptor.name} 必须使用所属能力的工具定义`);
   assert.equal(publicTool.definition.name, descriptor.name);
   assert.deepEqual(descriptor.inputSchema, publicTool.definition.parameters);
 }

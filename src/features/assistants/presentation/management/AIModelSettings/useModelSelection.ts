@@ -20,6 +20,7 @@ interface UseModelSelectionReturn {
   setShowModelPicker: (value: boolean) => void;
   handleFetchModels: () => Promise<void>;
   handleSelectModel: (modelId: string) => void;
+  resetModelSelection: () => void;
 }
 
 export default function useModelSelection({
@@ -32,11 +33,14 @@ export default function useModelSelection({
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
-
-  useEffect(() => {
+  const resetModelSelection = useCallback(() => {
     setAvailableModels([]);
     setShowModelPicker(false);
-  }, [resetKey]);
+  }, []);
+
+  useEffect(() => {
+    resetModelSelection();
+  }, [resetKey, resetModelSelection]);
 
   const handleFetchModels = useCallback(async () => {
     if (!apiBaseUrl || !apiKey) {
@@ -79,5 +83,6 @@ export default function useModelSelection({
     setShowModelPicker,
     handleFetchModels,
     handleSelectModel,
+    resetModelSelection,
   };
 }

@@ -35,6 +35,7 @@ function storage() {
     }
   }
   const api = {
+    documentDirectory: 'file:///private/files/',
     cacheDirectory: 'file:///private/cache/',
     async getInfoAsync(uri) { await gate('info'); return { exists: files.has(uri) }; },
     async readAsStringAsync(uri) {
@@ -102,6 +103,87 @@ function exchange(id, patch = {}) {
   const reopened = open(disk);
   assert.equal(typeof await reopened.beginCapture(), 'number');
   assert.equal((await reopened.getSnapshot()).enabled, true);
+}
+
+// 清理缓存后，未满十条的完整记录和开关仍可恢复；关闭仅暂停新增，清空也不改变开关。
+{
+  const disk = storage();
+  const store = open(disk);
+  await store.setEnabled(true);
+  for (let id = 0; id < 3; id++) await store.record(exchange(id));
+  const saved = await store.getSnapshot();
+  await disk.api.deleteAsync(disk.api.cacheDirectory);
+  disk.api.cacheDirectory = null;
+  const restarted = open(disk);
+  assert.deepEqual(await restarted.getSnapshot(), saved);
+  await restarted.setEnabled(false);
+  const paused = open(disk);
+  assert.deepEqual(await paused.getSnapshot(), { ...saved, enabled: false });
+  assert.equal(await paused.beginCapture(), null);
+  await paused.record(exchange('ignored'));
+  assert.deepEqual((await paused.getSnapshot()).records, saved.records);
+  await paused.setEnabled(true);
+  assert.deepEqual(await open(disk).getSnapshot(), saved);
+  await paused.setEnabled(false);
+  await paused.clear();
+  assert.deepEqual(await open(disk).getSnapshot(), { enabled: false, records: [], error: null });
+}
+
+// 第十条不淘汰既有记录；第十一条仅移除最旧的一条，重启保持其余十条。
+{
+  const disk = storage();
+  const store = open(disk);
+  await store.setEnabled(true);
+  for (let id = 0; id < 10; id++) await store.record(exchange(id));
+  assert.deepEqual((await open(disk).getSnapshot()).records.map(record => record.id),
+    ['9', '8', '7', '6', '5', '4', '3', '2', '1', '0']);
+  await store.record(exchange(10));
+  assert.deepEqual((await open(disk).getSnapshot()).records.map(record => record.id),
+    ['10', '9', '8', '7', '6', '5', '4', '3', '2', '1']);
+}
+
+// 覆盖升级时迁移旧缓存的已提交记录和开关；未提交临时文件不参与恢复。
+{
+  const disk = storage();
+  const legacy = `${disk.api.cacheDirectory}ai-http-diagnostics/`;
+  const records = [exchange('legacy')];
+  disk.files.set(`${legacy}exchanges.json`, JSON.stringify({ version: 1, enabled: true, records }));
+  disk.files.set(`${legacy}exchanges.json.tmp`, '{broken');
+  const migrated = open(disk);
+  assert.deepEqual(await migrated.getSnapshot(), { enabled: true, records, error: null });
+  assert.equal([...disk.files.keys()].some(uri => uri.startsWith(legacy)), false);
+  await disk.api.deleteAsync(disk.api.cacheDirectory);
+  assert.deepEqual(await open(disk).getSnapshot(), await migrated.getSnapshot());
+  // 已有持久状态优先，不能用遗留缓存覆盖用户后来的选择。
+  await migrated.setEnabled(false);
+  disk.files.set(`${legacy}exchanges.json`, JSON.stringify({ version: 1, enabled: true, records: [exchange('stale')] }));
+  assert.deepEqual(await open(disk).getSnapshot(), { enabled: false, records, error: null });
+  await migrated.reset();
+  assert.equal(disk.files.size, 0);
+  assert.deepEqual(await open(disk).getSnapshot(), { enabled: false, records: [], error: null });
+}
+
+// 迁移失败保留旧文件并报告错误，下一次启动仍能完成迁移。
+{
+  const disk = storage();
+  const legacyFile = `${disk.api.cacheDirectory}ai-http-diagnostics/exchanges.json`;
+  disk.files.set(legacyFile, JSON.stringify({ version: 1, enabled: true, records: [exchange('legacy')] }));
+  disk.fail('move', '迁移被拒绝');
+  const failed = await open(disk).getSnapshot();
+  assert.equal(failed.enabled, false);
+  assert.match(failed.error, /读取失败.*迁移被拒绝/);
+  assert.equal(disk.files.has(legacyFile), true);
+  assert.equal((await open(disk).getSnapshot()).records[0].id, 'legacy');
+}
+
+// 未初始化时直接恢复出厂，也必须删除旧缓存，不能在下次启动重新迁入。
+{
+  const disk = storage();
+  const legacyFile = `${disk.api.cacheDirectory}ai-http-diagnostics/exchanges.json`;
+  disk.files.set(legacyFile, JSON.stringify({ version: 1, enabled: true, records: [exchange('legacy')] }));
+  await open(disk).reset();
+  assert.equal(disk.files.size, 0);
+  assert.deepEqual(await open(disk).getSnapshot(), { enabled: false, records: [], error: null });
 }
 
 // 正文不截断；并发完成串行提交，保留最近十份完整往返，重启后保持顺序和全文。
@@ -180,17 +262,22 @@ for (const action of ['write', 'move']) {
   await assert.rejects(store.clear(), /清空写入失败/);
   assert.match((await store.getSnapshot()).error, /清空失败/);
   assert.equal((await store.getSnapshot()).records.length, 1);
-  disk.fail('delete', '删除被拒绝');
-  await assert.rejects(store.setEnabled(false), /删除被拒绝/);
+  disk.fail('write', '设置写入被拒绝');
+  await assert.rejects(store.setEnabled(false), /设置写入被拒绝/);
   assert.equal(await store.beginCapture(), null);
-  assert.match((await store.getSnapshot()).error, /关闭失败.*删除被拒绝/);
+  assert.match((await store.getSnapshot()).error, /关闭失败.*设置写入被拒绝/);
   await store.setEnabled(false);
+  assert.deepEqual((await open(disk).getSnapshot()).records.map(record => record.id), ['old']);
+  disk.fail('delete', '删除被拒绝');
+  await assert.rejects(store.reset(), /删除被拒绝/);
+  assert.match((await store.getSnapshot()).error, /重置失败.*删除被拒绝/);
+  await store.reset();
   assert.equal(disk.files.size, 0);
   assert.deepEqual(await open(disk).getSnapshot(), { enabled: false, records: [], error: null });
 }
 
-// 清空和关闭会立刻废弃网络 token；正在写入的旧捕获也会在操作完成前被清理。
-for (const mutation of ['clear', 'disable']) {
+// 清空、关闭和重置会废弃在途 token；关闭保留此前提交的记录，清空和重置删除它们。
+for (const mutation of ['clear', 'disable', 'reset']) {
   const disk = storage();
   const store = open(disk);
   await store.setEnabled(true);
@@ -198,19 +285,20 @@ for (const mutation of ['clear', 'disable']) {
   const hold = disk.hold('write');
   const recording = store.record(exchange('writing'), undefined, token);
   await hold.entered;
-  const pending = mutation === 'clear' ? store.clear() : store.setEnabled(false);
+  const pending = mutation === 'clear' ? store.clear() : mutation === 'reset' ? store.reset() : store.setEnabled(false);
   const late = store.record(exchange('late'), undefined, token);
   hold.release();
   await Promise.all([recording, pending, late]);
-  assert.deepEqual((await store.getSnapshot()).records, []);
-  assert.deepEqual((await open(disk).getSnapshot()).records, []);
-  if (mutation === 'disable') await store.setEnabled(true);
+  const retained = mutation === 'disable' ? ['writing'] : [];
+  assert.deepEqual((await store.getSnapshot()).records.map(record => record.id), retained);
+  assert.deepEqual((await open(disk).getSnapshot()).records.map(record => record.id), retained);
+  if (mutation !== 'clear') await store.setEnabled(true);
   await store.record(exchange('after-reenable'), undefined, token);
-  assert.deepEqual((await store.getSnapshot()).records, []);
+  assert.deepEqual((await store.getSnapshot()).records.map(record => record.id), retained);
   const freshToken = await store.beginCapture();
   assert.notEqual(freshToken, token);
   await store.record(exchange('fresh'), undefined, freshToken);
-  assert.deepEqual((await store.getSnapshot()).records.map((record) => record.id), ['fresh']);
+  assert.deepEqual((await store.getSnapshot()).records.map((record) => record.id), ['fresh', ...retained]);
 }
 
 // 开始恢复时发生清空，不得给已经越过用户清空边界的请求发放旧 token。
@@ -240,7 +328,7 @@ for (const mode of ['corrupt', 'shape', 'read', 'unavailable']) {
   if (mode === 'corrupt') disk.files.set(file, '{broken');
   if (mode === 'shape') disk.files.set(file, JSON.stringify({ version: 1, enabled: true, records: [{}] }));
   if (mode === 'read') disk.fail('read', '读取被拒绝');
-  if (mode === 'unavailable') disk.api.cacheDirectory = null;
+  if (mode === 'unavailable') disk.api.documentDirectory = null;
   const store = open(disk);
   assert.equal(await store.beginCapture(), null);
   const snapshot = await store.getSnapshot();
@@ -248,11 +336,11 @@ for (const mode of ['corrupt', 'shape', 'read', 'unavailable']) {
   assert.deepEqual(snapshot.records, []);
   assert.match(snapshot.error, /读取失败/);
   if (mode === 'unavailable') {
-    await assert.rejects(store.setEnabled(true), /缓存目录不可用/);
+    await assert.rejects(store.setEnabled(true), /持久存储目录不可用/);
     assert.match((await store.getSnapshot()).error, /开启失败/);
   } else {
     await store.clear();
-    assert.equal(disk.files.size, 0);
+    assert.deepEqual(await open(disk).getSnapshot(), { enabled: false, records: [], error: null });
     assert.equal((await store.getSnapshot()).error, null);
   }
 }
@@ -287,4 +375,4 @@ for (const mode of ['corrupt', 'shape', 'read', 'unavailable']) {
   assert.equal(observations.length, count);
 }
 
-console.log('HTTP exchange diagnostics: 留存、全文、重启恢复、凭据清洗、存储失败与清空/关闭竞态全部通过。');
+console.log('HTTP exchange diagnostics: 持久留存、十条淘汰、关闭保留、旧缓存迁移、全文、凭据清洗、存储失败与清空/关闭/重置竞态全部通过。');

@@ -24,8 +24,8 @@ export interface ProactiveAgentRunState {
   serviceRunning: boolean;
   /** Overlay FGS：属于 Floating Interaction，不代表 Companion 运行状态。 */
   overlayForegroundServiceRunning: boolean;
-  /** Companion 一次 wake 执行期临时建立的前台执行。 */
-  companionExecutionForegroundRunning: boolean;
+  /** 应用总开关的持续后台保障，独立于日程是否正在执行。 */
+  applicationBackgroundRunning: boolean;
   visibleLivenessIndicatorRunning: boolean;
   companionWakeScheduled: boolean;
   companionSchedulerActive: boolean;
@@ -50,7 +50,7 @@ export interface ProactiveAgentRunState {
 export interface ProactiveNativeRuntimeSnapshot {
   floatingServiceRunning: boolean;
   overlayForegroundServiceRunning: boolean;
-  companionExecutionForegroundRunning: boolean;
+  applicationBackgroundRunning: boolean;
   visibleLivenessIndicatorRunning: boolean;
   companionWakeScheduled: boolean;
   companionSchedulerActive: boolean;
@@ -109,8 +109,8 @@ export async function reconcileProactiveNativeRuntimeState(params: {
   return recordProactiveAgentRunState({
     serviceRunning: params.nativeHealth.floatingServiceRunning,
     overlayForegroundServiceRunning: params.nativeHealth.overlayForegroundServiceRunning,
-    companionExecutionForegroundRunning:
-      params.nativeHealth.companionExecutionForegroundRunning,
+    applicationBackgroundRunning:
+      params.nativeHealth.applicationBackgroundRunning,
     visibleLivenessIndicatorRunning: params.nativeHealth.visibleLivenessIndicatorRunning,
     companionWakeScheduled: params.nativeHealth.companionWakeScheduled,
     companionSchedulerActive: params.nativeHealth.companionSchedulerActive,
@@ -161,8 +161,8 @@ async function readRunState(): Promise<ProactiveAgentRunState> {
     serviceRunning: storedState?.serviceRunning === true,
     overlayForegroundServiceRunning:
       storedState?.overlayForegroundServiceRunning === true,
-    companionExecutionForegroundRunning:
-      storedState?.companionExecutionForegroundRunning === true,
+    applicationBackgroundRunning:
+      storedState?.applicationBackgroundRunning === true,
     visibleLivenessIndicatorRunning:
       storedState?.visibleLivenessIndicatorRunning === true,
     companionWakeScheduled: storedState?.companionWakeScheduled === true,

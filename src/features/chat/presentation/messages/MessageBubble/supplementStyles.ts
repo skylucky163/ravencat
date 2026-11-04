@@ -6,6 +6,37 @@ import type { PresentationTheme } from '@shared/theme';
 
 export function createMessageBubbleSupplementStyles(theme: PresentationTheme) {
   return StyleSheet.create({
+    replyContainer: {
+      marginTop: 6,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: theme.radius.sm,
+      maxWidth: 260,
+    },
+    myReplyContainer: {
+      alignSelf: isPaperNoteTheme(theme) ? 'flex-start' : 'flex-end',
+      backgroundColor: theme.colors.chat.quote,
+    },
+    // 卡片内部按百分比布局，引用必须提供明确宽度，避免被短回复正文压缩。
+    momentReplyContainer: {
+      width: 260,
+      maxWidth: '100%',
+    },
+    aiReplyContainer: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.chat.quote,
+    },
+    replyText: {
+      fontSize: 13,
+      lineHeight: 18,
+      color: theme.colors.text.secondary,
+    },
+    replyAuthorName: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.colors.text.secondary,
+      marginBottom: 4,
+    },
     // 气泡尾部包装层：默认聊天变体（default / Liquid Glass）必须是 row —— 宽度沿 row 解析才能取到
     // 父级可用宽度，否则退回"最宽 block 单行宽"，含列表/表格的气泡会塌成一两个字一行
     // （箭头只是它的装饰子节点，是否渲染箭头由 shouldRenderBubbleArrow 决定，与这层布局语义无关）。

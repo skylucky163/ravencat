@@ -132,7 +132,7 @@ const { default: Menu } = load('src/features/chat/presentation/messages/componen
     StyleSheet: { create: (styles) => styles }, useWindowDimensions: () => ({ width: 400, height: 800 }),
   },
   '@expo/vector-icons': { Ionicons: 'Icon' },
-  'lucide-react-native': { History: 'Icon', Pin: 'Icon', PinOff: 'Icon', Star: 'Icon' },
+  'lucide-react-native': { History: 'Icon', Pin: 'Icon', PinOff: 'Icon', Star: 'Icon', TextSelect: 'Icon' },
   '@shared/theme': { useTheme: () => ({ mode: 'light', colors: { brand: { onPrimary: 'white' }, text: { primary: 'black' }, border: { strong: 'gray' } } }) },
 });
 let rendered;
@@ -144,7 +144,7 @@ await renderer.act(async () => {
   }));
 });
 const buttons = rendered.root.findAllByType('Button');
-const labels = ['复制', '改写', '重写', '历史版本', '删除', '多选', '固定', '转文字', '引用', '翻译', '分享', '收藏'];
+const labels = ['复制', '选择文字', '改写', '重写', '历史版本', '删除', '多选', '固定', '转文字', '引用', '翻译', '分享', '收藏'];
 assert.deepEqual(buttons.map((button) => button.props.accessibilityLabel), labels);
 const menuGeometry = () => rendered.root.findAllByType('View')
   .find((node) => Array.isArray(node.props.style) && node.props.style[1]?.width).props.style[1];

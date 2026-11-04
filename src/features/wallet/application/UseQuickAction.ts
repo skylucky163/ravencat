@@ -1,4 +1,4 @@
-/** Applies a saved quick action and schedules the optional ledger-assistant reply. */
+/** 使用已保存的快捷记账；手动使用可安排回复，AI 工具使用不再触发另一轮回复。 */
 import type { ILedgerRepository } from '../domain/LedgerRepository';
 import {
   submitWalletRecord,
@@ -16,7 +16,7 @@ export interface UseQuickActionParams {
 
 interface UseQuickActionDeps {
   repository: ILedgerRepository;
-  queueAIReply: WalletAIReplyQueue;
+  queueAIReply?: WalletAIReplyQueue;
 }
 
 export async function applyQuickActionAndReply(

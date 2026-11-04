@@ -9,7 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { createMemoryScreenStyles } from './memoryScreenStyles';
 import useMemoryManagementSnapshot from './useMemoryManagementSnapshot';
 const STATUS_LABELS: Record<MemoryEntry['embeddingStatus'], string> = {
-  not_requested: '未配置向量模型', pending: '等待向量化', retry_wait: '等待自动重试',
+  not_requested: '未请求向量化 · 可按关键词检索', pending: '等待向量化', retry_wait: '等待自动重试',
   ready: '语义检索已就绪', stale: '等待更新向量', failed: '向量更新失败',
 };
 export default function MemoryEditorScreen({ assistantId, memoryId, onBack }: {
@@ -71,7 +71,21 @@ export default function MemoryEditorScreen({ assistantId, memoryId, onBack }: {
                 }); }}><Text style={styles.action}>添加并关联</Text></Pressable>
               </View>
               {currentEditing && <>
-              <View style={styles.card}><Text style={styles.meta}>记于 {new Date(currentEditing.rememberedAt).toLocaleString()}</Text><Text style={styles.meta}>更新于 {new Date(currentEditing.updatedAt).toLocaleString()}</Text><Text style={styles.meta}>{STATUS_LABELS[currentEditing.embeddingStatus]}{currentEditing.embeddingModelName ? ' · ' + currentEditing.embeddingModelName : ''}</Text>{currentEditing.embeddingFailedAt && <Text style={styles.meta}>失败于 {new Date(currentEditing.embeddingFailedAt).toLocaleString()}</Text>}{currentEditing.embeddingError && <Text selectable style={styles.subtitle}>{currentEditing.embeddingError}</Text>}{currentEditing.embeddingStatus === 'failed' && <Pressable disabled={busy} onPress={() => { void run(() => retryMemoryEmbedding(assistantId, currentEditing.id), true); }}><Text style={styles.action}>重新尝试向量化</Text></Pressable>}</View>
+              <View style={styles.card}>
+                <Text style={styles.meta}>记于 {new Date(currentEditing.rememberedAt).toLocaleString()}</Text>
+                <Text style={styles.meta}>更新于 {new Date(currentEditing.updatedAt).toLocaleString()}</Text>
+                <Text style={styles.meta}>{STATUS_LABELS[currentEditing.embeddingStatus]}{currentEditing.embeddingModelName ? ' · ' + currentEditing.embeddingModelName : ''}</Text>
+                {currentEditing.embeddingFailedAt && <Text style={styles.meta}>失败于 {new Date(currentEditing.embeddingFailedAt).toLocaleString()}</Text>}
+                {currentEditing.embeddingError && <Text selectable style={styles.subtitle}>{currentEditing.embeddingError}</Text>}
+                <Text style={styles.meta}>{snapshot.embeddingEnabled ? '仅为这条记忆已保存的正文与摘要请求向量，不影响其他记忆。' : '请先在记忆设置中开启向量化。'}</Text>
+                <Pressable accessibilityRole="button" accessibilityLabel="向量化这条记忆"
+                  disabled={busy || !snapshot.embeddingEnabled || currentEditing.embeddingStatus === 'pending' || currentEditing.embeddingStatus === 'retry_wait'}
+                  onPress={() => { void run(() => retryMemoryEmbedding(assistantId, currentEditing.id)); }}>
+                  <Text style={[styles.action, (!snapshot.embeddingEnabled || currentEditing.embeddingStatus === 'pending' || currentEditing.embeddingStatus === 'retry_wait') && styles.disabled]}>
+                    {currentEditing.embeddingStatus === 'pending' || currentEditing.embeddingStatus === 'retry_wait' ? '等待向量化' : currentEditing.embeddingStatus === 'ready' ? '重新向量化这条' : '向量化这条'}
+                  </Text>
+                </Pressable>
+              </View>
               </>}
               <Pressable disabled={busy} onPress={() => confirmDelete()}><Text style={styles.danger}>删除记忆</Text></Pressable>
             </>}

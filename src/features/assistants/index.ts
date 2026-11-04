@@ -3,9 +3,7 @@ export type { AIProfile, AIConfig } from './domain/AIProfile';
 export { getAssistantDisplayName, getAssistantNicknamePromptContext } from './AssistantNickname';
 export type * from './domain/AssistantToolPermission';
 export * from './domain/AuxiliaryModel';
-export type { ModelCallConfig } from './domain/ModelCallConfig';
-export { default as CopyToGeneralModel } from './presentation/auxiliaryModels/CopyToGeneralModel';
-export { default as GeneralModelPrefill } from './presentation/auxiliaryModels/GeneralModelPrefill';
+export { default as ServiceConnectionPicker } from './presentation/auxiliaryModels/ServiceConnectionPicker';
 export { ApplicationSettingsAccessError } from './domain/ApplicationSettingsAccess';
 export type { AIAssistantSettingsUpdate, AIAssistantSummary, IAIAssistantRepository } from './domain/AssistantRepository';
 export type { IAIHostRepository } from './domain/HostRepository';
@@ -40,6 +38,8 @@ export {
   updateAIAssistantSettings,
   updateAIAssistantAvatarFromDraft,
   changeAssistantAvatarFromMediaAsset,
+  changeAssistantSpaceCoverFromMediaAsset,
+  getAssistantSpaceCoverImageSelection,
   changeAssistantPublicName,
   assertApplicationSettingsAccessInTransaction,
   subscribeAIAssistantUpdated,
@@ -56,6 +56,12 @@ export {
 } from './presentation/management/FormFields';
 export { default as ContextLimitsApply } from './presentation/management/ContextLimitsApply';
 export { default as AIModelSettings } from './presentation/management/AIModelSettings';
+export { default as AssistantProfileScreen } from './presentation/profile/AssistantProfileScreen';
+export { default as AssistantSpaceCover, DEFAULT_ASSISTANT_SPACE_COVER_SOURCE } from './presentation/profile/AssistantSpaceCover';
+export { default as AssistantProfileEditScreen } from './presentation/profile/AssistantProfileEditScreen';
+export { default as AssistantModelSettingsScreen } from './presentation/profile/AssistantModelSettingsScreen';
+export type { AssistantProfileNavigationState } from './presentation/profile/AssistantProfileEditScreen';
+export { useAIAssistantProfile } from './presentation/profile/useAIAssistantProfile';
 export { createHostAIAppointmentDialog } from './presentation/HostAIAppointmentDialog';
 export { default as ConversationList } from './presentation/management/ConversationList';
 export type { ConversationListPinTarget } from './presentation/management/ConversationList';
@@ -71,3 +77,5 @@ export { UnblockAIAssistantTool } from './aiTools/UnblockAIAssistantTool';
 export { subscribeAuxiliaryModelsChanged } from './AuxiliaryModelsChanged';
 
 export { selectAssistantVoiceModel } from './application/AssistantVoiceModels';
+
+export * from './ModelServices';

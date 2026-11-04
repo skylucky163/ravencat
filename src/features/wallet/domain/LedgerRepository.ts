@@ -1,5 +1,5 @@
 /** Wallet 领域拥有的仓储端口及查询、结果契约。 */
-import type { QuickAction, WalletRecord, WalletRecordType } from './WalletRecord';
+import type { CategoryStat, QuickAction, WalletRecord, WalletRecordType } from './WalletRecord';
 
 export interface LedgerRecordFilters {
   ids?: readonly string[];
@@ -46,14 +46,6 @@ export interface MonthlyLedgerStats {
   totalIncome: number;
   balance: number;
   categories: CategoryStats[];
-  daily: DailyStats[];
-}
-
-export interface YearlyMonthlyStats {
-  month: number;
-  count: number;
-  expense: number;
-  income: number;
 }
 
 export interface YearlyLedgerStats {
@@ -62,7 +54,6 @@ export interface YearlyLedgerStats {
   totalExpense: number;
   totalIncome: number;
   balance: number;
-  monthly: YearlyMonthlyStats[];
   categories: CategoryStats[];
 }
 
@@ -75,7 +66,20 @@ export interface LedgerKeywordSearchStats {
   byCategory: CategoryStats[];
 }
 
+/** 一段时间范围的汇总；页面在此基础上再补 timeRange。 */
+export interface LedgerRangeSummary {
+  totalExpense: number;
+  totalIncome: number;
+  balance: number;
+  categoryStats: CategoryStat[];
+  records: WalletRecord[];
+}
+
 export type CreateQuickActionInput = Partial<QuickAction>;
+
+export type UpdateQuickActionInput = Partial<Pick<QuickAction,
+  'name' | 'type' | 'category' | 'detail' | 'amount' | 'sortOrder'
+>>;
 
 export interface ILedgerRepository {
   insertRecord(record: CreateWalletRecordInput): Promise<WalletRecord>;
@@ -87,29 +91,10 @@ export interface ILedgerRepository {
   updateRecord(id: string, updates: UpdateWalletRecordInput): Promise<boolean>;
   getQuickActions(): Promise<QuickAction[]>;
   insertQuickAction(action: CreateQuickActionInput): Promise<QuickAction>;
+  updateQuickAction(id: string, updates: UpdateQuickActionInput): Promise<boolean>;
   deleteQuickAction(id: string): Promise<boolean>;
   useQuickAction(quickActionId: string, recordDate?: string): Promise<WalletRecord>;
   /** 返回预设与账单、快捷记账中已使用的分类；不受日期或记录条数限制。 */
   getCategories(type?: WalletRecordType): Promise<string[]>;
-  
-  /**
-   * 获取时间范围内的汇总数据（用于历史记账详情页）
-   * @param startDate 开始日期 YYYY-MM-DD
-   * @param endDate 结束日期 YYYY-MM-DD
-   * @returns 汇总数据
-   */
-  getRangeSummary(startDate: string, endDate: string): Promise<{
-    totalExpense: number;
-    totalIncome: number;
-    balance: number;
-    categoryStats: {
-      category: string;
-      type: 'income' | 'expense';
-      amount: number;
-      percentage: number;
-      count: number;
-      color: string;
-    }[];
-    records: WalletRecord[];
-  }>;
+  getRangeSummary(startDate: string, endDate: string): Promise<LedgerRangeSummary>;
 }

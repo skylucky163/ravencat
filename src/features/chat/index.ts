@@ -1,4 +1,9 @@
 /** 聊天功能的普通公共出口；Host 组装能力统一从 ./composition 获取。 */
+export { ChatBubbleSkinSettings } from './appearance/presentation/ChatBubbleSkinSettings';
+export { ChatBubbleSkinEditorScreen } from './appearance/presentation/ChatBubbleSkinEditorScreen';
+export { useChatBubbleTextColors } from './appearance/presentation/useChatBubbleTextColors';
+export type { BubbleEditorNavigationState } from './appearance/presentation/useBubbleSkinEditor';
+export type { BubbleSkinRole } from './appearance/domain/ChatBubbleSkin';
 export { listChatTurnStates } from './reply/application/QueryChatTurnStates';
 
 // 普通会话与消息命令。
@@ -219,6 +224,15 @@ export {
 } from './messages/domain/chatMessageMetadata';
 export { buildStickerModelText } from './messages/domain/ChatSticker';
 export { buildSharedChatRecordText } from './messages/domain/SharedChatRecord';
+export { buildSharedMomentText } from './messages/domain/SharedMoment';
+export { getMessageSharedMoment } from './messages/domain/chatMessageMetadata';
+export type { SharedMoment } from './messages/domain/SharedMoment';
+export type { SharedContent } from './messages/domain/SharedContent';
+export { useChatContentShare } from './presentation/messages/components/useChatContentShare';
+export type { ChatShareTarget } from './messages/application/ShareChatMessages';
+export { listChatShareTargets } from './messages/application/ShareChatMessages';
+export { default as ChatContentShareSheet } from './presentation/messages/components/ChatContentShareSheet';
+export { ChatShareNavigationProvider } from './presentation/messages/components/ChatShareNavigation';
 export { getMessageSharedRecord } from './messages/domain/chatMessageMetadata';
 export { getMessageSticker, buildStickerMessagePreviewText } from './messages/domain/chatMessageMetadata';
 export type {
@@ -285,15 +299,10 @@ export {
   ChatConversationRouteScreen,
   ChatFilePreviewRouteScreen,
   ChatMenuRouteScreen,
-  ChatModelSettingsRouteScreen,
   ChatProtocolRouteScreen,
-  ChatSettingsRouteScreen,
-  ChatSummaryRouteScreen,
   ChatStatisticsRouteScreen,
   ChatSearchRouteScreen,
   GroupSearchRouteScreen,
-  ChatSummaryEditorRouteScreen,
-  ChatSummarySettingsRouteScreen,
   GroupSummaryRouteScreen,
   CreateGroupRouteScreen,
   GroupAdminSettingsRouteScreen,
@@ -301,6 +310,10 @@ export {
   GroupFilePreviewRouteScreen,
   GroupMenuRouteScreen,
 } from './presentation/shell/ChatRouteScreens';
+export { ChatSummaryRouteScreen, ChatSummaryEditorRouteScreen, ChatSummarySettingsRouteScreen } from './summary/presentation/AssistantSummaryRouteScreens';
+export { default as AssistantChatSettingsScreen } from './presentation/conversation/AssistantChatSettingsScreen';
+export { default as AssistantContextSettingsScreen } from './presentation/conversation/AssistantContextSettingsScreen';
+export { ChatImageModelPicker } from './presentation/conversation/ChatImageModelPicker';
 export { getChatSummaryContext, getChatBackgroundContexts, createChatSummary, editChatSummary, deleteChatSummary, clearChatSummary,
   updateChatSummarySettings, searchChatSummaries, getChatSummarySettings, getAssistantChatSummaryGenerationState, setFixedChatContextStart, retryChatSummaryTask,
 } from './summary/application/ChatSummary';

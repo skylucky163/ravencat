@@ -5,11 +5,14 @@ import { Keyboard, StyleSheet, View, type LayoutChangeEvent, type ViewProps } fr
 export interface KeyboardAvoidingContainerProps extends ViewProps {
   enabled?: boolean;
   keyboardVerticalOffset?: number;
+  /** 铺满独立原生窗口时直接使用屏幕键盘顶边，不读取会被系统平移污染的窗口原点。 */
+  fillsNativeWindow?: boolean;
 }
 
 export default function KeyboardAvoidingContainer({
   enabled = true,
   keyboardVerticalOffset = 0,
+  fillsNativeWindow = false,
   style,
   onLayout,
   ...props
@@ -17,41 +20,44 @@ export default function KeyboardAvoidingContainer({
   const viewRef = useRef<View>(null);
   const keyboardFrameRef = useRef(Keyboard.metrics());
   const measurementState = useRef({ revision: 0 }).current;
-  const [bottom, setBottom] = useState(0);
+  const [availableHeight, setAvailableHeight] = useState<number | null>(null);
   const setNativeView = useCallback((view: View | null) => {
     // 原生窗口可先于 React effect 退场；ref 的接入/脱离就是测量的有效期边界。
     measurementState.revision++;
     viewRef.current = view;
   }, [measurementState]);
 
-  const updateOverlap = useCallback(() => {
+  const updateKeyboardBoundary = useCallback(() => {
     const revision = ++measurementState.revision;
     const keyboard = keyboardFrameRef.current;
     if (!enabled || !keyboard) {
-      setBottom(0);
+      setAvailableHeight(null);
       return;
     }
-    // 键盘提供屏幕坐标；不能拿 onLayout 的父容器局部 y 与之相减。
-    // 原生窗口可能已缩小，只补实际重叠量，避免再加一整份键盘高度。
+    // 容器底边直接落在键盘顶边；原生窗口是否同时缩放不再参与第二次高度计算。
+    if (fillsNativeWindow) {
+      setAvailableHeight(Math.max(0, keyboard.screenY - keyboardVerticalOffset));
+      return;
+    }
     const view = viewRef.current;
     if (view === null) return;
-    view.measureInWindow((_x, y, _width, height) => {
+    view.measureInWindow((_x, y) => {
       if (revision !== measurementState.revision) return;
-      setBottom(Math.max(0, y + height - keyboard.screenY + keyboardVerticalOffset));
+      setAvailableHeight(Math.max(0, keyboard.screenY - y - keyboardVerticalOffset));
     });
-  }, [enabled, keyboardVerticalOffset, measurementState]);
+  }, [enabled, fillsNativeWindow, keyboardVerticalOffset, measurementState]);
 
   useEffect(() => {
     keyboardFrameRef.current = Keyboard.metrics();
-    updateOverlap();
+    updateKeyboardBoundary();
     if (!enabled) return;
     const show = Keyboard.addListener('keyboardDidShow', (event) => {
       keyboardFrameRef.current = event.endCoordinates;
-      updateOverlap();
+      updateKeyboardBoundary();
     });
     const hide = Keyboard.addListener('keyboardDidHide', () => {
       keyboardFrameRef.current = undefined;
-      updateOverlap();
+      updateKeyboardBoundary();
     });
     return () => {
       // 原生测量可能晚于隐藏、窗口切换或卸载返回，旧结果不能恢复已清除的留白。
@@ -59,13 +65,13 @@ export default function KeyboardAvoidingContainer({
       show.remove();
       hide.remove();
     };
-  }, [enabled, updateOverlap, measurementState]);
+  }, [enabled, updateKeyboardBoundary, measurementState]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
-    updateOverlap();
+    updateKeyboardBoundary();
     onLayout?.(event);
-  }, [onLayout, updateOverlap]);
+  }, [onLayout, updateKeyboardBoundary]);
 
   return <View {...props} ref={setNativeView} collapsable={false} onLayout={handleLayout}
-    style={StyleSheet.compose(style, { paddingBottom: enabled ? bottom : 0 })} />;
+    style={StyleSheet.compose(style, enabled && availableHeight !== null ? { height: availableHeight, flex: 0 } : null)} />;
 }

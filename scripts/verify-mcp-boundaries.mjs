@@ -101,7 +101,6 @@ const saveServerRuntime = {
         connectionStatus: 'unverified',
       };
     },
-    updateProtocolDiagnostics: async () => null,
   },
 };
 const { saveMcpServer } = loadTypeScriptModule(
@@ -120,11 +119,11 @@ await saveMcpServer({
   url: 'https://mcp.example/mcp',
   description: '  第一行\r\n第二行  ',
   assistantIds: ['assistant-1'],
-  enabled: true,
+  enabled: false,
 });
 assert.equal(savedServerInput.name, '测试服务');
 assert.equal(savedServerInput.description, '第一行\n第二行');
-assert.equal(savedServerInput.enabled, false, '新建且未验证的 MCP 服务必须保持禁用');
+assert.equal(savedServerInput.enabled, true, '新增 MCP 服务保存后默认启用，连接验证独立控制工具暴露');
 assert.deepEqual(savedServerInput.assistantIds, ['assistant-1']);
 await assert.rejects(() => saveMcpServer({ id: null, name: '未授权服务', url: 'https://mcp.example/mcp',
   description: '', assistantIds: [], enabled: false }), (error) => error.code === 'ASSISTANT_REQUIRED',
@@ -2013,7 +2012,7 @@ const authSave = loadTypeScriptModule('src/features/mcpTools/application/SaveMcp
 const authInput = { assistantIds: ['assistant-1'], id: null, name: '认证服务', url: 'https://mcp.example/mcp', description: '', enabled: true, authMode: 'bearer_token' };
 await assert.rejects(() => authSave(authInput), (error) => error.code === 'TOKEN_REQUIRED');
 await authSave({ ...authInput, bearerToken: 'first-token' });
-assert.equal(authServer.enabled, false);
+assert.equal(authServer.enabled, true, '带认证的新增服务同样默认启用');
 assert.equal(tokens.get(authServer.credentialRef), 'first-token');
 assert.equal(JSON.stringify(authSaveInput).includes('first-token'), false, 'SQLite 只能收到引用，不能收到 Token');
 const firstRef = authServer.credentialRef;
@@ -2021,6 +2020,8 @@ authServer = { ...authServer, enabled: true, connectionStatus: 'available' };
 await authSave({ ...authInput, id: authServer.id });
 assert.equal(authServer.credentialRef, firstRef);
 assert.equal(authServer.enabled, true, '只编辑元数据不改变已有连接身份');
+await authSave({ ...authInput, id: authServer.id, enabled: false });
+assert.equal(authServer.enabled, false, '编辑保存保留用户关闭服务的选择');
 await authSave({ ...authInput, id: authServer.id, bearerToken: 'second-token' });
 assert.equal(authServer.enabled, false, '认证身份改变必须重新测试授权');
 assert.equal(authServer.connectionStatus, 'unverified');
@@ -2276,6 +2277,7 @@ try {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const uiSaves = [];
 const uiTests = [];
+const uiToggleWrites = [];
 const uiAlerts = [];
 let uiServerLoads = 0;
 let uiTestFailure = null;
@@ -2297,7 +2299,11 @@ const uiScreenMocks = {
   '../application/GetMcpServer': { getMcpServer: async () => { uiServerLoads += 1; return uiSavedServer; } },
   '../application/SaveMcpServer': { saveMcpServer: async (input) => { uiSaves.push(input); return uiSavedServer; } },
   '../application/DeleteMcpServer': { deleteMcpServer: async () => undefined },
-  '../application/SetMcpServerEnabled': { setMcpServerEnabled: async () => uiSavedServer },
+  '../application/SetMcpServerEnabled': { setMcpServerEnabled: async (id, enabled) => {
+    uiToggleWrites.push({ id, enabled });
+    uiSavedServer = { ...uiSavedServer, enabled };
+    return uiSavedServer;
+  } },
   '../application/TestMcpServerConnection': { testMcpServerConnection: async (id, protocolEra) => {
     uiTests.push({ id, protocolEra });
     if (uiTestFailure) throw new Error(uiTestFailure);
@@ -2316,7 +2322,10 @@ uiScreenMocks['@shared/ui'].ToggleField = loadTypeScriptModule('src/shared/ui/To
 }).default;
 const uiScreenModule = loadTypeScriptModule('src/features/mcpTools/presentation/McpServerConfigScreen.tsx', uiScreenMocks);
 let ui;
+const serverToggles = () => ui.root.findAllByType('Toggle')
+  .filter((node) => node.props.accessibilityLabel === '启用 Server');
 await act(async () => { ui = create(React.createElement(uiScreenModule.default, { serverId: null, onBack: () => undefined })); });
+assert.equal(serverToggles().length, 0, '新增页不提供服务启用开关');
 await act(async () => { ui.root.findByType('McpConnectionFields').props.onImport({ name: '官方服务', url: 'https://ui.example/mcp', authMode: 'bearer_token', bearerToken: 'ui-token' }); });
 const pressTest = async (label = '传统握手测试') => {
   const button = ui.root.findAllByType('TouchableOpacity').find((node) => node.findAllByType('Text').some((text) => text.props.children === label));
@@ -2331,6 +2340,8 @@ assert.equal(legacyTestButton.props.disabled, true, '传统握手同样需要先
 await act(async () => { ui.root.findByType('McpAssistantSelection').props.onToggle('assistant-1', true); });
 await pressTest();
 await pressTest();
+assert.equal(serverToggles().length, 0, '连接测试自动保存后，新增页仍不提供启用开关');
+assert.equal(uiSaves[0].enabled, true, '新增页测试保存时默认启用服务');
 assert.deepEqual(uiSaves[0].assistantIds, ['assistant-1']);
 assert.deepEqual(uiSaves[1].assistantIds, ['assistant-1']);
 assert.equal(uiSaves[0].id, null);
@@ -2356,6 +2367,19 @@ assert.equal(uiAlerts.at(-1).message, '新版 HTTP 500');
 await act(async () => { uiAlerts.at(-1).onDismiss(); });
 await act(async () => { ui.unmount(); });
 
+let uiSaveBacks = 0;
+await act(async () => { ui = create(React.createElement(uiScreenModule.default,
+  { serverId: null, onBack: () => { uiSaveBacks += 1; } })); });
+await act(async () => {
+  ui.root.findByType('McpConnectionFields').props.onImport({ name: '直接保存', url: 'https://ui.example/mcp', authMode: 'none' });
+  ui.root.findByType('McpAssistantSelection').props.onToggle('assistant-1', true);
+});
+await pressTest('保存');
+assert.equal(uiSaves.at(-1).id, null);
+assert.equal(uiSaves.at(-1).enabled, true, '新增页直接保存默认启用');
+assert.equal(uiSaveBacks, 1, '保存后返回服务列表');
+await act(async () => { ui.unmount(); });
+
 await act(async () => { ui = create(React.createElement(uiScreenModule.default, { serverId: 'ui-server', onBack: () => undefined })); });
 assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.children)
   && node.props.children.join('') === '传统握手 · 2025-06-18'), '重开页面仍显示保存的成功链路');
@@ -2366,11 +2390,18 @@ assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.
 assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.children)
   && node.props.children.join('') === '协议版本：2026-07-28'), '成功结果显示实际协议版本');
 assert.deepEqual(ui.root.findByType('McpAssistantSelection').props.selectedIds, ['assistant-1'], '编辑页恢复已保存的选择');
+assert.equal(serverToggles().length, 1, '编辑页提供服务启用开关');
+const enabledToggle = serverToggles()[0];
+assert.equal(enabledToggle.props.value, true, '编辑页展示已启用状态');
+await act(async () => { enabledToggle.props.onValueChange(false); });
+assert.deepEqual(uiToggleWrites, [{ id: 'ui-server', enabled: false }], '仅编辑页可关闭服务');
+assert.equal(serverToggles()[0].props.value, false);
 await act(async () => { ui.root.findByType('McpAssistantSelection').props.onToggle('assistant-1', false); });
 const saveButton = ui.root.findAllByType('TouchableOpacity').find((node) => node.findAllByType('Text').some((label) => label.props.children === '保存'));
 assert.equal(saveButton.props.disabled, false, '已有服务允许清空生效对象');
 await act(async () => { saveButton.props.onPress(); });
 assert.deepEqual(uiSaves.at(-1).assistantIds, []);
+assert.equal(uiSaves.at(-1).enabled, false, '编辑保存不会重新启用已关闭服务');
 await act(async () => { ui.unmount(); });
 
 let centerServer = { ...uiSavedServer, enabled: false, enabledToolCount: 2 };

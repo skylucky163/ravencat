@@ -2,6 +2,8 @@
 export type SpeechProviderId =
   | 'tencentRealtimeAsr'
   | 'dashscopeRealtimeAsr'
+  | 'volcengineRealtimeAsr'
+  | 'stepfunRealtimeAsr'
   | 'openai'
   | 'openaiCompatible'
   | 'openrouter'
@@ -40,6 +42,7 @@ export interface SpeechProviderDefinition {
   kind: SpeechKind;
   baseURL: string;
   models: readonly string[];
+  modelLabels?: Readonly<Record<string, string>>;
   defaultModel: string;
   credentialLabel: string;
 }

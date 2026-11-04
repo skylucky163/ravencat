@@ -39,6 +39,7 @@ function load(relative) {
           return { name, definition: { name, parameters: { type: 'object' } } };
         },
       });
+      if (specifier === './ShareMomentTool') return { ShareMomentTool: { name: 'share_moment', definition: { name: 'share_moment', description: '', parameters: { type: 'object' } } } };
       if (specifier === './ApplicationSettingsTools') return { applicationSettingsTools: [] };
       if (specifier === '@platform/agentRuntime') return load('src/platform/agentRuntime/AgentToolRegistry.ts');
       if (specifier.startsWith('@features/')) return new Proxy({}, { get: (_target, key) => ({

@@ -14,7 +14,7 @@ export interface WalletRecordSubmissionResult {
   error: string | null;
 }
 
-/** 排队依赖：AddRecord 可选（AI 工具写入不安排回复），UseQuickAction 必需。 */
+/** 手动记账由 composition 注入排队依赖；AI 工具写入不安排额外回复。 */
 export type WalletAIReplyQueue = (
   params: Parameters<typeof queueLedgerAIReply>[0],
   callbacks: Parameters<typeof queueLedgerAIReply>[1]

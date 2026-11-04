@@ -48,19 +48,33 @@ const ToggleField = load('src/shared/ui/ToggleField.tsx', {
 const ConfiguredModelPicker = load('src/shared/ui/ConfiguredModelPicker.tsx', {
   'react-native': native, '@shared/theme': themed, 'lucide-react-native': icons,
   './appDialogStore': { showAppDialog() {} },
-  './ModalSheet': { default: ({ visible, children, ...props }) => visible ? React.createElement('Sheet', props, children) : null, __esModule: true },
+  // 选择器把弹窗内容交给 ModelPickerModal；替身只保留“列出模型 / 取消选择”这一层。
+  './ModelPickerModal': { __esModule: true, default: ({ visible, models = [], onSelect, onClear, clearSelectionLabel, onClose }) => visible
+    ? React.createElement('Sheet', null, [
+      ...models.map(model => React.createElement('Pressable', {
+        key: model.id, onPress: () => { onSelect(model.id); onClose(); },
+      }, React.createElement('Text', null, model.name))),
+      onClear ? React.createElement('Pressable', {
+        key: 'clear', onPress: () => { onClear(); onClose(); },
+      }, React.createElement('Text', null, clearSelectionLabel)) : null,
+    ])
+    : null },
 }).default;
+let selectionReads = 0;
 const configurationApi = {
   readSearchConfiguration: async () => structuredClone(configuration),
-  readSearchSelection: async () => ({
-    models: domain.SEARCH_SOURCES.filter(source => configuration.sources.find(item => item.engine === source.engine).configured)
-      .map(source => ({ id: source.engine, name: source.name, model: source.needsKey ? '已配置' : '内置来源' })),
-    selectedModelId: configuration.defaultEngine,
-    selectedModelName: domain.SEARCH_SOURCES.find(source => source.engine === configuration.defaultEngine)?.name ?? null,
-    status: configuration.defaultEngine === null ? 'unconfigured'
-      : configuration.sources.find(source => source.engine === configuration.defaultEngine).configured ? 'active' : 'unavailable',
-    unavailableReason: '请重新配置 API Key',
-  }),
+  readSearchSelection: async () => {
+    selectionReads += 1;
+    return {
+      models: domain.SEARCH_SOURCES.filter(source => configuration.sources.find(item => item.engine === source.engine).configured)
+        .map(source => ({ id: source.engine, name: source.name, model: source.needsKey ? '已配置' : '内置来源' })),
+      selectedModelId: configuration.defaultEngine,
+      selectedModelName: domain.SEARCH_SOURCES.find(source => source.engine === configuration.defaultEngine)?.name ?? null,
+      status: configuration.defaultEngine === null ? 'unconfigured'
+        : configuration.sources.find(source => source.engine === configuration.defaultEngine).configured ? 'active' : 'unavailable',
+      unavailableReason: '请重新配置 API Key',
+    };
+  },
   subscribeSearchConfigurationChanged: listener => { listeners.add(listener); return () => listeners.delete(listener); },
   selectSearchSource: async engine => { configuration.defaultEngine = engine; changes.push({ kind: 'default', engine }); notify(); },
   updateSearchConfiguration: async change => {
@@ -100,7 +114,9 @@ async function select(name) {
   const option = rendered.root.findByType('Sheet').findAllByType('Pressable')
     .find(node => node.findAllByType('Text').some(text => text.props.children === name));
   assert.ok(option, `选择器提供 ${name}`);
+  const before = selectionReads;
   await act(async () => option.props.onPress());
+  return selectionReads - before;
 }
 assert.equal(rendered.root.findByType('Header').props.title, '联网搜索');
 assert.equal(rendered.root.findAllByType('Avoiding').length, 1);
@@ -110,10 +126,12 @@ assert.equal(source('DuckDuckGo').props.onPress, undefined);
 assert.equal(rendered.root.findAllByType('InputField').length, 0, '密钥配置初始折叠');
 assert.deepEqual(rendered.root.findAllByType('Toggle').map(node => node.props.accessibilityLabel), ['系统代理']);
 assert.equal(rendered.root.findAllByType('Text').filter(node => ['联网搜索', '联网服务'].includes(node.props.children)).length, 0);
-await select('DuckDuckGo');
+assert.equal(await select('DuckDuckGo'), 1, '自身选择只刷新一次，不重复读取通知与显式刷新');
 assert.deepEqual(changes.at(-1), { kind: 'default', engine: 'duckduckgo' });
 assert.equal(configuration.defaultEngine, 'duckduckgo');
+const beforeExternalRead = selectionReads;
 await act(async () => toggle('系统代理').props.onValueChange(true));
+assert.equal(selectionReads, beforeExternalRead + 1, '外部配置变更仍刷新选择器');
 assert.deepEqual(changes.at(-1), { kind: 'connection', mode: 'system' });
 assert.equal(toggle('系统代理').props.value, true);
 await act(async () => toggle('系统代理').props.onValueChange(false));

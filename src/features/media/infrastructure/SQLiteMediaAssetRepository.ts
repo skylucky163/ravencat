@@ -176,10 +176,35 @@ const MEDIA_ASSET_CALL_IMAGES_REFERENCE_QUERY = `${MEDIA_ASSET_CALL_AUDIO_REFERE
   FROM call_history_images
 `;
 
-const MEDIA_ASSET_REFERENCE_QUERY = `${MEDIA_ASSET_CALL_IMAGES_REFERENCE_QUERY}
+const MEDIA_ASSET_RINGTONE_REFERENCE_QUERY = `${MEDIA_ASSET_CALL_IMAGES_REFERENCE_QUERY}
   UNION ALL
   SELECT media_asset_id, 'call_ringtone', assistant_id || ':' || direction, 'call_ringtone_selection.media_asset_id'
   FROM call_ringtone_selection WHERE media_asset_id IS NOT NULL
+`;
+
+const MEDIA_ASSET_BUBBLE_SKIN_REFERENCE_QUERY = `${MEDIA_ASSET_RINGTONE_REFERENCE_QUERY}
+  UNION ALL
+  SELECT media_asset_id, 'chat_bubble_skin', role, 'chat_bubble_skins.media_asset_id'
+  FROM chat_bubble_skins
+`;
+
+const MEDIA_ASSET_BUBBLE_DECORATION_REFERENCE_QUERY = `${MEDIA_ASSET_BUBBLE_SKIN_REFERENCE_QUERY}
+  UNION ALL
+  SELECT media_asset_id, 'chat_bubble_decoration', id, 'chat_bubble_decorations.media_asset_id'
+  FROM chat_bubble_decorations
+`;
+
+const MEDIA_ASSET_BUBBLE_PRESET_REFERENCE_QUERY = `${MEDIA_ASSET_RINGTONE_REFERENCE_QUERY}
+  UNION ALL
+  SELECT media_asset_id, 'chat_bubble_skin', id, 'chat_bubble_presets.media_asset_id' FROM chat_bubble_presets
+  UNION ALL
+  SELECT media_asset_id, 'chat_bubble_decoration', id, 'chat_bubble_preset_decorations.media_asset_id' FROM chat_bubble_preset_decorations
+`;
+
+const MEDIA_ASSET_REFERENCE_QUERY = `${MEDIA_ASSET_BUBBLE_PRESET_REFERENCE_QUERY}
+  UNION ALL
+  SELECT media_asset_id, 'assistant_profile_cover', assistant_id, 'assistant_profile_covers.media_asset_id'
+  FROM assistant_profile_covers
 `;
 
 /**
@@ -194,6 +219,14 @@ const MEDIA_ASSET_CANDIDATE_UNREFERENCED_QUERY = `
   SELECT candidate.asset_id AS asset_id
   FROM candidate
   WHERE NOT EXISTS (
+          SELECT 1 FROM chat_bubble_preset_decorations
+          WHERE chat_bubble_preset_decorations.media_asset_id = candidate.asset_id
+        )
+    AND NOT EXISTS (
+          SELECT 1 FROM chat_bubble_presets
+          WHERE chat_bubble_presets.media_asset_id = candidate.asset_id
+        )
+    AND NOT EXISTS (
           SELECT 1 FROM call_history_entries
           WHERE call_history_entries.media_asset_id = candidate.asset_id
         )
@@ -224,6 +257,10 @@ const MEDIA_ASSET_CANDIDATE_UNREFERENCED_QUERY = `
     AND NOT EXISTS (
           SELECT 1 FROM ai_assistants
           WHERE ai_assistants.avatar_media_asset_id = candidate.asset_id
+        )
+    AND NOT EXISTS (
+          SELECT 1 FROM assistant_profile_covers
+          WHERE assistant_profile_covers.media_asset_id = candidate.asset_id
         )
     AND NOT EXISTS (
           SELECT 1 FROM group_chats
@@ -397,7 +434,11 @@ export class SQLiteMediaAssetRepository implements MediaAssetRepository, MediaAs
     // 143 的已安装库存在仅录音和含截图两种结构；恢复预检必须保留实际已有的图片引用。
     const hasCallImages = version!.user_version === 143
       && await executor.getFirstAsync("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'call_history_images'") !== null;
-    const references = version!.user_version >= 146 ? MEDIA_ASSET_REFERENCE_QUERY
+    const references = version!.user_version >= 165 ? MEDIA_ASSET_REFERENCE_QUERY
+      : version!.user_version >= 154 ? MEDIA_ASSET_BUBBLE_PRESET_REFERENCE_QUERY
+      : version!.user_version >= 153 ? MEDIA_ASSET_BUBBLE_DECORATION_REFERENCE_QUERY
+      : version!.user_version >= 151 ? MEDIA_ASSET_BUBBLE_SKIN_REFERENCE_QUERY
+      : version!.user_version >= 146 ? MEDIA_ASSET_RINGTONE_REFERENCE_QUERY
       : version!.user_version >= 144 || hasCallImages ? MEDIA_ASSET_CALL_IMAGES_REFERENCE_QUERY
       : version!.user_version === 143 ? MEDIA_ASSET_CALL_AUDIO_REFERENCE_QUERY
       : version!.user_version >= 137 ? MEDIA_ASSET_REPLY_VERSION_REFERENCE_QUERY : MEDIA_ASSET_LEGACY_REFERENCE_QUERY;
@@ -611,6 +652,8 @@ export class SQLiteMediaAssetRepository implements MediaAssetRepository, MediaAs
       SELECT avatar_media_asset_id AS asset_id FROM ai_assistants
       WHERE id = ? AND avatar_media_asset_id IS NOT NULL
       UNION
+      SELECT media_asset_id AS asset_id FROM assistant_profile_covers WHERE assistant_id = ?
+      UNION
       SELECT media_asset_id AS asset_id FROM call_background_selection
       WHERE id = ? AND media_asset_id IS NOT NULL
       UNION
@@ -626,7 +669,7 @@ export class SQLiteMediaAssetRepository implements MediaAssetRepository, MediaAs
       UNION
       SELECT i.media_asset_id AS asset_id FROM call_history_images i JOIN call_history h ON h.call_id = i.call_id
       WHERE h.assistant_id = ?
-    `, [assistantId, assistantId, assistantId, assistantId, assistantId, assistantId, assistantId]);
+    `, [assistantId, assistantId, assistantId, assistantId, assistantId, assistantId, assistantId, assistantId]);
     return rows.map((row) => row.asset_id);
   }
 

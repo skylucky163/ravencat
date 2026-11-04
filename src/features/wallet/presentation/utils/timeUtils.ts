@@ -1,32 +1,10 @@
 /**
- * @fileoverview 时间计算工具函数
- * 
- * 用于历史记账功能的时间范围计算
+ * @fileoverview 历史记账的时间范围与日期展示工具
+ *
+ * 时间范围的字段、顺序与标签在这里生成；卡片与详情只消费。
  */
 
-export type ViewType = 'week' | 'month' | 'year';
-
-export interface TimeRange {
-  startDate: string;  // YYYY-MM-DD
-  endDate: string;    // YYYY-MM-DD
-  label: string;      // 显示文本，如"3月24日-3月30日"
-  year: number;
-  month: number;
-}
-
-export interface DayInfo extends TimeRange {
-  weekday: string;    // '今天', '昨天', '周一'...
-  isToday: boolean;
-}
-
-export interface WeekInfo extends TimeRange {
-  weekNum: number;    // 第几周
-}
-
-export interface MonthInfo extends TimeRange {
-  monthName: string;  // '1月', '2月'...
-  isYearSummary?: boolean;
-}
+import type { ViewType, TimeRange, DayInfo, WeekInfo, MonthInfo } from '../historyTypes';
 
 /**
  * 生成时间范围唯一 key
@@ -38,6 +16,94 @@ export function getTimeRangeKey(range: Pick<TimeRange, 'startDate' | 'endDate'>)
 const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
 /**
+ * 从今天向前展开到 cursor 所在周期，最新的在前。
+ * 分页时用更早的 cursor 重新展开，尚未加载的尾部就是新一页，不必另写一套切分。
+ */
+export function buildHistoryRanges(view: ViewType, cursor: Date): TimeRange[] {
+  switch (view) {
+    case 'week': {
+      const ranges: DayInfo[] = [];
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const target = new Date(cursor);
+      target.setHours(0, 0, 0, 0);
+
+      let weekCursor = new Date(today);
+      while (getMonday(weekCursor).getTime() >= getMonday(target).getTime()) {
+        ranges.push(...getWeekDays(weekCursor));
+        weekCursor = addDays(getMonday(weekCursor), -1);
+        weekCursor.setHours(0, 0, 0, 0);
+      }
+
+      return ranges;
+    }
+    case 'month': {
+      const ranges: WeekInfo[] = [];
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const target = new Date(cursor);
+      target.setHours(0, 0, 0, 0);
+
+      let monthCursor = new Date(today.getFullYear(), today.getMonth(), 1);
+      const targetMonthStart = new Date(target.getFullYear(), target.getMonth(), 1);
+
+      while (monthCursor.getTime() >= targetMonthStart.getTime()) {
+        ranges.push(...getMonthWeeks(monthCursor.getFullYear(), monthCursor.getMonth() + 1));
+        monthCursor = addMonths(monthCursor, -1);
+        monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1);
+      }
+
+      return ranges;
+    }
+    case 'year':
+      return getYearMonths(cursor.getFullYear());
+  }
+}
+
+/** 游标向前移动一个周期；单位必须与 buildHistoryRanges 的展开单位一致。 */
+export function previousHistoryCursor(view: ViewType, cursor: Date): Date {
+  switch (view) {
+    case 'week': {
+      const previousSunday = addDays(getMonday(cursor), -1);
+      previousSunday.setHours(0, 0, 0, 0);
+      return previousSunday;
+    }
+    case 'month':
+      return new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
+    case 'year':
+      return addYears(cursor, -1);
+  }
+}
+
+/** 卡片的标题与副标题由范围类型决定；日卡在“今天”时不重复显示“今天”。 */
+export function describeHistoryRange(
+  range: TimeRange,
+  view: ViewType
+): { title: string; subtitle: string } {
+  switch (view) {
+    case 'week': {
+      const day = range as DayInfo;
+      if (!day.isToday) return { title: day.weekday, subtitle: day.label };
+      const weekday = WEEKDAY_NAMES[new Date(day.startDate).getDay()];
+      return { title: `${weekday} (今天)`, subtitle: day.label };
+    }
+    case 'month': {
+      const week = range as WeekInfo;
+      return { title: `第${week.weekNum}周`, subtitle: week.label };
+    }
+    case 'year': {
+      const month = range as MonthInfo;
+      return {
+        title: month.monthName,
+        subtitle: month.isYearSummary ? '全年' : `${month.year}年`,
+      };
+    }
+  }
+}
+
+/**
  * 格式化日期为 YYYY-MM-DD
  */
 export function formatDate(date: Date): string {
@@ -45,6 +111,12 @@ export function formatDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/** 账单行内的短日期，如 10/9。 */
+export function formatMonthDay(dateStr: string): string {
+  const date = new Date(dateStr);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 /**

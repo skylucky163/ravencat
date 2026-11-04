@@ -85,4 +85,14 @@ export class SQLiteAIStickerProcessingRepository implements AIStickerProcessingR
   getTask(stickerId: string): Promise<AIStickerTask | null> {
     return this.database.getFirstAsync<AIStickerTask>('SELECT operation, status, error FROM ai_sticker_tasks WHERE sticker_id = ?', [stickerId]);
   }
+
+  async getTasks(stickerIds: readonly string[]): Promise<Map<string, AIStickerTask>> {
+    if (stickerIds.length === 0) return new Map();
+    const placeholders = stickerIds.map(() => '?').join(', ');
+    const rows = await this.database.getAllAsync<AIStickerTask & { sticker_id: string }>(
+      `SELECT sticker_id, operation, status, error FROM ai_sticker_tasks WHERE sticker_id IN (${placeholders})`,
+      [...stickerIds],
+    );
+    return new Map(rows.map(({ sticker_id, ...task }) => [sticker_id, task]));
+  }
 }

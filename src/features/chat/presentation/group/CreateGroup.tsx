@@ -16,11 +16,10 @@ import { getAssistantDisplayName,
   fetchModelsWithConfig,
   runConnectionTestByConfig,
   FetchModelsButton,
-  GeneralModelPrefill,
+  ServiceConnectionPicker,
   ModelSelectHint,
   SelectedModel,
   TestConnectionButton,
-  type ModelCallConfig,
   type AIProfile,
 } from '@features/assistants';
 import {
@@ -40,10 +39,10 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
   const commonStyles = React.useMemo(() => createCommonStyles(theme), [theme]);
 
   const [groupName, setGroupName] = useState('');
+  const [adminServiceConfigId, setAdminServiceConfigId] = useState('');
   const [adminUrl, setAdminUrl] = useState('');
   const [adminApiKey, setAdminApiKey] = useState('');
   const [adminModel, setAdminModel] = useState('');
-  const [adminParams, setAdminParams] = useState<Pick<ModelCallConfig, 'temperature' | 'topP' | 'maxTokens'>>();
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([]);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -51,15 +50,6 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isSaving, setIsSaving] = useState(false);
-  const fillAdminConfig = (config: ModelCallConfig) => {
-    setAdminUrl(config.apiBaseUrl);
-    setAdminApiKey(config.apiKey);
-    setAdminModel(config.model);
-    setAdminParams({ temperature: config.temperature, topP: config.topP, maxTokens: config.maxTokens });
-    setAvailableModels([]);
-    setShowModelPicker(false);
-    setTestResult(null);
-  };
   const avatarDraftIdRef = useRef(
     `new_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   );
@@ -107,12 +97,12 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
   }, []);
 
   const handleAdminUrlChange = useCallback((text: string) => {
-    setAdminUrl(text);
+    setAdminUrl(text); setAdminServiceConfigId('');
     resetModelFlow();
   }, [resetModelFlow]);
 
   const handleAdminApiKeyChange = useCallback((text: string) => {
-    setAdminApiKey(text);
+    setAdminApiKey(text); setAdminServiceConfigId('');
     resetModelFlow();
   }, [resetModelFlow]);
 
@@ -171,7 +161,7 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
         apiBaseUrl,
         apiKey,
         selectedModel,
-        requestOptions: adminParams ?? { skipParams: true },
+        requestOptions: { skipParams: true },
       });
 
       if (result.success) {
@@ -189,7 +179,7 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
     } finally {
       setIsTesting(false);
     }
-  }, [adminApiKey, adminModel, adminUrl, adminParams]);
+  }, [adminApiKey, adminModel, adminUrl]);
 
   const handlePickAvatar = useCallback(async () => {
     try {
@@ -237,9 +227,9 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
         memberAIIds: Array.from(selectedIds),
         admin: {
           apiBaseUrl: adminUrl,
+          serviceConfigId: adminServiceConfigId || null,
           apiKey: adminApiKey,
           model: adminModel,
-          ...adminParams,
         },
       }), (details) => details.group.avatar);
 
@@ -250,7 +240,7 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
     } finally {
       setIsSaving(false);
     }
-  }, [adminApiKey, adminModel, adminUrl, adminParams, commitAvatar, groupName, isSaving, onCreated, selectedIds, testResult]);
+  }, [adminApiKey, adminModel, adminUrl, adminServiceConfigId, commitAvatar, groupName, isSaving, onCreated, selectedIds, testResult]);
 
   const avatarBusy = isPickingAvatar || isCommittingAvatar;
 
@@ -314,7 +304,7 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
           {/* 群管理员 */}
           <View style={styles.section}>
             <Text style={commonStyles.sectionTitle}>群管理员</Text>
-            <GeneralModelPrefill onFill={fillAdminConfig} disabled={isTesting || isLoadingModels || isSaving} />
+            <ServiceConnectionPicker baseUrl={adminUrl} apiKey={adminApiKey} onFill={service => { setAdminServiceConfigId(service.id); setAdminUrl(service.baseUrl); setAdminApiKey(service.apiKey); resetModelFlow(); }} disabled={isTesting || isLoadingModels || isSaving} />
           </View>
           <View style={styles.section}>
             <InputField

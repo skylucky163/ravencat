@@ -2,8 +2,9 @@
 
 import type { GroupChatMember } from '../domain/GroupChat';
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
-import { getMessageAttachments, getMessageSharedRecord } from '../../messages/domain/chatMessageMetadata';
+import { getMessageAttachments, getMessageSharedRecord, getMessageSharedMoment } from '../../messages/domain/chatMessageMetadata';
 import { buildSharedChatRecordText } from '../../messages/domain/SharedChatRecord';
+import { buildSharedMomentText } from '../../messages/domain/SharedMoment';
 import { buildGroupMentionModelText } from './GroupMentionModelText';
 
 const MAX_ADMIN_ADDED_SPEAKERS = 4;
@@ -14,6 +15,8 @@ export interface GroupAdminMemberAlias {
 }
 
 function formatUserMessageForAdmin(message: ChatMessage): string {
+  const moment = getMessageSharedMoment(message);
+  if (moment) return buildSharedMomentText(moment);
   const shared = getMessageSharedRecord(message);
   if (shared) return buildSharedChatRecordText(shared, message.text);
   const attachmentTypes = new Set(
@@ -71,7 +74,8 @@ export function buildGroupAdminInput(params: {
         return `用户: ${buildGroupMentionModelText(formatUserMessageForAdmin(message), message, publicMembers)}`;
       }
       const entry = memberAliases.find(({ member }) => member.agentId === message.agentId);
-      return `${entry?.member.name || 'AI'}: ${message.text}`;
+      const moment = getMessageSharedMoment(message);
+      return `${entry?.member.name || 'AI'}: ${moment ? buildSharedMomentText(moment) : message.text}`;
     })
     .join('\n');
 

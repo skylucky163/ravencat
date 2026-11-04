@@ -128,6 +128,7 @@ for (const relativePath of [
   'src/features/chat/messages/application/MessagePersistence.ts',
   'src/features/chat/messages/domain/ChatMessage.ts',
   'src/features/chat/messages/domain/ChatSticker.ts',
+  'src/features/chat/messages/domain/SharedMoment.ts',
   'src/features/chat/messages/domain/SharedChatRecord.ts',
   'src/features/chat/messages/domain/MessageRepository.ts',
   'src/features/chat/messages/domain/MessageTimeSeparator.ts',
@@ -2693,7 +2694,7 @@ scenario('悬浮窗挂断已经被错误收口的通话，真实结束入口驱�
       subscribeNativeCallCancellation() { return { remove() {} }; },
     },
   };
-  const filename = path.join(repoRoot, 'src/host/runtime/CallExecutionHeadlessTask.ts');
+  const filename = path.join(repoRoot, 'src/host/runtime/ExecuteCall.ts');
   const hostModule = new Module(filename);
   hostModule.require = id => {
     assert.ok(Object.hasOwn(boundaries, id), `未替换的宿主边界：${id}`);
@@ -2702,7 +2703,7 @@ scenario('悬浮窗挂断已经被错误收口的通话，真实结束入口驱�
   hostModule._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, filename);
-  const task = hostModule.exports.runCallExecutionHeadlessTask({ callId: activeCall.id });
+  const task = hostModule.exports.executeCall({ callId: activeCall.id });
   try {
     await waitFor(() => ready, '执行宿主没有就绪');
     // 重现已安装旧版本的分裂状态：数据库 failed，原生宿主仍在执行。
@@ -3229,6 +3230,7 @@ scenario('两次来电预检均读到空闲时，失败方不创建第二通也�
 scenario('真实仓储并发创建来电与去电只有一个占用，终态后可再次创建', async () => {
   resetRuntime(createCallRepository());
   const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMAS.modelServices);
   db.exec(SCHEMAS.aiAssistants);
   db.exec(SCHEMAS.sessions);
   db.exec(SCHEMAS.callSessions);

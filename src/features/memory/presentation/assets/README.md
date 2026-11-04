@@ -8,7 +8,7 @@
 - `mercury.jpg`：MESSENGER 水星全球拼接 PIA15162，NASA / Johns Hopkins University Applied Physics Laboratory / Carnegie Institution of Washington；使用 NASA 提供的 300×300 缩略图。来源：[Mercury](https://science.nasa.gov/mercury/)。
 - `europa.jpg`：Galileo 木卫二重处理视图 PIA19048，NASA / JPL-Caltech / SETI Institute；使用 NASA 提供的 256×189 缩略图。来源：[Europa’s Stunning Surface](https://science.nasa.gov/photojournal/europas-stunning-surface-2/)。
 - `ganymede.jpg`：Galileo 木卫三自然色影像 PIA00716，NASA / JPL；使用 NASA 提供的 256×192 缩略图。来源：[Ganymede – Galileo](https://science.nasa.gov/resource/ganymede-galileo/)。
-- `orion-nebula.jpg`：Hubble 猎户座星云，NASA、ESA、Hubble Space Telescope Orion Treasury Project Team、Massimo Robberto（STScI, ESA）；使用 NASA 提供的 1280×1280 图像版本。来源：[Orion Nebula](https://science.nasa.gov/asset/hubble/orion-nebula-3/)。运行时将原色转换为蓝紫色尘埃材质，降低透明度并压暗边缘，保证名称和前景星球可读。
+- 星空背景影像已归入[共享宇宙背景](../../../../shared/ui/space/assets/README.md)，与主动伴随共用同一张 Hubble 猎户座星云照片。
 
 素材使用说明：[NASA Images and Media Usage Guidelines](https://www.nasa.gov/nasa-brand-center/images-and-media/)。
 

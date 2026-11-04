@@ -34,7 +34,7 @@ function toPageCursor(record: MomentRecordData | undefined): MomentPageCursor | 
   return record ? { createdAt: record.createdAt, id: record.id } : null;
 }
 
-export default function useMoments() {
+export default function useMoments(authorAgentId?: string) {
   const [moments, setMoments] = useState<MomentRecordData[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -72,7 +72,10 @@ export default function useMoments() {
 
   const fetchMomentPage = useCallback(
     async (profile: UserProfile | null, limit: number, cursor: MomentPageCursor | null) => {
-      const records = await listMomentRecords(profile, { limit: limit + 1, cursor });
+      const records = await listMomentRecords(profile, {
+        limit: limit + 1, cursor,
+        ...(authorAgentId ? { author: { actorType: 'ai' as const, actorId: authorAgentId } } : {}),
+      });
       const items = records.slice(0, limit);
 
       return {
@@ -81,7 +84,7 @@ export default function useMoments() {
         nextCursor: toPageCursor(items[items.length - 1]),
       };
     },
-    []
+    [authorAgentId]
   );
 
   /** 完整重载当前窗口的顶部 N 条，并重建 items / hasMore / nextCursor。 */

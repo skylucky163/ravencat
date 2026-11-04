@@ -69,14 +69,20 @@ export function createMarkdownStylePreset(
   variant: BubbleVariant,
   theme: PresentationTheme,
   bubbleStyles: BubbleStyles,
-  useWideLayout: boolean
+  useWideLayout: boolean,
+  /**
+   * 气泡背景由用户上传的 PNG 承担时传 true。
+   * 渲染库的样式是浅合并：没在这里给出的 key 会落到库默认值（浅色实底、标号默认黑）。
+   */
+  customBackground = false,
+  textColorOverride?: string
 ) {
-  const baseTextStyle = StyleSheet.flatten(
+  const baseTextStyle = { ...StyleSheet.flatten(
     variant === 'me' ? bubbleStyles.myText :
     variant === 'ai' ? bubbleStyles.aiText :
     variant === 'reasoning' ? bubbleStyles.reasoningText :
     bubbleStyles.systemText
-  );
+  ), ...(textColorOverride && { color: textColorOverride }) };
   const baseFontSize = typeof baseTextStyle.fontSize === 'number' ? baseTextStyle.fontSize : 15;
   const baseLineHeight = typeof baseTextStyle.lineHeight === 'number'
     ? baseTextStyle.lineHeight
@@ -89,6 +95,42 @@ export function createMarkdownStylePreset(
 
   const isMoonKimiAiVariant =
     isMoonKimiTheme(theme) && (variant === 'ai' || variant === 'reasoning');
+
+  // DIY 背景是用户上传的图片，主题色和它没有任何关系：自绘实底会直接盖住图片，
+  // 还会和正文色撞出低对比（白字压在浅色代码底上）。此时填充全部归零，
+  // 所有可读性只从该侧正文色推导——正文色由气泡自己决定，Markdown 不应另立一套颜色。
+  const textColor = baseTextStyle.color;
+  const ruleColor = customBackground ? textColor : theme.colors.border.default;
+  const codeInlineFill = customBackground
+    ? 'transparent'
+    : (usesUserBubbleColors ? userCodeBackground : theme.colors.surface.muted);
+  const codeBlockFill = customBackground
+    ? 'transparent'
+    : (usesUserBubbleColors ? userCodeBackground : theme.colors.background.screen);
+  const codeBlockColor = customBackground
+    ? textColor
+    : (usesUserBubbleColors && theme.effects.glass.enabled
+      ? theme.colors.brand.onPrimary
+      : theme.colors.text.primary);
+  const linkColor = customBackground
+    ? textColor
+    : (usesUserBubbleColors ? theme.colors.brand.onPrimary : theme.colors.brand.primary);
+  const quoteColor = customBackground
+    ? textColor
+    : (usesUserBubbleColors ? theme.colors.brand.onPrimary : theme.colors.text.secondary);
+  const tableHeaderFill = customBackground ? 'transparent' : theme.colors.surface.muted;
+
+  // 库的删除线/下划线规则只给装饰线、不给颜色，文字会落到平台默认黑。
+  // 逐字标号（·、1.）同理：渲染库只给它们边距和行高。给出这些 key 会整体替换库默认，
+  // 所以列表标号必须连库的 marginLeft/marginRight/lineHeight 一起复刻。仅 DIY 背景需要。
+  const customBackgroundOverrides = customBackground
+    ? {
+        strikethrough: { color: textColor, textDecorationLine: 'line-through' as const },
+        u: { color: textColor, textDecorationLine: 'underline' as const },
+        listUnorderedItemIcon: { color: textColor, marginLeft: 10, marginRight: 10, lineHeight: 24 },
+        listOrderedItemIcon: { color: textColor, marginLeft: 10, marginRight: 10, lineHeight: 24 },
+      }
+    : {};
 
   return {
     root: {
@@ -116,6 +158,8 @@ export function createMarkdownStylePreset(
       marginBottom: 0,
       marginTop: 0,
     },
+    // 渲染库的列表容器 key 是 list / listUnordered / listOrdered，没有 bullet_list / ordered_list；
+    // 项目符号与序号在 listUnorderedItemIcon / listOrderedItemIcon。
     list: {
       marginBottom: 0,
       marginTop: 0,
@@ -131,7 +175,7 @@ export function createMarkdownStylePreset(
     // 细分隔线，替代渲染库默认的粗灰线
     hr: {
       height: 1,
-      backgroundColor: theme.colors.border.default,
+      backgroundColor: ruleColor,
       marginVertical: theme.spacing.sm,
     },
     listItem: {
@@ -150,17 +194,15 @@ export function createMarkdownStylePreset(
       flexWrap: 'wrap',
       flexShrink: 0,
     },
-    bullet_list: baseTextStyle,
-    ordered_list: baseTextStyle,
     table: {
       width: '100%',
       maxWidth: '100%',
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.default,
+      borderColor: ruleColor,
       marginBottom: 0,
     },
     tableHeader: {
-      backgroundColor: theme.colors.surface.muted,
+      backgroundColor: tableHeaderFill,
     },
     tableHeaderCell: {
       flex: 1,
@@ -168,13 +210,13 @@ export function createMarkdownStylePreset(
       paddingVertical: 4,
       paddingHorizontal: 6,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.default,
+      borderColor: ruleColor,
       fontWeight: '600' as const,
     },
     tableRow: {
       flexDirection: 'row',
       borderBottomWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.default,
+      borderColor: ruleColor,
     },
     tableRowCell: {
       flex: 1,
@@ -182,7 +224,7 @@ export function createMarkdownStylePreset(
       paddingVertical: 4,
       paddingHorizontal: 6,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.default,
+      borderColor: ruleColor,
     },
     strong: { ...baseTextStyle, fontWeight: '700' as const },
     em: { ...baseTextStyle, fontStyle: 'italic' as const },
@@ -204,22 +246,25 @@ export function createMarkdownStylePreset(
     heading2Container: {},
     link: {
       ...baseTextStyle,
-      color: usesUserBubbleColors ? theme.colors.brand.onPrimary : theme.colors.brand.primary,
+      color: linkColor,
       textDecorationLine: 'underline',
     },
     blockquote: {
       ...baseTextStyle,
-      color: usesUserBubbleColors ? theme.colors.brand.onPrimary : theme.colors.text.secondary,
-      borderLeftColor: usesUserBubbleColors ? theme.colors.brand.onPrimary : theme.colors.border.default,
+      color: quoteColor,
+      borderLeftColor: customBackground
+        ? ruleColor
+        : (usesUserBubbleColors ? theme.colors.brand.onPrimary : theme.colors.border.default),
       borderLeftWidth: 3,
       paddingLeft: 8,
       marginLeft: 0,
       marginBottom: 0,
     },
+    // 代码只保留等宽与留白等语义，不在 DIY 背景上铺色块。
     codeInline: {
       ...baseTextStyle,
       fontFamily: 'monospace',
-      backgroundColor: usesUserBubbleColors ? userCodeBackground : theme.colors.surface.muted,
+      backgroundColor: codeInlineFill,
       paddingHorizontal: 4,
       paddingVertical: 2,
       borderRadius: theme.radius.sm,
@@ -228,15 +273,14 @@ export function createMarkdownStylePreset(
       fontFamily: 'monospace',
       fontSize: 14,
       lineHeight: 20,
-      color: usesUserBubbleColors && theme.effects.glass.enabled
-        ? theme.colors.brand.onPrimary
-        : theme.colors.text.primary,
-      backgroundColor: usesUserBubbleColors ? userCodeBackground : theme.colors.background.screen,
+      color: codeBlockColor,
+      backgroundColor: codeBlockFill,
       padding: theme.spacing.sm,
       borderRadius: theme.radius.md,
       marginBottom: 0,
       width: 200,
     },
+    ...customBackgroundOverrides,
   };
 }
 

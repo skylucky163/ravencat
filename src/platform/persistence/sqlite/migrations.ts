@@ -1,8 +1,10 @@
+import { detachDedicatedModelServices, migrateModelServices, removeRetiredDedicatedServiceCopies } from './modelServiceSchema';
 /** 当前数据库基线与之后的增量升级；开源前开发库不再重放历史迁移。 */
 import type { DatabaseWriteExecutor } from '../runtime';
 import { SCHEMAS, INDEXES } from './schema';
+import { migrateChatBubbleSkinPresets, migrateChatBubbleSkinOwnership } from './chatBubbleSkinPresetMigration';
 import { DEFAULT_RECORDS_SQL } from './defaultRecords';
-import { migrateMemoryTriggerGroups } from './memoryV3Schema';
+import { migrateMemoryTriggerGroups, migrateMemoryEmbeddingVectorSnapshot } from './memoryV3Schema';
 import { migrateSecondaryChatSummary, migrateFixedChatContext, migrateChatSummaryModels, migrateChatSummaryPrimaryLimit, migrateChatSummaryWorkQueue } from './chatSummarySchema';
 import { migrateStickerOwnership } from './stickerOwnershipMigration';
 import { migrateApplicationSettingsTools } from './applicationSettingsMigration';
@@ -12,9 +14,10 @@ import { migrateChatTurnPublication, migrateChatTurnDisplayReadState } from './c
 import { migrateGroupMembership } from './groupMembershipSchema';
 import { migrateMomentAnalysisErrorMessage } from './momentsSchema';
 import { migrateAIScheduleContext } from './ravenCatCompanionSchema';
+import { migrateStickerEmbeddingIndexControl, migrateStickerRecognitionPolicy } from './stickerSchema';
 
-/** 150 增加联网连接方式，已有配置默认保持直连。 */
-export const DATABASE_SCHEMA_VERSION = 150;
+/** 166 将主页封面工具更名为个人空间封面工具，保留已有授权与特批。167 移除已退出运行契约的辅助模型 enabled 物理列。 */
+export const DATABASE_SCHEMA_VERSION = 167;
 /** 114/115 是旧代码里的迁移编号；已发布数据库实际停在 user_version=108。 */
 const PUBLIC_RELEASE_VERSION = 108;
 
@@ -58,14 +61,14 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
     }
     return;
   }
-  if (version !== 0 && version !== PUBLIC_RELEASE_VERSION && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149) {
+  if (version !== 0 && version !== PUBLIC_RELEASE_VERSION && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166) {
     throw new Error(`数据库版本 ${version} 不受当前版本支持，请使用匹配的 RavenCat 版本。`);
   }
   const tables = await db.getAllAsync<{ name: string }>(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'android_metadata'",
   );
   const fresh = tables.length === 0;
-  if (!fresh && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149) {
+  if (!fresh && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166) {
     // 在任何 DDL/default 写入之前检查；失败不修改旧库。
     await assertPublicReleaseSchema(db);
     const retiredTables = new Set(['raven_cat_self_wakes', 'capability_bindings', 'assistant_capability_bindings', 'memory_entries']);
@@ -90,6 +93,14 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
     // 工具包暴露只是临时选择，不兼容旧三轮状态；重建空表，其他业务资料保持不变。
     if (!fresh && version < 127) await db.execAsync('DROP TABLE IF EXISTS chat_tool_package_exposure;');
     for (const sql of Object.values(SCHEMAS)) await db.execAsync(sql);
+    if (!fresh && version < 162) await migrateStickerEmbeddingIndexControl(db);
+    if (!fresh && version < 163) await migrateStickerRecognitionPolicy(db);
+    if (!fresh && version < 164) await migrateMemoryEmbeddingVectorSnapshot(db);
+    if (!fresh && version < 154) await migrateChatBubbleSkinPresets(db, version);
+    if (!fresh && version === 154) await migrateChatBubbleSkinOwnership(db);
+    if (!fresh && version < 156) await db.execAsync(`UPDATE chat_bubble_presets
+      SET config_json = json_set(config_json, '$.textColor', CASE role WHEN 'user' THEN '#FFFFFF' ELSE '#1C1C1E' END)
+      WHERE json_extract(config_json, '$.textColor') IS NULL;`);
     if (!fresh && version < 148) await migrateChatTurnDisplayReadState(db);
     if (!fresh) await migrateChatTurnObservability(db);
     if (!fresh) await migrateChatTurnPublication(db);
@@ -115,8 +126,43 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
         await db.execAsync("ALTER TABLE web_search_settings ADD COLUMN connection_mode TEXT NOT NULL DEFAULT 'direct' CHECK (connection_mode IN ('direct', 'system'));");
       }
     }
+    if (!fresh && version < 152) {
+      const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(memory_model_settings)');
+      if (!columns.some(column => column.name === 'embedding_enabled')) {
+        await db.execAsync('ALTER TABLE memory_model_settings ADD COLUMN embedding_enabled INTEGER NOT NULL DEFAULT 0 CHECK (embedding_enabled IN (0, 1));');
+        // 已有安装按原实际选择保留启用状态，新安装默认关闭。
+        await db.execAsync('UPDATE memory_model_settings SET embedding_enabled = CASE WHEN embedding_model_config_id IS NULL THEN 0 ELSE 1 END;');
+      }
+    }
+    if (!fresh && version < 157) await migrateModelServices(db);
+    if (!fresh && version < 158) await detachDedicatedModelServices(db);
+    if (!fresh && version < 159) await removeRetiredDedicatedServiceCopies(db);
+    if (!fresh && version < 167) {
+      const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(auxiliary_model_configs)');
+      if (columns.some(column => column.name === 'enabled')) {
+        // 只退役旧启停字段；其他资产字段与服务引用保持不变。
+        await db.execAsync(`DROP INDEX IF EXISTS idx_auxiliary_model_configs_enabled;
+          ALTER TABLE auxiliary_model_configs DROP COLUMN enabled;`);
+      }
+    }
+    if (!fresh && version < 160) {
+      // 旧版本可能因模型切换排入整库任务；升级只保留数据，不继续执行这份隐含授权。
+      await db.execAsync(`UPDATE memory_item_embeddings SET
+        status = CASE WHEN status IN ('pending','stale','retry_wait') THEN 'not_requested' ELSE status END,
+        claim_id = NULL, claim_expires_at = NULL;
+        UPDATE sticker_embedding_index_control SET
+          published_model_id = (SELECT embedding_model_config_id FROM sticker_system_config WHERE id = 'global'),
+          published_model_updated_at = (SELECT m.updated_at FROM auxiliary_model_configs m
+            JOIN sticker_system_config c ON c.embedding_model_config_id = m.id WHERE c.id = 'global')
+        WHERE id = 1 AND EXISTS (SELECT 1 FROM stickers WHERE owner_assistant_id IS NULL AND annotation_status = 'ready')
+          AND EXISTS (SELECT 1 FROM auxiliary_model_configs m JOIN sticker_system_config c ON c.embedding_model_config_id = m.id
+            WHERE c.id = 'global' AND m.capability_kind = 'embedding' AND NOT EXISTS (
+              SELECT 1 FROM stickers s LEFT JOIN sticker_embeddings e ON e.sticker_id = s.id
+                AND e.model_config_id = m.id AND e.model_config_updated_at = m.updated_at AND e.semantic_revision = s.semantic_revision
+              WHERE s.owner_assistant_id IS NULL AND s.annotation_status = 'ready' AND e.sticker_id IS NULL));`);
+    }
     if (!fresh) await migrateApplicationSettingsTools(db);
-    if (!fresh && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149) {
+    if (!fresh && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166) {
       // 纳入公开版115的定向修复：只清理无有效主体的 MCP 授权，正常授权原样保留。
       await db.execAsync(`
         DELETE FROM mcp_server_assistants

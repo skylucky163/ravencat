@@ -4,7 +4,6 @@ import { showAppDialog } from '@shared/ui';
 import { useState, useCallback, useMemo } from 'react';
 
 import { createAIAssistant } from '../../AIAssistantManagement';
-import type { ModelCallConfig } from '../../domain/ModelCallConfig';
 import {
   buildNewAI,
   getAddAIFormError,
@@ -29,24 +28,16 @@ interface UseAddAIFormStateResult {
   setSystemPrompt: (prompt: string) => void;
   currentStep: number;
   handleSave: () => Promise<void>;
-  modelParams: Pick<ModelCallConfig, 'temperature' | 'topP' | 'maxTokens'> | undefined;
-  fillModelConfig: (config: ModelCallConfig) => void;
+  fillServiceConnection(service: { id: string; baseUrl: string; apiKey: string }): void;
 }
 
 export default function useAddAIFormState({ onAdded, onBack }: UseAddAIFormStateOptions): UseAddAIFormStateResult {
+  const [serviceConfigId, setServiceConfigId] = useState('');
   const [name, setName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [apiBaseUrl, setApiBaseUrl] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
-  const [modelParams, setModelParams] = useState<Pick<ModelCallConfig, 'temperature' | 'topP' | 'maxTokens'>>();
-  const fillModelConfig = (config: ModelCallConfig) => {
-    setApiBaseUrl(config.apiBaseUrl);
-    setApiKey(config.apiKey);
-    setSelectedModel(config.model);
-    setModelParams({ temperature: config.temperature, topP: config.topP, maxTokens: config.maxTokens });
-  };
-
   const currentStep = useMemo(() => getCurrentAddAIStep({
     apiBaseUrl,
     apiKey,
@@ -68,12 +59,12 @@ export default function useAddAIFormState({ onAdded, onBack }: UseAddAIFormState
 
     try {
       const newAI = buildNewAI({
+        serviceConfigId: serviceConfigId || null,
         name,
         selectedModel,
         apiKey,
         apiBaseUrl,
         systemPrompt,
-        modelParams,
       });
 
       await createAIAssistant(newAI);
@@ -84,24 +75,24 @@ export default function useAddAIFormState({ onAdded, onBack }: UseAddAIFormState
       showAppDialog({ title: '添加失败', message: '无法保存 AI 助手，请稍后重试。', tone: 'error' });
     }
   }, [
+    serviceConfigId,
     name,
     apiBaseUrl,
     apiKey,
     selectedModel,
     systemPrompt,
-    modelParams,
     onAdded,
     onBack,
   ]);
 
   return {
-    modelParams, fillModelConfig,
+    fillServiceConnection: service => { setServiceConfigId(service.id); setApiBaseUrl(service.baseUrl); setApiKey(service.apiKey); },
     name,
     setName,
     apiKey,
-    setApiKey,
+    setApiKey: value => { setApiKey(value); setServiceConfigId(''); },
     apiBaseUrl,
-    setApiBaseUrl,
+    setApiBaseUrl: value => { setApiBaseUrl(value); setServiceConfigId(''); },
     selectedModel,
     setSelectedModel,
     systemPrompt,

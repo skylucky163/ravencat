@@ -32,6 +32,7 @@ import {
   dismissConversationNotifications,
   initializeNotifications,
   getMessageArrivalSnapshot,
+  reconcileBackgroundRuntime,
   type AppNotificationData,
 } from '@platform/device';
 import {
@@ -86,6 +87,7 @@ import {
 } from '@shared/runtime/ConversationListReadySignal';
 import { cancelActiveHostAgentRunsForReset, resumeHostAgentRunsAfterReset } from './composition/agent';
 import HostErrorBoundary from './shell/HostErrorBoundary';
+import MomentSharingBoundary from './navigation/MomentSharingBoundary';
 import { ApplicationUpdateProvider } from './shell/ApplicationUpdateProvider';
 import {
   drainAndCancelAIScheduleProjectionRepair,
@@ -270,6 +272,18 @@ function HostLifecycle({
   const pendingNotificationNavigationRef = useRef<ExternalNavigationTarget | null>(null);
   const processingExternalNavigationRef = useRef(false);
   const resettingApplicationDataRef = useRef(false);
+
+  useEffect(() => {
+    const reconcile = () => {
+      if (AppState.currentState !== 'active' || resettingApplicationDataRef.current) return;
+      void reconcileBackgroundRuntime().catch((error: unknown) => {
+        console.warn('[Host] 持续后台运行未建立，可在权限与后台运行中查看状态', error);
+      });
+    };
+    reconcile();
+    const subscription = AppState.addEventListener('change', reconcile);
+    return () => subscription.remove();
+  }, []);
   const activeHostTasksRef = useRef(new Set<Promise<unknown>>());
 
   const trackHostTask = useCallback(<T,>(task: Promise<T>): Promise<T> => {
@@ -568,7 +582,7 @@ function HostLifecycle({
     void trackHostTask(initializeStickerAnnotationQueue().then(() => {
       // 模型变更由各 Feature 的提交后信号唤醒；生命周期只负责启动和回前台。
       requestStickerAnnotationRun();
-      // 冷启动 / 回前台时补齐缺失向量；未配置模型时静默待机。
+      // 只维护已由用户建立的当前索引；新模型不会在冷启动／回前台时偷偷重建。
       requestStickerEmbeddingRun();
     }).catch((error) => {
       console.warn('[Sticker] 初始化前台标注队列失败：', error);
@@ -1453,9 +1467,6 @@ function HostLifecycle({
             search: 'search',
             menu: 'menu',
             protocol: 'protocol',
-            modelSettings: 'model-settings',
-            chatSettings: 'chat-settings',
-            summary: 'summary',
             statistics: 'statistics',
             callHistory: 'call-history',
             filePreview: 'file-preview',
@@ -1481,7 +1492,7 @@ function HostLifecycle({
           >
             <View style={styles.content}>
               <ApplicationUpdateProvider enabled={dbReady && appState === 'active'}>
-                {children}
+                <MomentSharingBoundary>{children}</MomentSharingBoundary>
               </ApplicationUpdateProvider>
             </View>
 

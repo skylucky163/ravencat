@@ -79,11 +79,12 @@ function load(relative, dependencies = {}) {
   return module.exports;
 }
 const { runMigrations } = load('src/platform/persistence/sqlite/migrations.ts');
-const { migrateMemoryV3, migrateMemorySummary, migrateMemoryTriggerGroups } = load('src/platform/persistence/sqlite/memoryV3Schema.ts');
+const { migrateMemoryV3, migrateMemorySummary, migrateMemoryTriggerGroups, migrateMemoryEmbeddingVectorSnapshot } = load('src/platform/persistence/sqlite/memoryV3Schema.ts');
 const domain = load('src/features/memory/domain/Memory.ts');
 const { memoryEntryRepository: repository } = load('src/features/memory/infrastructure/SQLiteMemoryEntryRepository.ts');
 const runtime = load('src/features/memory/application/MemoryRuntimeDependencies.ts');
 const commands = load('src/features/memory/application/MemoryCommands.ts');
+const embeddingModels = load('src/features/memory/application/MemoryEmbeddingModels.ts');
 const recall = load('src/features/memory/application/RecallMemory.ts');
 const worker = load('src/features/memory/application/MemoryEmbeddingWorker.ts');
 const { SQLiteChatSummaryRepository } = load('src/features/chat/summary/infrastructure/SQLiteChatSummaryRepository.ts');
@@ -114,7 +115,11 @@ runtime.configureMemoryRuntimeDependencies({
   repository, listMemorySpaces: async () => [],
   resolveMemorySpace: async (id) => ({ poolId: id === 'a' ? 'pool-a' : 'pool-b', assistantId: id }),
   resolveEmbeddingModel: async () => currentModel,
+  clearEmbeddings: async () => repository.clearEmbeddings(await runtime.getMemoryRuntimeDependencies().resolveEmbeddingModel()),
+  setEmbeddingEnabled: enabled => repository.setEmbeddingEnabled(enabled),
+  selectEmbeddingModel: id => repository.setEmbeddingModelId(id),
   embed: (...args) => embedding(...args),
+  withEmbeddingMaintenance: (operation, signal) => operation(signal ?? new AbortController().signal),
 });
 async function bootstrap() {
   const log = console.log; const warn = console.warn;
@@ -127,14 +132,164 @@ async function bootstrap() {
 async function create(id, content, time = now, poolId = 'pool-a', writeKey = null) {
   return repository.createEntry({ id, poolId, content, summary: null, normalizedContent: domain.normalizeMemoryText(content), now: time, writeKey });
 }
+const requestEntryEmbedding = async (poolId, memoryId) => repository.retryEmbedding(poolId, memoryId, await repository.getEmbeddingIndexRevision());
+const syncMemoryModel = async model => repository.syncEmbeddingModel(model, await repository.getEmbeddingIndexRevision());
 async function claim(id = randomUUID(), time = now) {
-  return repository.claimEmbedding(currentModel.fingerprint, id, time, later);
+  return repository.claimEmbedding(currentModel.fingerprint, id, time, later, await repository.getEmbeddingIndexRevision());
 }
 function addMessage(id, content, role = 'user', timestamp = now, runId = null, index = null) {
   database.prepare(`INSERT INTO messages (id, session_id, text, is_me, sender_type, created_at, time, status, turn_run_id, turn_item_index)
     VALUES (?, 'conversation', ?, ?, ?, ?, ?, 'sent', ?, ?)`).run(id, content, role === 'user' ? 1 : 0, role, timestamp, timestamp, runId, index);
 }
 try {
+  // 宿主只在交互空闲后启动一条任务；切换／清除先取消旧请求，后台停止调度。
+  {
+    const idleTasks = [];
+    const listeners = new Set();
+    const dialogs = [];
+    const dialogStore = load('src/shared/ui/appDialogStore.ts');
+    const signals = [];
+    const changes = [];
+    let finishRequest;
+    const pendingRequest = new Promise(resolve => { finishRequest = resolve; });
+    const emptyResult = { processed: false, nextWakeAt: null, failedMemoryId: null };
+    let processEmbedding = () => signals.length === 1 ? pendingRequest : Promise.resolve(emptyResult);
+    const queue = load('src/host/runtime/MemoryEmbeddingQueueCoordinator.ts', {
+      'react-native': { InteractionManager: { runAfterInteractions(callback) {
+        const task = { callback, cancelled: false, cancel() { this.cancelled = true; } };
+        idleTasks.push(task); return task;
+      } } },
+      '@shared/ui/appDialogStore': { showAppDialog: value => { dialogs.push(value); dialogStore.showAppDialog(value); } },
+      '@features/memory': { subscribeMemoryChanged: listener => { listeners.add(listener); return () => listeners.delete(listener); } },
+      '@features/memory/composition': {
+        emitMemoryChanged: () => { for (const listener of listeners) listener(); },
+        processNextMemoryEmbedding: signal => { signals.push(signal); return processEmbedding(signal); },
+      },
+    });
+    const runIdleTask = () => {
+      const index = idleTasks.findIndex(task => !task.cancelled);
+      assert.notEqual(index, -1);
+      idleTasks.splice(index, 1)[0].callback();
+    };
+    queue.configureMemoryEmbeddingQueue();
+    queue.setMemoryEmbeddingForegroundActive(true);
+    assert.equal(signals.length, 0, '进入前台不立即启动请求');
+    await queue.updateMemoryEmbeddingModel(async () => { changes.push('选择模型'); });
+    assert.equal(signals.length, 0, '选择模型不立即批量同步或重建');
+    runIdleTask();
+    assert.equal(signals.length, 1);
+    queue.requestMemoryEmbeddingRun();
+    assert.equal(idleTasks.filter(task => !task.cancelled).length, 0, '请求未结束时不并行启动第二条');
+    const clear = queue.updateMemoryEmbeddingModel(async () => { changes.push('清除向量'); });
+    assert.equal(signals[0].aborted, true);
+    assert.deepEqual(changes, ['选择模型'], '清除等待旧任务结束');
+    finishRequest(emptyResult);
+    await clear;
+    assert.deepEqual(changes, ['选择模型', '清除向量']);
+    assert.equal(signals.length, 1, '清除后继续等待交互空闲');
+    runIdleTask();
+    assert.equal(signals.length, 2);
+    await queue.stopMemoryEmbeddingQueueForReset();
+    queue.requestMemoryEmbeddingRun();
+    assert.equal(idleTasks.filter(task => !task.cancelled).length, 0, '离开前台后不继续派生任务');
+    assert.deepEqual(dialogs, []);
+
+    // 错误模型导致多条连续失败时，关闭一次即可退出提示，同轮后续失败不再打断。
+    const flushIdleTask = async () => { runIdleTask(); await new Promise(setImmediate); };
+    let failuresLeft = 20;
+    processEmbedding = async () => failuresLeft-- > 0
+      ? { processed: true, nextWakeAt: null, failedMemoryId: 'failed-' + failuresLeft }
+      : emptyResult;
+    queue.setMemoryEmbeddingForegroundActive(true);
+    await flushIdleTask();
+    assert.equal(dialogs.length, 1);
+    const firstFailure = dialogStore.getAppDialogSnapshot();
+    dialogStore.finishAppDialog(firstFailure, firstFailure.buttons[0]);
+    for (let index = 0; index < 20; index++) await flushIdleTask();
+    assert.equal(dialogs.length, 1, '关闭提示后，同一批剩余失败不能再次弹窗');
+    assert.equal(dialogStore.getAppDialogSnapshot(), null, '一次关闭后没有重复提示积压');
+
+    // 新一轮仍能报告失败；提示未关闭时，不因队列空闲、重新唤醒或模型刷新堆叠。
+    failuresLeft = 1;
+    queue.requestMemoryEmbeddingRun();
+    await flushIdleTask();
+    await flushIdleTask();
+    assert.equal(dialogs.length, 2);
+    for (let index = 0; index < 3; index++) {
+      failuresLeft = 1;
+      await queue.updateMemoryEmbeddingModel(async () => {});
+      await flushIdleTask();
+      await flushIdleTask();
+    }
+    assert.equal(dialogs.length, 2, '未关闭的失败提示只保留一份');
+    dialogStore.finishAppDialog(dialogStore.getAppDialogSnapshot());
+    assert.equal(dialogStore.getAppDialogSnapshot(), null, '返回键或遮罩关闭后也没有重复提示');
+    failuresLeft = 1;
+    queue.requestMemoryEmbeddingRun();
+    await flushIdleTask();
+    assert.equal(dialogs.length, 3, '提示关闭后，新一轮失败仍会通知');
+    const lastFailure = dialogStore.getAppDialogSnapshot();
+    dialogStore.finishAppDialog(lastFailure, lastFailure.buttons[0]);
+    await flushIdleTask();
+    let entered;
+    const maintenanceStarted = new Promise(resolve => { entered = resolve; });
+    let maintenanceSignal;
+    const maintenance = queue.updateMemoryEmbeddingModel(async signal => {
+      maintenanceSignal = signal; entered();
+      await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new Error('维护已取消')), { once: true }));
+    });
+    await maintenanceStarted;
+    const stopped = queue.stopMemoryEmbeddingQueueForReset();
+    await assert.rejects(maintenance, /维护已取消/);
+    await stopped;
+    assert.equal(maintenanceSignal.aborted, true, '重置必须取消并等待整批重建，不只停止自动任务');
+  }
+  {
+    const queue = load('src/host/runtime/StickerEmbeddingQueueCoordinator.ts', {
+      'react-native': { InteractionManager: { runAfterInteractions: () => ({ cancel() {} }) } },
+      '@features/assistants': { subscribeAuxiliaryModelsChanged: () => () => {} },
+      '@features/stickers': { subscribeStickerEmbeddingPending: () => () => {} },
+      '@features/stickers/composition': { syncStickerEmbeddingModel: async () => {} },
+    });
+    queue.configureStickerEmbeddingQueue();
+    queue.setStickerEmbeddingForegroundActive(true);
+    let entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    const maintenance = queue.updateStickerEmbeddingModel(async signal => {
+      entered();
+      await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new Error('表情维护已取消')), { once: true }));
+    });
+    await started;
+    const stopped = queue.stopStickerEmbeddingQueueForReset();
+    await assert.rejects(maintenance, /表情维护已取消/);
+    await stopped;
+  }
+  // 来源升级只接管可确认的旧就绪向量；不猜测旧失败任务留下的向量属于哪个版本。
+  {
+    const oldIndex = new DatabaseSync(':memory:');
+    oldIndex.exec(`CREATE TABLE memory_item_embeddings(memory_id TEXT PRIMARY KEY, content_revision INTEGER,
+      model_fingerprint TEXT, status TEXT, vector_json TEXT);
+      INSERT INTO memory_item_embeddings VALUES ('ready', 1, 'old-model', 'ready', '[1,0]'),
+        ('failed', 2, 'new-model', 'failed', '[1,0]'), ('stopped', 2, 'new-model', 'not_requested', '[1,0]');
+      CREATE TRIGGER reject_sources BEFORE UPDATE ON memory_item_embeddings BEGIN SELECT RAISE(ABORT, '来源迁移失败'); END;`);
+    const adapter = { execAsync: async sql => oldIndex.exec(sql), getAllAsync: async sql => oldIndex.prepare(sql).all() };
+    oldIndex.exec('BEGIN');
+    await assert.rejects(migrateMemoryEmbeddingVectorSnapshot(adapter), /来源迁移失败/);
+    oldIndex.exec('ROLLBACK');
+    assert.equal(oldIndex.prepare('PRAGMA table_info(memory_item_embeddings)').all().length, 5, '升级失败时新增列一并回滚');
+    oldIndex.exec('DROP TRIGGER reject_sources; BEGIN');
+    await migrateMemoryEmbeddingVectorSnapshot(adapter);
+    oldIndex.exec('COMMIT');
+    const sources = oldIndex.prepare('SELECT * FROM memory_item_embeddings ORDER BY memory_id').all();
+    assert.equal(sources.find(row => row.memory_id === 'ready').vector_model_fingerprint, 'old-model');
+    assert.equal(sources.find(row => row.memory_id === 'ready').vector_content_revision, 1);
+    assert.ok(sources.filter(row => row.memory_id !== 'ready').every(row => row.vector_model_fingerprint === null && row.vector_content_revision === null));
+    assert.ok(sources.every(row => row.vector_json === '[1,0]'), '来源不明的旧向量仍保留原数据');
+    await migrateMemoryEmbeddingVectorSnapshot(adapter);
+    assert.deepEqual(oldIndex.prepare('SELECT * FROM memory_item_embeddings ORDER BY memory_id').all(), sources);
+    oldIndex.close();
+  }
+
   // 从真实旧列结构升级，失败时列与版本一起回滚；旧向量无需重建。
   const legacyMemory = new DatabaseSync(':memory:');
   try {
@@ -222,6 +377,13 @@ try {
     for (let i = 1; i < 12; i++) await commands.forgetMemory('a', `galaxy-${i}`);
     await commands.forgetMemory('b', 'galaxy-foreign');
     assert.deepEqual(await counts(), [0, 0]);
+    let changes = 0;
+    const unsubscribe = load('src/features/memory/application/MemorySignals.ts').subscribeMemoryChanged(() => { changes++; });
+    await commands.selectMemorySpace('b');
+    assert.equal((await queries.getMemoryManagementSnapshot()).selectedSpace.assistantId, 'b', '选择偏好仍然持久化');
+    assert.equal(changes, 0, '选择空间不广播正文变化，不应唤醒向量任务');
+    await commands.selectMemorySpace('a');
+    unsubscribe();
     runtime.configureMemoryRuntimeDependencies(dependencies);
   }
   assert.equal(domain.requireMemoryContent('  ' + '猫'.repeat(500) + '  ').length, 500);
@@ -236,6 +398,7 @@ try {
   assert.equal(domain.countMemoryKeywordMatches({ content: '正文', summary: '摘要' }, ['摘要\n正文']), 0);
   assert.equal(domain.normalizeMemoryText('ＡＢＣ'), 'abc');
   const saved = await commands.rememberMemory('a', '枫渡喜欢猫', 'run:tool');
+  assert.equal(saved.embeddingStatus, 'not_requested', '未配置向量模型仍正常保存记忆');
   assert.equal((await commands.rememberMemory('a', '重复调用不能改正文', 'run:tool')).id, saved.id);
   await assert.rejects(commands.editMemory('b', saved.id, '越界'), domain.MemoryNotFoundError);
   assert.equal(await commands.forgetMemory('b', saved.id), false);
@@ -351,11 +514,13 @@ try {
   const nativeContext = { task: { assistantId: 'a' }, runId: 'native-run', toolCallId: 'save-1', abortSignal: signal };
   const nativeSaved = await nativeTools.RememberMemoryTool.execute({ content: '工具主动保存的正文' }, nativeContext);
   assert.equal(nativeSaved.status, 'success');
+  assert.equal(nativeSaved.data.embeddingStatus, 'not_requested');
   assert.equal(nativeSaved.data.poolId, 'pool-a');
   assert.equal((await nativeTools.RememberMemoryTool.execute({ content: '不能重复写入' }, nativeContext)).data.id, nativeSaved.data.id);
   assert.equal((await nativeTools.RememberMemoryTool.execute({ content: '猫'.repeat(501) }, { ...nativeContext, toolCallId: 'save-2' })).status, 'error');
   const nativeUpdated = await nativeTools.UpdateMemoryTool.execute({ memoryId: nativeSaved.data.id, content: '工具更新后的完整正文' }, { ...nativeContext, toolCallId: 'update-1' });
   assert.equal(nativeUpdated.status, 'success');
+  assert.equal(nativeUpdated.data.embeddingStatus, 'not_requested');
   assert.equal(nativeUpdated.data.id, nativeSaved.data.id);
   assert.equal(nativeUpdated.data.content, '工具更新后的完整正文');
   assert.equal(nativeUpdated.data.rememberedAt, nativeSaved.data.rememberedAt);
@@ -384,8 +549,100 @@ try {
   assert.ok(unavailable.semanticUnavailable);
   await assert.rejects(recall.recallMemoryForRun('a', 'empty', {}, signal), domain.MemoryInputError);
 
+  // 开关、模型选择与清除互相独立，正文与两种字面召回不依赖向量模型。
+  {
+    const dependencies = runtime.getMemoryRuntimeDependencies();
+    const previousEmbedding = embedding;
+    const previousSettings = await repository.getRecallSettings('pool-a');
+    await commands.setMemoryRecallSettings('a', { ...previousSettings, passiveLimit: 5 });
+    let embeddingCalls = 0;
+    embedding = async () => { embeddingCalls++; return [1, 0]; };
+    runtime.configureMemoryRuntimeDependencies({ ...dependencies,
+      resolveEmbeddingModel: async () => {
+        const settings = await repository.getEmbeddingSettings();
+        return settings.enabled && settings.modelConfigId === modelA.id ? modelA : null;
+      },
+    });
+    await embeddingModels.selectMemoryEmbeddingModel(modelA.id);
+    assert.deepEqual(await repository.getEmbeddingSettings(), { enabled: false, modelConfigId: modelA.id }, '关闭时可选择模型，选择不自动开启');
+    assert.equal(await runtime.getMemoryRuntimeDependencies().resolveEmbeddingModel(), null);
+    await embeddingModels.setMemoryEmbeddingEnabled(true);
+    await syncMemoryModel(modelA);
+    assert.equal(await repository.claimEmbedding(modelA.fingerprint, 'no-implicit-rebuild', now, later, await repository.getEmbeddingIndexRevision()), null, '首次开启不自动重建历史记忆');
+    for (const entry of await repository.listEntries('pool-a')) await requestEntryEmbedding('pool-a', entry.id);
+    const inFlight = await repository.claimEmbedding(modelA.fingerprint, 'before-disable', now, later, await repository.getEmbeddingIndexRevision());
+    assert.ok(inFlight);
+    const indexed = await repository.claimEmbedding(modelA.fingerprint, 'indexed', now, later, await repository.getEmbeddingIndexRevision());
+    assert.equal(await repository.completeEmbedding(indexed, [1, 0]), 'accepted');
+    const beforeDisable = await repository.getEntry('pool-a', inFlight.memoryId);
+    await embeddingModels.setMemoryEmbeddingEnabled(false);
+    await syncMemoryModel(null);
+    assert.equal(await repository.completeEmbedding(inFlight, [1, 0]), 'discarded');
+    assert.equal((await repository.getEntry('pool-a', inFlight.memoryId)).content, beforeDisable.content);
+    assert.equal(database.prepare('SELECT vector_json FROM memory_item_embeddings WHERE memory_id = ?').get(indexed.memoryId).vector_json, '[1,0]', '普通关闭保留已有向量');
+    assert.deepEqual((await repository.readRecallCandidates('pool-a', modelA.fingerprint, 2)).vectors, []);
+    assert.deepEqual(await repository.getEmbeddingSettings(), { enabled: false, modelConfigId: modelA.id }, '关闭保留模型选择');
+    await embeddingModels.setMemoryEmbeddingEnabled(true);
+    await syncMemoryModel(modelA);
+    await requestEntryEmbedding('pool-a', inFlight.memoryId);
+    const beforeClear = await repository.claimEmbedding(modelA.fingerprint, 'before-clear', now, later, await repository.getEmbeddingIndexRevision());
+    const retainedTables = ['memory_items', 'memory_trigger_groups', 'memory_trigger_keywords', 'memory_passive_associations', 'memory_passive_disabled', 'memory_recall_settings'];
+    const retained = retainedTables.map(table => database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+    const vectorsBeforeClear = database.prepare('SELECT * FROM memory_item_embeddings ORDER BY rowid').all();
+    database.exec("CREATE TRIGGER reject_vector_clear BEFORE UPDATE OF vector_json ON memory_item_embeddings WHEN NEW.vector_json IS NULL BEGIN SELECT RAISE(ABORT, '模拟向量清除失败'); END;");
+    await assert.rejects(embeddingModels.clearMemoryEmbeddings(), /模拟向量清除失败/);
+    assert.deepEqual(await repository.getEmbeddingSettings(), { enabled: true, modelConfigId: modelA.id });
+    assert.deepEqual(database.prepare('SELECT * FROM memory_item_embeddings ORDER BY rowid').all(), vectorsBeforeClear);
+    database.exec('DROP TRIGGER reject_vector_clear');
+    await embeddingModels.clearMemoryEmbeddings();
+    assert.deepEqual(await repository.getEmbeddingSettings(), { enabled: true, modelConfigId: modelA.id }, '清除保留开关与模型');
+    assert.deepEqual(retainedTables.map(table => database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), retained, '清除只删除派生向量，不改变所有空间的正文、摘要、关系与召回设置');
+    const cleared = database.prepare('SELECT * FROM memory_item_embeddings').all();
+    assert.ok(cleared.every(row => row.vector_json === null && row.dimension === null && row.vector_model_fingerprint === null && row.vector_content_revision === null && row.model_fingerprint === modelA.fingerprint && row.model_name === modelA.name
+      && row.status === 'not_requested' && row.claim_id === null && row.claim_expires_at === null && row.attempts === 0 && row.retry_at === null && row.last_error === null && row.failed_at === null));
+    assert.equal(await repository.completeEmbedding(beforeClear, [1, 0]), 'discarded', '清除后旧请求不能重新写入向量');
+    assert.deepEqual(await worker.processNextMemoryEmbedding(signal), { processed: false, nextWakeAt: null, failedMemoryId: null });
+    assert.equal(embeddingCalls, 0, '开启时清除也不会立即重建');
+    await syncMemoryModel(modelB);
+    const rebuiltCandidates = await repository.listEntries('pool-a');
+    assert.ok(rebuiltCandidates.every(entry => entry.embeddingStatus === 'not_requested'), '切换模型不会重新排队历史记忆');
+    assert.ok((await repository.listEntries('pool-b')).every(entry => entry.embeddingStatus === 'not_requested'), '其他空间也必须等待明确重建');
+    await embeddingModels.setMemoryEmbeddingEnabled(false);
+    await syncMemoryModel(null);
+    await embeddingModels.clearMemoryEmbeddings();
+    assert.deepEqual(await repository.getEmbeddingSettings(), { enabled: false, modelConfigId: modelA.id }, '关闭时也可清除，不改变模型');
+    const plain = await commands.rememberMemory('a', '关闭后保存的正文', null, '可选向量测试');
+    assert.equal(plain.embeddingStatus, 'not_requested');
+    const edited = await commands.editMemory('a', plain.id, '关闭后修改的正文');
+    assert.equal(edited.embeddingStatus, 'not_requested');
+    const triggerId = await commands.addMemoryTrigger('a', '无模型触发', [plain.id]);
+    assert.deepEqual((await repository.recallPassive('pool-a', '无模型触发')).map(entry => entry.id), [plain.id]);
+    const page = await recall.recallMemoryForRun('a', 'disabled-vector', { query: '相关内容', keywords: ['可选向量测试'] }, signal);
+    assert.deepEqual(page.entries.map(entry => entry.id), [plain.id]);
+    assert.ok(page.semanticUnavailable);
+    assert.deepEqual(await worker.processNextMemoryEmbedding(signal), { processed: false, nextWakeAt: null, failedMemoryId: null });
+    assert.equal(embeddingCalls, 0, '关闭后记录、编辑、检索与队列均不请求向量模型');
+    await bootstrap();
+    assert.deepEqual(await repository.getEmbeddingSettings(), { enabled: false, modelConfigId: modelA.id }, '再次启动保留关闭状态与模型选择');
+    assert.equal((await repository.getEntry('pool-a', plain.id)).content, edited.content);
+    await embeddingModels.setMemoryEmbeddingEnabled(true);
+    await syncMemoryModel(modelA);
+    assert.equal((await repository.getEntry('pool-a', plain.id)).embeddingStatus, 'not_requested', '重新开启不自动补建关闭期间的记忆');
+    assert.equal(await repository.completeEmbedding(beforeClear, [1, 0]), 'discarded', '重新开启相同模型也不能接受清除前的旧 claim');
+    await commands.deleteMemoryTrigger('a', triggerId);
+    await commands.forgetMemory('a', plain.id);
+    recall.releaseMemoryRecallRun('disabled-vector');
+    await repository.setEmbeddingModelId(null);
+    await repository.setEmbeddingEnabled(false);
+    await syncMemoryModel(null);
+    await repository.setRecallSettings('pool-a', previousSettings);
+    runtime.configureMemoryRuntimeDependencies(dependencies);
+    embedding = previousEmbedding;
+  }
+
   currentModel = modelA;
-  await repository.syncEmbeddingModel(modelA);
+  await syncMemoryModel(modelA);
+  for (const poolId of ['pool-a', 'pool-b']) for (const entry of await repository.listEntries(poolId)) await requestEntryEmbedding(poolId, entry.id);
   const vectorUpdated = await nativeTools.UpdateMemoryTool.execute({ memoryId: nativeSaved.data.id, content: '启用向量后更新正文' }, { ...nativeContext, toolCallId: 'update-2' });
   assert.equal(vectorUpdated.status, 'success');
   assert.equal(vectorUpdated.data.embeddingStatus, 'pending');
@@ -405,8 +662,9 @@ try {
   await repository.deleteEntry('pool-a', deletedClaim.memoryId);
   assert.equal(await repository.completeEmbedding(deletedClaim, [1, 0]), 'discarded');
   const modelClaim = await claim();
-  currentModel = modelB; await repository.syncEmbeddingModel(modelB);
+  currentModel = modelB; await syncMemoryModel(modelB);
   assert.equal(await repository.completeEmbedding(modelClaim, [1, 0]), 'discarded');
+  for (const poolId of ['pool-a', 'pool-b']) for (const entry of await repository.listEntries(poolId)) await requestEntryEmbedding(poolId, entry.id);
   const failing = await claim();
   for (let attempt = 0; attempt < 3; attempt++) {
     const task = attempt === 0 ? failing : await claim('retry-' + attempt, later);
@@ -414,9 +672,9 @@ try {
     assert.equal(await repository.failEmbedding(task, '网络不可用', false, now, now), true);
   }
   assert.equal((await repository.getEntry('pool-a', failing.memoryId)).embeddingStatus, 'failed');
-  await repository.syncEmbeddingModel(modelB);
+  await syncMemoryModel(modelB);
   assert.equal(database.prepare('SELECT attempts FROM memory_item_embeddings WHERE memory_id = ?').get(failing.memoryId).attempts, 3);
-  await repository.retryEmbedding('pool-a', failing.memoryId);
+  await requestEntryEmbedding('pool-a', failing.memoryId);
   const cancelled = await claim();
   await repository.releaseEmbedding(cancelled);
   assert.equal(database.prepare('SELECT attempts FROM memory_item_embeddings WHERE memory_id = ?').get(cancelled.memoryId).attempts, 0);
@@ -427,9 +685,11 @@ try {
   await repository.releaseEmbedding(mismatch);
   await assert.rejects(repository.readRecallCandidates('pool-a', modelB.fingerprint, 3), domain.MemoryVectorDimensionError);
   // Worker 的第三次失败与手动重试、取消按真实持久任务执行。
-  await repository.syncEmbeddingModel(null);
+  await syncMemoryModel(null);
   database.prepare("DELETE FROM memory_items WHERE id <> 'vector-only'").run();
   currentModel = modelA;
+  await syncMemoryModel(modelA);
+  await commands.retryMemoryEmbedding('a', 'vector-only');
   embedding = async () => { throw new runtime.MemoryEmbeddingError('网络不可用', false); };
   for (let attempt = 0; attempt < 3; attempt++) {
     const result = await worker.processNextMemoryEmbedding(signal);
@@ -446,12 +706,157 @@ try {
   assert.deepEqual(semantic.entries.map((item) => item.id), ['lexical', 'vector-only']);
   assert.equal(semantic.semanticUnavailable, null);
 
+  // 全量重建不逐条覆盖；失败、取消、发布中 SQL 错误和过期快照都保留原向量。
+  {
+    const vectorRows = () => database.prepare('SELECT memory_id, vector_json, dimension, vector_model_fingerprint, vector_content_revision FROM memory_item_embeddings ORDER BY memory_id').all();
+    const oldVectors = vectorRows();
+    database.exec('ALTER TABLE memory_item_embeddings DROP COLUMN vector_model_fingerprint; ALTER TABLE memory_item_embeddings DROP COLUMN vector_content_revision; PRAGMA user_version = 163');
+    await bootstrap();
+    assert.deepEqual(vectorRows(), oldVectors, '164 正式升级入口为旧就绪向量补齐来源，不重建、不改写向量');
+    database.exec('DROP TABLE memory_embedding_index_control; PRAGMA user_version = 159');
+    await bootstrap();
+    assert.deepEqual(vectorRows(), oldVectors, '160 升级保留已有向量及模型信息');
+    assert.equal((await worker.processNextMemoryEmbedding(signal)).processed, false, '升级不继承旧版本隐式排入的整库重建');
+    let calls = 0;
+    embedding = async () => { calls++; if (calls === 2) throw new runtime.MemoryEmbeddingError('模拟重建网络失败', true); return [0, 1]; };
+    await assert.rejects(embeddingModels.rebuildMemoryEmbeddingIndex(signal, () => {}), /模拟重建网络失败/);
+    assert.deepEqual(vectorRows(), oldVectors, '生成一部分后失败也不能提前覆盖旧向量');
+
+    const cancelledBuild = new AbortController();
+    embedding = async () => { cancelledBuild.abort(); return [0, 1]; };
+    await assert.rejects(embeddingModels.rebuildMemoryEmbeddingIndex(cancelledBuild.signal, () => {}));
+    assert.deepEqual(vectorRows(), oldVectors, '模型忽略取消并返回时，发布仍被取消 fence 拦住');
+
+    embedding = async () => [0, 1];
+    database.exec("CREATE TRIGGER reject_index_publish BEFORE UPDATE OF vector_json ON memory_item_embeddings WHEN OLD.memory_id = 'vector-only' BEGIN SELECT RAISE(ABORT, '模拟整批发布失败'); END;");
+    await assert.rejects(embeddingModels.rebuildMemoryEmbeddingIndex(signal, () => {}), /模拟整批发布失败/);
+    assert.deepEqual(vectorRows(), oldVectors, '已写入第一条后第二条失败，整个事务回滚');
+    database.exec('DROP TRIGGER reject_index_publish');
+
+    const staleBuild = await repository.beginEmbeddingRebuild('before-content-edit', modelA, await repository.getEmbeddingIndexRevision());
+    await commands.editMemory('a', 'lexical', '猫 考试 已编辑');
+    await assert.rejects(repository.publishEmbeddingRebuild(staleBuild, staleBuild.entries.map(() => [0, 1]), signal), /记忆发生变化/);
+    assert.deepEqual(vectorRows(), oldVectors);
+    await repository.finishEmbeddingRebuild(staleBuild.id);
+
+    const beforeConfigurationRead = await repository.getEmbeddingIndexRevision();
+    const previousEnabled = (await repository.getEmbeddingSettings()).enabled;
+    await repository.setEmbeddingEnabled(!previousEnabled);
+    assert.equal(await repository.syncEmbeddingModel(modelA, beforeConfigurationRead), null, '配置读取期间发生变更时，旧配置不能重获新的发布版本');
+    await assert.rejects(repository.beginEmbeddingRebuild('stale-config', modelA, beforeConfigurationRead), /配置已变化/);
+    assert.equal(await repository.claimEmbedding(modelA.fingerprint, 'stale-config-claim', now, later, beforeConfigurationRead), null);
+    await repository.setEmbeddingEnabled(previousEnabled);
+
+    const oldBuild = await repository.beginEmbeddingRebuild('old-build', modelA, await repository.getEmbeddingIndexRevision());
+    const winnerBuild = await repository.beginEmbeddingRebuild('new-build', modelA, await repository.getEmbeddingIndexRevision());
+    await assert.rejects(repository.publishEmbeddingRebuild(oldBuild, oldBuild.entries.map(() => [0, 1]), signal), /重建任务已变化/);
+    await repository.finishEmbeddingRebuild(oldBuild.id);
+    assert.equal(await repository.claimEmbedding(modelA.fingerprint, 'during-build', now, later, await repository.getEmbeddingIndexRevision()), null, '旧任务不能解除新一轮重建的发布所有权');
+    await repository.publishEmbeddingRebuild(winnerBuild, winnerBuild.entries.map(() => [0, 1]), signal);
+    assert.ok(vectorRows().every(row => row.vector_json === '[0,1]'));
+
+    const publishedVectors = vectorRows();
+    currentModel = modelB;
+    await syncMemoryModel(modelB);
+    assert.deepEqual(vectorRows(), publishedVectors, '切换保留向量及其原模型信息');
+    calls = 0; embedding = async () => { calls++; return [1, 0]; };
+    assert.equal((await worker.processNextMemoryEmbedding(signal)).processed, false);
+    assert.equal(calls, 0, '切换后 worker 不请求历史记忆的新向量');
+    await bootstrap();
+    assert.equal((await worker.processNextMemoryEmbedding(signal)).processed, false, '重启也不能隐式重建');
+    await embeddingModels.rebuildMemoryEmbeddingIndex(signal, () => {});
+    assert.ok(vectorRows().every(row => row.vector_json === '[1,0]' && row.vector_model_fingerprint === modelB.fingerprint));
+    currentModel = modelA;
+    await syncMemoryModel(modelA);
+    await embeddingModels.rebuildMemoryEmbeddingIndex(signal, () => {});
+  }
+
+  // 模型切回只恢复匹配的向量，逐条请求不覆盖或排队其他历史记忆。
+  {
+    const originalEmbedding = embedding;
+    const sourceRows = () => database.prepare('SELECT memory_id, vector_json, vector_model_fingerprint, vector_content_revision FROM memory_item_embeddings ORDER BY memory_id').all();
+    currentModel = modelA;
+    await syncMemoryModel(modelA);
+    await create('reuse-unchanged', '未修改的旧记忆');
+    await create('reuse-edited', '稍后修改的旧记忆');
+    embedding = async () => [1, 0];
+    await embeddingModels.rebuildMemoryEmbeddingIndex(signal, () => {});
+    const originalSources = sourceRows();
+    let embeddingCalls = 0;
+    embedding = async () => { embeddingCalls++; return [0, 1]; };
+    currentModel = modelB;
+    await syncMemoryModel(modelB);
+    assert.equal((await repository.countEmbeddingIndex(modelB.fingerprint)).valid, 0);
+    assert.equal((await worker.processNextMemoryEmbedding(signal)).processed, false);
+    currentModel = modelA;
+    await syncMemoryModel(modelA);
+    assert.equal((await repository.countEmbeddingIndex(modelA.fingerprint)).valid, originalSources.length);
+    assert.equal((await repository.getEntry('pool-a', 'reuse-unchanged')).embeddingStatus, 'ready');
+    assert.equal((await worker.processNextMemoryEmbedding(signal)).processed, false);
+    assert.equal(embeddingCalls, 0, 'A→B→A 恢复原索引，不请求模型');
+    assert.deepEqual(sourceRows(), originalSources);
+    assert.equal((await repository.readRecallCandidates('pool-a', modelA.fingerprint, 2)).vectors.length, originalSources.length);
+
+    currentModel = modelB;
+    await syncMemoryModel(modelB);
+    await commands.editMemory('a', 'reuse-edited', '已经修改，旧向量不能接管');
+    currentModel = modelA;
+    await syncMemoryModel(modelA);
+    assert.equal((await repository.getEntry('pool-a', 'reuse-edited')).embeddingStatus, 'not_requested');
+    assert.equal((await repository.countEmbeddingIndex(modelA.fingerprint)).valid, originalSources.length - 1);
+
+    currentModel = modelB;
+    await syncMemoryModel(modelB);
+    embedding = async () => { embeddingCalls++; throw new runtime.MemoryEmbeddingError('单条请求失败', true); };
+    await commands.retryMemoryEmbedding('a', 'reuse-unchanged');
+    assert.equal((await worker.processNextMemoryEmbedding(signal)).failedMemoryId, 'reuse-unchanged');
+    assert.equal((await worker.processNextMemoryEmbedding(signal)).processed, false);
+    assert.equal(embeddingCalls, 1, '只为指定记忆发送一次请求');
+    assert.deepEqual(sourceRows(), originalSources, '单条任务失败保留旧向量及其来源');
+    currentModel = modelA;
+    await syncMemoryModel(modelA);
+    assert.equal((await repository.getEntry('pool-a', 'reuse-unchanged')).embeddingStatus, 'ready', '失败的新模型任务不能丢失旧向量的接管能力');
+
+    currentModel = modelB;
+    await syncMemoryModel(modelB);
+    const oldRevision = await repository.getEmbeddingIndexRevision();
+    const interruptedBuild = await repository.beginEmbeddingRebuild('interrupted-before-single', modelB, oldRevision);
+    embedding = async text => { embeddingCalls++; assert.equal(text, '未修改的旧记忆'); return [0, 1, 0]; };
+    await commands.retryMemoryEmbedding('a', 'reuse-unchanged');
+    await assert.rejects(repository.publishEmbeddingRebuild(interruptedBuild, interruptedBuild.entries.map(() => [0, 1]), signal), /重建任务已变化/);
+    await worker.processNextMemoryEmbedding(signal);
+    assert.equal(embeddingCalls, 2);
+    assert.equal((await repository.countEmbeddingIndex(modelB.fingerprint)).valid, 1);
+    assert.deepEqual(sourceRows().filter(row => row.memory_id !== 'reuse-unchanged'), originalSources.filter(row => row.memory_id !== 'reuse-unchanged'));
+    currentModel = modelA;
+    await syncMemoryModel(modelA);
+    assert.equal((await repository.getEntry('pool-a', 'reuse-unchanged')).embeddingStatus, 'not_requested', '已被新向量覆盖的条目不能伪造恢复');
+    assert.equal((await raw.getFirstAsync('SELECT dimension FROM memory_v3_state WHERE id = 1')).dimension, 2, '切回后恢复旧模型的索引维度，不沿用新模型的三维空间');
+    await assert.rejects(repository.retryEmbedding('pool-a', 'reuse-edited', oldRevision), /向量模型已变化/);
+
+    currentModel = { ...modelB, fingerprint: 'model-a:r3' };
+    await syncMemoryModel(currentModel);
+    assert.equal((await repository.countEmbeddingIndex(currentModel.fingerprint)).valid, 0, '同名模型版本改变不能复用旧向量');
+    assert.equal((await worker.processNextMemoryEmbedding(signal)).processed, false);
+    assert.equal(embeddingCalls, 2);
+    currentModel = modelA;
+    await syncMemoryModel(modelA);
+    await commands.forgetMemory('a', 'reuse-unchanged');
+    await commands.forgetMemory('a', 'reuse-edited');
+    const dependencies = runtime.getMemoryRuntimeDependencies();
+    runtime.configureMemoryRuntimeDependencies({ ...dependencies, resolveEmbeddingModel: async () => null });
+    await assert.rejects(commands.retryMemoryEmbedding('a', 'vector-only'), /先开启记忆向量化/);
+    runtime.configureMemoryRuntimeDependencies(dependencies);
+    await syncMemoryModel(modelA);
+    embedding = originalEmbedding;
+  }
+
   // N=20 在生成期间保留所有原文，提交后只保留 21～25；不会周期性漏 1～5。
   for (let id = 1; id <= 25; id++) addMessage(id, '消息 ' + id, id % 2 ? 'user' : 'assistant', new Date(Date.parse(now) + id * 1000).toISOString());
-  const summaryClaim = await summary.claim('conversation', 20, 'summary-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai');
+  const summaryClaim = await summary.claim('conversation', 20, 'summary-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0);
   assert.equal(summaryClaim.messages.length, 20);
   assert.equal((await summary.readContext('conversation', [], [])).raw.length, 25);
-  assert.equal(await summary.claim('conversation', 20, 'summary-loser', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null);
+  assert.equal(await summary.claim('conversation', 20, 'summary-loser', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null);
   await summary.create('conversation', 'user-summary', '用户先写的摘要', now, 'Asia/Shanghai');
   await summary.edit('conversation', 'user-summary', '用户编辑后的摘要', later);
   assert.equal(await appendSummary(summaryClaim, 'summary-1', '新增一段', later), true);
@@ -461,23 +866,23 @@ try {
   assert.deepEqual(context.segments.map((item) => item.content), ['用户编辑后的摘要', '新增一段']);
   await summary.delete('conversation', 'summary-1');
   assert.equal((await summary.readContext('conversation', [], [])).raw.length, 5);
-  assert.equal(await summary.claim('conversation', 20, 'no-rebuild', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null);
+  assert.equal(await summary.claim('conversation', 20, 'no-rebuild', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null);
   // 已处理范围由稳定游标表达，删除游标对应行也不能让旧消息重新进入原文或摘要领取。
   database.prepare('DELETE FROM messages WHERE id = 20').run();
   assert.deepEqual((await summary.readContext('conversation', [], [])).raw.map((item) => item.messageId), [21, 22, 23, 24, 25]);
-  assert.equal(await summary.claim('conversation', 20, 'deleted-cursor', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null);
+  assert.equal(await summary.claim('conversation', 20, 'deleted-cursor', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null);
   database.prepare('DELETE FROM messages WHERE id = 1').run();
   database.prepare('UPDATE sessions SET visible_after_message_id = 25 WHERE id = ?').run('conversation');
   assert.equal((await summary.readContext('conversation', [], [])).segments[0].content, '用户编辑后的摘要');
   assert.equal((await summary.readContext('conversation', [], [])).raw.length, 0);
   for (let id = 26; id <= 45; id++) addMessage(id, '新消息 ' + id, id % 2 ? 'user' : 'assistant', later);
-  const clearClaim = await summary.claim('conversation', 20, 'clear-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai');
+  const clearClaim = await summary.claim('conversation', 20, 'clear-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0);
   await summary.clear('conversation');
   assert.equal(await appendSummary(clearClaim, 'zombie', '不能复活', later), false);
   assert.equal((await summary.readContext('conversation', [], [])).raw.length, 0);
   addMessage(46, '当前用户输入', 'user', later);
   database.prepare('UPDATE conversation_turn_state SET reply_cursor = 45').run();
-  assert.equal(await summary.claim('conversation', 1, 'protected-input', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null);
+  assert.equal(await summary.claim('conversation', 1, 'protected-input', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null);
   assert.deepEqual((await summary.readContext('conversation', [46], [])).raw, []);
   // run item 顺序优先于物理 ID／创建时间；删锚点不能改变剩余成员的排序键。
   addMessage(48, 'run 第二项', 'assistant', now, 'ordered-run', 2);
@@ -488,7 +893,7 @@ try {
   database.prepare('DELETE FROM messages WHERE id = 47').run();
   const remaining = await raw.getFirstAsync(timelineOrderedMessagesCte("m.session_id = 'conversation'") + ' SELECT * FROM ordered_messages WHERE id = 48');
   assert.equal(remaining.timeline_order_anchor_id, anchor);
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 1,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 1, recentWindowLimit: 0 }),
     generateAddition: async () => '10 月 4 日讨论 10 月 10 日考试' });
   // 提示词的启用状态只消费摘要设置，暂停或固定原文不会产生第二份提示词开关。
   let promptStateConversation = null;
@@ -520,13 +925,13 @@ try {
   database.prepare('UPDATE conversation_turn_state SET reply_cursor = 100').run();
   const beforeFailure = await summary.readContext('conversation', [], []);
   const { ChatSummaryGenerationError } = load('src/features/chat/summary/domain/ChatSummaryRepository.ts');
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 1, generateAddition: async () => {
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 1, recentWindowLimit: 0 }), generateAddition: async () => {
     throw new ChatSummaryGenerationError({ kind: 'empty_output', message: '模型没有返回摘要正文。', retryable: true });
   } });
   assert.equal(await summaryApplication.processChatSummary('conversation', signal),false);
   assert.deepEqual((await summary.readContext('conversation', [], [])).raw, beforeFailure.raw);
   assert.equal(database.prepare('SELECT claim_id FROM chat_summary_state WHERE conversation_id = ?').get('conversation').claim_id, null);
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 1,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 1, recentWindowLimit: 0 }),
     generateAddition: async () => {
       throw new ChatSummaryGenerationError({ kind: 'output_limit', message: '模型因输出 token 上限停止。', retryable: false });
     } });
@@ -535,32 +940,80 @@ try {
   assert.deepEqual(withoutTasks(await summary.readContext('conversation', [], [])), withoutTasks(beforeFailure), '截断输出不能追加摘要或推进原文范围');
   assert.equal(database.prepare('SELECT claim_id FROM chat_summary_state WHERE conversation_id = ?').get('conversation').claim_id, null);
   const cancelledSummary = new AbortController();
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 1, generateAddition: async () => {
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 1, recentWindowLimit: 0 }), generateAddition: async () => {
     cancelledSummary.abort(); return '取消后不能提交';
   } });
   await retryPending('conversation','primary');
   assert.equal(await summaryApplication.processChatSummary('conversation', cancelledSummary.signal),false);
   assert.deepEqual((await summary.readContext('conversation', [], [])).raw, beforeFailure.raw);
   await summary.create('conversation', 'collision', '用户维护的内容', now, 'Asia/Shanghai');
-  const atomicClaim = await summary.claim('conversation', 1, 'atomic-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai');
+  const atomicClaim = await summary.claim('conversation', 1, 'atomic-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0);
   await assert.rejects(appendSummary(atomicClaim, 'collision', '不能覆盖', later));
   assert.deepEqual((await summary.readContext('conversation', [], [])).raw, beforeFailure.raw);
   await summary.releaseClaim(atomicClaim);
   const plainSummary = '成功的新摘要，约好"明天"复习。\n我负责整理 {重点}。';
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 1, generateAddition: async () => plainSummary });
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 1, recentWindowLimit: 0 }), generateAddition: async () => plainSummary });
   assert.equal(await summaryApplication.processChatSummary('conversation', signal), true);
   const afterSuccess = await summary.readContext('conversation', [], []);
   assert.equal(afterSuccess.raw.length, beforeFailure.raw.length - 1);
   assert.deepEqual(afterSuccess.segments.map((item) => item.content), ['用户维护的内容', plainSummary], '纯正文中的引号、换行与大括号完整保存');
   let longSummaryCalls = 0;
   const longSummary = '猫'.repeat(1000);
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 1,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 1, recentWindowLimit: 0 }),
     generateAddition: async () => { longSummaryCalls++; return longSummary; } });
   assert.equal(await summaryApplication.processChatSummary('conversation',signal),true);
   const afterLongSummary = await summary.readContext('conversation',[]);
   assert.equal(longSummaryCalls,1,'有效正文超过500字直接保存，不为了字数重复请求');
   assert.equal(afterLongSummary.segments.at(-1).content,longSummary,'超长正文不截断、不丢弃');
   assert.equal(afterLongSummary.raw.length,afterSuccess.raw.length-1,'保存完整正文时正常交接原文范围');
+
+  // 无新增是成功空结果：交接普通消息、通话和任务，但不生成可搜索或注入的正文。
+  {
+    database.prepare(`INSERT INTO ai_assistants (id,agent_id,name,model,created_at,updated_at)
+      VALUES ('empty-summary-ai','empty-summary-actor','空摘要测试','chat',?,?)`).run(now,now);
+    database.exec("INSERT INTO chat_conversations VALUES ('empty-summary','direct')");
+    database.prepare(`INSERT INTO sessions (id,ai_assistant_id,name,created_at,updated_at)
+      VALUES ('empty-summary','empty-summary-ai','空摘要测试',?,?)`).run(now,now);
+    database.prepare(`INSERT INTO messages (id,session_id,text,is_me,sender_type,status,created_at)
+      VALUES (600001,'empty-summary','你好',0,'assistant','sent',?)`).run(now);
+    await calls.createSession({ id:'empty-summary-call',chatSessionId:'empty-summary',aiAssistantId:'empty-summary-ai',
+      agentId:'empty-summary-actor',direction:'outgoing',requestedMode:'voice',source:'user',state:'ended',
+      startedAt:now,acceptedAt:now,endedAt:later });
+    await calls.appendEvent({ id:'empty-summary-event',callId:'empty-summary-call',chatSessionId:'empty-summary',
+      kind:'aiSpeechText',actorType:'ai',text:'晚安',includeInAIContext:true,createdAt:later });
+    let primaryCalls = 0, secondaryCalls = 0;
+    const diagnostics = { model:'test',requestedMaxTokens:500,timeoutSeconds:300,durationMs:1,
+      promptTokens:10,completionTokens:5,totalTokens:15,cachedTokens:null,finishReason:'stop',
+      contentCharacters:6,reasoningCharacters:0,serverError:null };
+    summaryRuntime.configureChatSummaryRuntime({ repository:summary,getBatchSettings: async () => ({ batchSize: 2, recentWindowLimit: 0 }),
+      generateAddition:async(_input,_signal,report)=>{ primaryCalls++;await report(diagnostics);return null; },
+      generateSecondary:async()=>{ secondaryCalls++;return null; } });
+    assert.equal(await summaryApplication.processChatSummary('empty-summary',signal),true);
+    const emptyPrimary = await summary.readContext('empty-summary',[]);
+    assert.deepEqual(emptyPrimary.raw,[]);
+    assert.deepEqual(emptyPrimary.pendingCalls,[],'无新增通话也完成处理');
+    assert.deepEqual(emptyPrimary.segments,[]);
+    assert.deepEqual(emptyPrimary.contextSegments,[]);
+    assert.equal(emptyPrimary.tasks[0].status,'completed');
+    assert.deepEqual(emptyPrimary.tasks[0].segmentIds,[]);
+    assert.deepEqual(emptyPrimary.tasks[0].calls,[diagnostics]);
+    assert.equal(await summaryApplication.processChatSummary('empty-summary',signal),false);
+    assert.equal(primaryCalls,1,'无新增成功后不再请求同一批原文');
+
+    await summary.create('empty-summary','empty-summary-source','只有寒暄的旧纪要',now,'Asia/Shanghai');
+    await summary.updateSettings('empty-summary',{secondaryTokenThreshold:1});
+    assert.equal(await summaryApplication.processChatSummary('empty-summary',signal),true);
+    const emptySecondary = await summary.readContext('empty-summary',[]);
+    assert.equal(emptySecondary.segments.length,1,'二级无新增不创建正文');
+    assert.ok(emptySecondary.segments[0].compactionId,'来源仍标记已处理，供用户管理');
+    assert.deepEqual(emptySecondary.contextSegments,[],'被消费的来源也不再自动注入');
+    const completedSecondary = emptySecondary.tasks.find(task=>task.level==='secondary');
+    assert.equal(completedSecondary.status,'completed');
+    assert.deepEqual(completedSecondary.segmentIds,[]);
+    assert.equal(await summaryApplication.processChatSummary('empty-summary',signal),false);
+    assert.equal(secondaryCalls,1,'二级空结果不会反复归纳同一来源');
+    assert.deepEqual((await summary.search('empty-summary-ai',{keywords:['本批无']})).entries,[]);
+  }
 
   // 短通话共用 N；达到门槛时必须等待挂断，统一范围包含通话前原文。
   database.prepare("INSERT INTO ai_assistants (id, agent_id, name, model, created_at, updated_at) VALUES ('calls-ai', 'actor-calls-ai', '通话 AI', 'chat', ?, ?)").run(now, now);
@@ -580,7 +1033,7 @@ try {
     createdAt: new Date(Date.parse(now) + (index + 1) * 1000).toISOString(),
   });
   let modelInputs = [];
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 20,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 20, recentWindowLimit: 0 }),
     generateAddition: async (input) => { modelInputs.push(input); return '我们在电话里聊了复习计划。'; } });
   assert.equal(await summaryApplication.processChatSummary('call-summary', signal), false, '四条对话不足 N，挂断不额外调用 AI');
   assert.equal(modelInputs.length, 0);
@@ -598,8 +1051,8 @@ try {
   callContext = await summaryApplication.getChatSummaryContext('call-summary');
   assert.equal(callContext.pendingCalls.find((call) => call.info.callId === 'active-call').transcripts.length, 121, '进行中通话不受 100 条窗口限制');
   await calls.updateSession('active-call', { state: 'ended', endedAt: later });
-  const callClaim = await summary.claim('call-summary', 20, 'call-winner', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai');
-  assert.equal(await summary.claim('call-summary', 1, 'call-loser', now, later, 'Asia/Shanghai'), null, '聊天和通话只有一个持久 claim winner');
+  const callClaim = await summary.claim('call-summary', 20, 'call-winner', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0);
+  assert.equal(await summary.claim('call-summary', 1, 'call-loser', now, later, 'Asia/Shanghai', 0), null, '聊天和通话只有一个持久 claim winner');
   const callInput = JSON.parse(buildSummaryInput(callClaim));
   assert.equal(callInput.sourceKind, 'conversation');
   assert.equal(callInput.newMessagesOnly[0].source, 'chat');
@@ -628,7 +1081,7 @@ try {
     includeInAIContext: true, createdAt: new Date(Date.parse(later) + index * 1000).toISOString() });
   const longContext = await summaryApplication.getChatSummaryContext('call-summary');
   let requests = 0;
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 20, generateAddition: async (input) => {
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 20, recentWindowLimit: 0 }), generateAddition: async (input) => {
     assert.deepEqual(input.messages, longContext.timeline);
     requests++;
     throw new Error('完整摘要请求失败');
@@ -637,7 +1090,7 @@ try {
   assert.equal(requests, 1);
   assert.deepEqual(withoutTasks(await summaryApplication.getChatSummaryContext('call-summary')), withoutTasks(longContext), '失败保留整个尚未交接范围');
   modelInputs = [];
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 20, generateAddition: async (input) => {
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 20, recentWindowLimit: 0 }), generateAddition: async (input) => {
     modelInputs.push(input);
     assert.ok(input.messages.reduce((count, item) => count + Array.from(item.content).length, 0) > 5000);
     return '长通话完整摘要。';
@@ -655,8 +1108,11 @@ try {
   const before = [chatItem('之前1', '2026-10-04T03:00:00.000Z'), chatItem('之前2', '2026-10-04T03:01:00.000Z')];
   const callItems = longContext.timeline;
   const after = [chatItem('之后1', '2026-10-04T07:00:00.000Z')];
-  assert.deepEqual(timelineDomain.selectSummaryRange([...before, ...callItems, ...after], 2), before, '门槛在通话前满足时不吞入下一通电话');
-  assert.deepEqual(timelineDomain.selectSummaryRange([...before, ...callItems, ...after], 27), [...before, ...callItems, ...after], '不足门槛的短尾部可以和通话后消息一起累计');
+  assert.deepEqual(timelineDomain.selectSummaryRange([...before, ...callItems, ...after], 2, 0), before, '门槛在通话前满足时不吞入下一通电话');
+  assert.deepEqual(timelineDomain.selectSummaryRange([...before, ...callItems, ...after], 27, 0), [...before, ...callItems, ...after], '不足门槛的短尾部可以和通话后消息一起累计');
+  assert.deepEqual(timelineDomain.selectSummaryRange([...before, ...callItems, ...after], 3, 2), [], '通话闭合后不足近期窗口时延后总结，不能吞掉保留原文');
+  assert.deepEqual(timelineDomain.selectSummaryRange([...before, ...callItems, ...after, chatItem('之后2', later)], 3, 2),
+    [...before, ...callItems], '闭合整通电话后仍需留下完整近期窗口');
 
   // 旧开发版备份可能已有孤立关联；退休两种旧表均不能触碰正文、通话与处理进度。
   for (const primaryKey of ['PRIMARY KEY (segment_id)', 'PRIMARY KEY (segment_id, call_id)']) {
@@ -695,7 +1151,7 @@ try {
   // 清空使在途 claim 失效；进行中通话只保留边界后文字，未接事实不占消息额度。
   await createCall('clear-call');
   await calls.appendEvent({ callId: 'clear-call', chatSessionId: 'call-summary', kind: 'userSpeechText', actorType: 'user', text: '清空前', includeInAIContext: true, createdAt: now });
-  const clearCallClaim = await summary.claim('call-summary', 1, 'call-clear', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai');
+  const clearCallClaim = await summary.claim('call-summary', 1, 'call-clear', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0);
   await summary.clear('call-summary');
   assert.equal(await appendSummary(clearCallClaim, 'call-zombie', '不能复活', later), false);
   assert.equal((await summaryApplication.getChatSummaryContext('call-summary')).pendingCalls.length, 0);
@@ -709,7 +1165,7 @@ try {
   const partialCall = (await summaryApplication.getChatSummaryContext('call-summary')).pendingCalls[0];
   assert.deepEqual(partialCall.transcripts.map((item) => item.content), ['清空后的约定']);
   assert.equal(partialCall.historyStartsAfter, boundaryAt);
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 1, generateAddition: async () => '清空后约好继续复习。' });
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 1, recentWindowLimit: 0 }), generateAddition: async () => '清空后约好继续复习。' });
   assert.equal(await summaryApplication.processChatSummary('call-summary', signal), true);
   database.prepare("UPDATE sessions SET visible_after_at = ? WHERE id = 'call-summary'").run(postClearEndedAt);
   assert.equal((await summaryApplication.getChatSummaryContext('call-summary')).segments.length, 1, '清消息保留已有摘要');
@@ -748,12 +1204,12 @@ try {
   assert.ok(eventsRaw[1].content.includes('API Key 无效或已过期'));
   assert.ok(eventsRaw[2].content.includes('aiCreateMoment'));
   assert.equal(eventsRaw[3].pending, true, '流式行动进入原文，但尚不能交接给摘要');
-  assert.equal(await summary.claim('events', 2, 'pending-activity', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null,
+  assert.equal(await summary.claim('events', 2, 'pending-activity', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null,
     '摘要不能跨过尚未写完的行动，否则同一行后续增量会被游标吞掉');
   database.prepare("UPDATE messages SET text = ?, status = 'failed', metadata_json = ? WHERE id = 104")
     .run('执行因故障中断，保留已收到的输出', JSON.stringify({ ...toolMetadata, displayText: '执行因故障中断，保留已收到的输出' }));
-  assert.equal(await summary.claim('events', 3, 'too-few-dialogues', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null);
-  const eventsClaim = await summary.claim('events', 2, 'events-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai');
+  assert.equal(await summary.claim('events', 3, 'too-few-dialogues', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null);
+  const eventsClaim = await summary.claim('events', 2, 'events-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0);
   assert.deepEqual(eventsClaim.messages.map((item) => item.messageId), [101, 102, 103, 104, 106, 107]);
   assert.ok(eventsClaim.messages[3].content.includes('保留已收到的输出'), '终态后摘要读取同一行的完整已保存内容');
   assert.equal(JSON.parse(buildSummaryInput(eventsClaim)).newMessagesOnly[1].speaker, 'application');
@@ -762,7 +1218,7 @@ try {
   assert.deepEqual(eventsContext.raw.map((item) => item.messageId), [108]);
   assert.equal(eventsContext.segments[0].messageCount, 2);
   assert.equal(eventsContext.segments[0].batchSize, 2);
-  assert.equal(await summary.claim('events', 1, 'pending-current-input', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null);
+  assert.equal(await summary.claim('events', 1, 'pending-current-input', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null);
   await summary.clear('events');
   assert.deepEqual((await summary.readContext('events', [], [])).raw, []);
 
@@ -787,14 +1243,14 @@ try {
   const ongoingGuest = await summary.readBackgroundContexts('ongoing-ai', 'outside', { privateLimit: 10, groupLimit: 0 });
   assert.deepEqual(ongoingGuest.find(item => item.conversationId === 'ongoing-wake').timeline.map(item => item.messageId), [202],
     '召唤读取单聊背景时排除未终结 run，保留普通历史');
-  assert.equal(await summary.claim('ongoing-wake', 1, 'waiting-for-next-output', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null,
+  assert.equal(await summary.claim('ongoing-wake', 1, 'waiting-for-next-output', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null,
     '没有 streaming 行时也不能把摘要游标推进到后来的聊天');
   insertOngoing.run(203, '下一步已经收到了', 'system', later, later, wakeMetadata('assistant'), 'ongoing-run', 3);
   insertOngoing.run(204, '执行结束', 'system', later, later,
     JSON.stringify({ ...JSON.parse(wakeMetadata('terminal')), terminalCode: 'COMPLETED' }), 'ongoing-run', 4);
   assert.ok((await summary.readContext('ongoing-wake', [])).raw.every(item => item.pending !== true),
     '本会话终态到达后解除整个自主 run 的保护');
-  const finishedWakeClaim = await summary.claim('ongoing-wake', 1, 'finished-wake', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai');
+  const finishedWakeClaim = await summary.claim('ongoing-wake', 1, 'finished-wake', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0);
   assert.ok(finishedWakeClaim.messages.some((item) => item.content.includes('下一步已经收到了')),
     '整个 run 到达终态后，追加输出进入同一次摘要交接');
   await summary.releaseClaim(finishedWakeClaim);
@@ -818,12 +1274,12 @@ try {
   logical(307, 'system', null, errorMetadata);
   logical(308, 'user');
   logical(309, 'user');
-  assert.equal(await summary.claim('logical', 3, 'not-enough-logical', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai'), null);
-  const firstLogical = await summary.claim('logical', 1, 'first-logical', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai');
+  assert.equal(await summary.claim('logical', 3, 'not-enough-logical', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0), null);
+  const firstLogical = await summary.claim('logical', 1, 'first-logical', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0);
   assert.deepEqual(firstLogical.messages.map((item) => item.messageId), [301, 302, 303], '批次边界不能切开同次图文发送');
   await summary.releaseClaim(firstLogical);
   database.prepare("UPDATE conversation_turn_state SET reply_cursor = 309 WHERE session_id = 'logical'").run();
-  const logicalClaim = await summary.claim('logical', 2, 'logical-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai');
+  const logicalClaim = await summary.claim('logical', 2, 'logical-claim', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0);
   assert.deepEqual(logicalClaim.messages.map((item) => item.messageId), [301, 302, 303, 304, 305, 306, 307]);
   assert.equal((await summary.readContext('logical', [], [])).raw.length, 9, '生成期间保留每个原始气泡');
   assert.equal(await appendSummary(logicalClaim, 'logical-summary', '整组图文和完整回复的摘要', later), true);
@@ -831,9 +1287,66 @@ try {
   assert.equal(logicalContext.segments[0].messageCount, 2);
   assert.equal(logicalContext.segments[0].batchSize, 2);
   assert.deepEqual(logicalContext.raw.map((item) => item.messageId), [308, 309]);
-  const separateSends = await summary.claim('logical', 2, 'separate-sends', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai');
+  const separateSends = await summary.claim('logical', 2, 'separate-sends', now, "2099-01-01T00:00:00.000Z", 'Asia/Shanghai', 0);
   assert.deepEqual(separateSends.messages.map((item) => item.messageId), [308, 309], '连续发送即使正文相同也各算一条');
   await summary.releaseClaim(separateSends);
+
+  // 单聊保留近期 30 条，只总结更早的整批；交接前后没有原文空窗或摘要与来源重叠。
+  {
+    database.prepare(`INSERT INTO ai_assistants (id,agent_id,name,model,created_at,updated_at)
+      VALUES ('recent-summary-ai','recent-summary-actor','近期原文测试','chat',?,?)`).run(now, now);
+    database.prepare("INSERT INTO chat_conversations (id,kind) VALUES ('recent-summary','direct')").run();
+    database.prepare(`INSERT INTO sessions (id,ai_assistant_id,name,created_at,updated_at)
+      VALUES ('recent-summary','recent-summary-ai','近期原文测试',?,?)`).run(now, now);
+    database.prepare(`INSERT INTO conversation_turn_state (session_id,reply_cursor,revision,updated_at)
+      VALUES ('recent-summary',0,0,?)`).run(now);
+    const insertRecent = database.prepare(`INSERT INTO messages (session_id,text,is_me,sender_type,created_at,time,status)
+      VALUES ('recent-summary',?,?,?,?,?,'sent')`);
+    const recentIds = [];
+    const addRecentThrough = count => {
+      while (recentIds.length < count) {
+        const index = recentIds.length;
+        const at = new Date(Date.parse(now) + index * 1000).toISOString();
+        recentIds.push(Number(insertRecent.run('近期原文 ' + (index + 1), Number(index % 2 === 0),
+          index % 2 === 0 ? 'user' : 'assistant', at, at).lastInsertRowid));
+      }
+      database.prepare("UPDATE conversation_turn_state SET reply_cursor = ? WHERE session_id = 'recent-summary'").run(recentIds.at(-1));
+    };
+    const generatedRanges = [];
+    let batchSize = 30;
+    summaryRuntime.configureChatSummaryRuntime({ repository: summary,
+      getBatchSettings: async () => ({ batchSize, recentWindowLimit: 30 }),
+      generateAddition: async input => {
+        generatedRanges.push(input.messages.map(item => item.messageId));
+        const during = await summary.readContext('recent-summary', []);
+        assert.ok(during.raw.length >= batchSize + 30, '生成期间整批来源与近期原文继续保留');
+        return '较早一批的重要记忆 ' + generatedRanges.length;
+      },
+    });
+    addRecentThrough(30);
+    assert.equal(await summaryApplication.processChatSummary('recent-summary', signal), false, '聊满近期窗口不立刻摘要清零');
+    addRecentThrough(59);
+    assert.equal(await summaryApplication.processChatSummary('recent-summary', signal), false, '近期窗口之外不足一批时继续追加');
+    addRecentThrough(60);
+    assert.equal(await summaryApplication.processChatSummary('recent-summary', signal), true);
+    assert.deepEqual(generatedRanges[0], recentIds.slice(0, 30));
+    const firstRecent = await summary.readContext('recent-summary', []);
+    assert.deepEqual(firstRecent.raw.map(item => item.messageId), recentIds.slice(30));
+    assert.equal(firstRecent.contextSegments.length, 1);
+    addRecentThrough(89);
+    assert.equal(await summaryApplication.processChatSummary('recent-summary', signal), false);
+    const growingRecent = await summary.readContext('recent-summary', []);
+    assert.deepEqual(growingRecent.raw.slice(0, 30), firstRecent.raw, '批次之间仅向后追加，原文开头保持不变');
+    addRecentThrough(90);
+    assert.equal(await summaryApplication.processChatSummary('recent-summary', signal), true);
+    assert.deepEqual(generatedRanges[1], recentIds.slice(30, 60));
+    assert.deepEqual((await summary.readContext('recent-summary', [])).raw.map(item => item.messageId), recentIds.slice(60));
+    batchSize = 10;
+    addRecentThrough(100);
+    assert.equal(await summaryApplication.processChatSummary('recent-summary', signal), true);
+    assert.deepEqual(generatedRanges[2], recentIds.slice(60, 70), '摘要批次可独立调整，近期原文仍保留 30 条');
+    assert.deepEqual((await summary.readContext('recent-summary', [])).raw.map(item => item.messageId), recentIds.slice(70));
+  }
 
   // 外部 embedding 的响应边界，不使用网络或真实凭据。
   const { BaseAIClient } = load('src/platform/ai/BaseAIClient.ts');
@@ -899,7 +1412,7 @@ try {
   await summary.updateSettings('secondary-test', { ...secondarySettings, generationEnabled: false, injectEnabled: false });
   assert.equal(await summary.appendSecondary(changingClaim, 'stale-off', '关闭后不能提交', later), false);
   assert.equal((await summary.readContext('secondary-test', [])).contextSegments.length, 0);
-  assert.equal(await summary.claim('secondary-test', 1, 'off-primary', now, later, 'Asia/Shanghai'), null);
+  assert.equal(await summary.claim('secondary-test', 1, 'off-primary', now, later, 'Asia/Shanghai', 0), null);
   assert.equal(await summary.claimSecondary('secondary-test', 'off-secondary', now, later, 'Asia/Shanghai'), null);
   database.exec(`INSERT INTO messages (id,session_id,text,is_me,sender_type,created_at,status) VALUES
     (2001,'secondary-test','已经总结的旧原文',1,'user','${now}','sent'),
@@ -918,25 +1431,25 @@ try {
   assert.equal(secondarySnapshot.segments.find(item => item.id === 'primary-7').compactionId, null);
   database.exec('DROP TRIGGER reject_secondary_mark');
   await summary.releaseSecondaryClaim(changingClaim);
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 99,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 99, recentWindowLimit: 0 }),
     generateAddition: async () => { throw new Error('不应该读取原文'); },
     generateSecondary: async () => { throw new (load('src/features/chat/summary/domain/ChatSummaryRepository.ts').ChatSummaryGenerationError)({kind:'request',message:'二级模型失败',retryable:true}); } });
   assert.equal(await summaryApplication.processChatSummary('secondary-test', signal),false);
   assert.deepEqual(withoutTasks(await summary.readContext('secondary-test', [])), withoutTasks(secondarySnapshot), '失败保留原一级摘要上下文');
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 99,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 99, recentWindowLimit: 0 }),
     generateAddition: async () => { throw new Error('不应该读取原文'); },
     generateSecondary: async () => { throw new ChatSummaryGenerationError({kind:'empty_output',message:'模型没有返回摘要正文。',retryable:true}); } });
   await retryPending('secondary-test','secondary');
   assert.equal(await summaryApplication.processChatSummary('secondary-test', signal),false);
   assert.deepEqual(withoutTasks(await summary.readContext('secondary-test', [])), withoutTasks(secondarySnapshot), '空正文不交接');
   const secondaryAbort = new AbortController();
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 99,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 99, recentWindowLimit: 0 }),
     generateAddition: async () => { throw new Error('不应该读取原文'); },
     generateSecondary: async () => { secondaryAbort.abort(); return '取消不提交'; } });
   await retryPending('secondary-test','secondary');
   assert.equal(await summaryApplication.processChatSummary('secondary-test', secondaryAbort.signal),false);
   assert.deepEqual(withoutTasks(await summary.readContext('secondary-test', [])), withoutTasks(secondarySnapshot));
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 99,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 99, recentWindowLimit: 0 }),
     generateAddition: async () => { throw new Error('不应该读取原文'); },
     generateSecondary: async () => '持久归纳' });
   assert.equal(await summaryApplication.processChatSummary('secondary-test', signal), true);
@@ -971,7 +1484,7 @@ try {
   let secondaryStarted;
   const secondaryStartedPromise = new Promise(resolve => { secondaryStarted = resolve; });
   const secondaryResponse = new Promise(resolve => { completeSecondary = resolve; });
-  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSize: async () => 1,
+  summaryRuntime.configureChatSummaryRuntime({ repository: summary, getBatchSettings: async () => ({ batchSize: 1, recentWindowLimit: 0 }),
     generateAddition: async () => { modelOrder.push('primary'); return '考试'; },
     generateSecondary: async input => { modelOrder.push('secondary');
       assert.equal(input.segments.length,2,'阈值批次包含刚完成的一级摘要');
@@ -1006,7 +1519,7 @@ try {
   database.prepare('UPDATE chat_summary_state SET processed_cursor=? WHERE conversation_id=?').run(JSON.stringify([now,4005,0,4005]),'fixed-context');
   const otherSettings = await summary.readSettings('secondary-test');
   const priorCursor = database.prepare("SELECT processed_cursor FROM chat_summary_state WHERE conversation_id='fixed-context'").get().processed_cursor;
-  const staleFixedPrimary = await summary.claim('fixed-context',1,'before-fixing',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+  const staleFixedPrimary = await summary.claim('fixed-context',1,'before-fixing',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
   await summary.setFixedStart('fixed-context',4004);
   assert.equal(await appendSummary(staleFixedPrimary,'stale-fixed-primary','不应提交',later),false);
   const fixedContext = await summary.readContext('fixed-context',[4008]);
@@ -1015,7 +1528,7 @@ try {
   assert.equal(fixedContext.contextSegments[0].content,'保留的旧摘要');
   assert.equal(fixedContext.settings.generationEnabled,false);
   assert.deepEqual(await summary.readSettings('secondary-test'),otherSettings,'另一个 AI 的开关不变');
-  assert.equal(await summary.claim('fixed-context',1,'blocked-fixed',now,later,'Asia/Shanghai'),null);
+  assert.equal(await summary.claim('fixed-context',1,'blocked-fixed',now,later,'Asia/Shanghai', 0),null);
   assert.equal(await summary.claimSecondary('fixed-context','blocked-secondary',now,later,'Asia/Shanghai'),null);
   await assert.rejects(summary.updateSettings('fixed-context',{generationEnabled:true}),/取消固定/);
   await assert.rejects(summary.setFixedStart('fixed-context',2001),/当前会话/);
@@ -1026,11 +1539,11 @@ try {
   assert.equal((await summary.readSettings('fixed-context')).generationEnabled,false,'取消固定不恢复生成');
   assert.equal(database.prepare("SELECT processed_cursor FROM chat_summary_state WHERE conversation_id='fixed-context'").get().processed_cursor,priorCursor);
   await summary.updateSettings('fixed-context',{generationEnabled:true});
-  const resumed = await summary.claim('fixed-context',1,'resumed-original-cursor',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+  const resumed = await summary.claim('fixed-context',1,'resumed-original-cursor',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
   assert.deepEqual(resumed.messages.map(item=>item.messageId),[4006],'从原摘要进度继续，不从曾固定的 4004 重来');
   assert.ok(resumed.previous.some(item=>item.id==='fixed-old-summary'),'不注入摘要也不影响生成的只读背景');
   await appendSummary(resumed,'fixed-resumed-summary','续接原进度',later);
-  const nextResumed = await summary.claim('fixed-context',1,'resumed-next-batch',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+  const nextResumed = await summary.claim('fixed-context',1,'resumed-next-batch',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
   assert.deepEqual(nextResumed.messages.map(item=>item.messageId),[4007],'积压继续分批');
   await appendSummary(nextResumed,'fixed-next-summary','下一批',later);
   await summary.updateSettings('fixed-context',{secondaryTokenThreshold:1});
@@ -1087,13 +1600,13 @@ try {
   assert.equal(await summary.claimSecondary('retry-summary','third-auto',later,'2099-01-01T00:00:00.000Z','Asia/Shanghai'),null,'第一次加一次自动重试后不再请求');
   await summary.create('retry-summary','new-does-not-reset','新摘要',later,'Asia/Shanghai');
   assert.equal(await summary.claimSecondary('retry-summary','new-auto',later,'2099-01-01T00:00:00.000Z','Asia/Shanghai'),null,'新消息或新一级不会解除失败暂停');
-  const primaryWhileSecondaryFailed=await summary.claim('retry-summary',1,'other-level',later,'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+  const primaryWhileSecondaryFailed=await summary.claim('retry-summary',1,'other-level',later,'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
   assert.ok(primaryWhileSecondaryFailed,'二级失败不阻止一级');
   await summary.failTask(primaryWhileSecondaryFailed,retryFailure,later);await summary.releaseClaim(primaryWhileSecondaryFailed);
   const primaryRetryAt=(await summary.readContext('retry-summary',[])).tasks.find(value=>value.id===primaryWhileSecondaryFailed.taskId).nextAttemptAt;
-  const primaryRetry=await summary.claim('retry-summary',1,'primary-auto-retry',primaryRetryAt,'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+  const primaryRetry=await summary.claim('retry-summary',1,'primary-auto-retry',primaryRetryAt,'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
   assert.ok(primaryRetry);await summary.failTask(primaryRetry,retryFailure,primaryRetryAt);await summary.releaseClaim(primaryRetry);
-  assert.equal(await summary.claim('retry-summary',1,'primary-third-auto','2098-01-01T00:00:00.000Z','2099-01-01T00:00:00.000Z','Asia/Shanghai'),null,'一级也只允许一次自动重试');
+  assert.equal(await summary.claim('retry-summary',1,'primary-third-auto','2098-01-01T00:00:00.000Z','2099-01-01T00:00:00.000Z','Asia/Shanghai', 0),null,'一级也只允许一次自动重试');
 
   // 更新前留下的第三次等待与过期在途请求收口，不刷新次数，不影响手动意图。
   database.prepare("UPDATE chat_summary_tasks SET status='waiting',next_attempt_at='2099-01-01T00:00:00.000Z' WHERE id=?").run(retryTaskId);
@@ -1197,7 +1710,7 @@ try {
   await migrateMemoryV3(raw);
   assert.equal(database.prepare("SELECT name FROM sqlite_master WHERE name = 'memory_topics'").get(), undefined);
   assert.ok(database.prepare("SELECT id FROM auxiliary_model_configs WHERE id = 'retired-asset'").get());
-  assert.equal(await repository.getEmbeddingModelId(), 'retained-choice');
+  assert.equal((await repository.getEmbeddingSettings()).modelConfigId, 'retained-choice');
   await summary.create('conversation', 'durable-summary', '长期保留的摘要', now, 'Asia/Shanghai');
   // 群摘要沿用两级交接与generation；背景读取按每群额度，不改变来源处理状态。
   for (const id of ['context-group-a','context-group-b']) {
@@ -1210,14 +1723,14 @@ try {
         JSON.stringify({actorAIId:'a',actorAgentId:'actor-a',actorName:'公开名称'}),now);
   }
   await summary.updateSettings('context-group-a',{groupTriggerCount:2});
-  const groupClaim=await summary.claim('context-group-a',99,'group-claim',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+  const groupClaim=await summary.claim('context-group-a',99,'group-claim',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
   assert.ok(groupClaim);
   assert.equal(groupClaim.batchSize,2,'群门槛只取群设置，不使用管理员或成员窗口');
   assert.equal(groupClaim.messages[1].actor.assistantId,'a');
   const groupSourceIds=groupClaim.messages.map(item=>item.messageId);
   await summary.updateSettings('context-group-a',{modelConfigId:'continuous-reference',groupTriggerCount:2});
   assert.equal(await appendSummary(groupClaim,'late-group','旧模型结果',later),false,'切换模型撤销旧任务资格');
-  const freshGroup=await summary.claim('context-group-a',2,'fresh-group',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+  const freshGroup=await summary.claim('context-group-a',2,'fresh-group',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
   assert.equal(freshGroup.requestSettings.modelConfigId,'continuous-reference','请求选择来自领取事务');
   assert.deepEqual(freshGroup.messages.map(item=>item.messageId),groupSourceIds,'切换不回退或丢失处理范围');
   assert.equal(await appendSummary(freshGroup,'group-primary','个人分歧与共同分工',later),true);
@@ -1537,12 +2050,15 @@ try {
   database.prepare("UPDATE sessions SET visible_after_at = '2098-01-01T00:00:00.000Z' WHERE id = 'call-summary'").run();
   const retainedCallSummary = (await summary.readContext('call-summary', [], [])).segments;
   assert.equal(retainedCallSummary.length, 1, '第二次 bootstrap 保留通话摘要');
+  await repository.setEmbeddingEnabled(false);
+  const backupEmbeddingSettings = await repository.getEmbeddingSettings();
   database.close(); fs.copyFileSync(databasePath, backupPath);
   database = new DatabaseSync(databasePath); database.exec('PRAGMA foreign_keys = ON');
   await commands.forgetMemory('a', 'vector-only');
   database.close(); fs.copyFileSync(backupPath, databasePath);
   database = new DatabaseSync(databasePath); database.exec('PRAGMA foreign_keys = ON');
   await bootstrap();
+  assert.deepEqual(await repository.getEmbeddingSettings(), backupEmbeddingSettings, '备份恢复独立保留向量开关与模型');
   assert.equal((await repository.getEntry('pool-a', 'vector-only')).embeddingStatus, 'ready');
   assert.equal((await repository.recallPassive('pool-a', '备份绑定词'))[0].id, 'vector-only', '升级与备份恢复保留手动关系');
   assert.equal((await repository.recallPassive('pool-a', '备份同义词'))[0].id, 'vector-only');
@@ -1561,7 +2077,7 @@ try {
   {
     // 摘要检索、摘要编辑 fence 与工具省略／清空摘要都使用正式链路。
     currentModel = modelA;
-    await repository.syncEmbeddingModel(modelA);
+    await syncMemoryModel(modelA);
     const withSummary = await repository.createEntry({ id: 'summary-case', poolId: 'pool-a', content: '约定每天互道晚安',
       summary: '纪念协议', normalizedContent: '约定每天互道晚安', now: '2000-01-01T00:00:00.000Z', writeKey: null });
     const oldSummaryClaim = await claim('summary-old');
@@ -1595,6 +2111,7 @@ try {
 
     // 跨 Feature 转存是一个 commit；拒绝删除时正文、摘要与向量待处理状态全部回滚。
     const protocols = load('src/features/protocol/infrastructure/SQLiteProtocolRepository.ts').protocolRepository;
+    const findProtocol = async (id) => (await protocols.getByAI('a')).find((protocol) => protocol.id === id) ?? null;
     const { transferProtocolToMemory } = load('src/host/application/TransferProtocolToMemory.ts');
     const signals = load('src/features/memory/application/MemorySignals.ts');
     const values = (protocol) => ({ content: protocol.content, summary: protocol.summary ?? null });
@@ -1610,7 +2127,7 @@ try {
     assert.equal(conversions.filter((item) => item.status === 'fulfilled').length, 1);
     assert.equal(countMemories(), beforeConversion + 1);
     assert.equal(changes, 1);
-    assert.equal(await protocols.getById(conversionSource.id), null);
+    assert.equal(await findProtocol(conversionSource.id), null);
     assert.equal((await protocols.getPromptText('a')).includes(conversionSource.content), false);
     const transferred = (await repository.listEntries('pool-a')).find((entry) => entry.content === conversionSource.content);
     assert.equal(transferred.summary, conversionSource.summary);
@@ -1623,26 +2140,26 @@ try {
     await assert.rejects(transferProtocolToMemory('a', failingSource, values(failingSource)), /协议删除失败/);
     assert.equal(countMemories(), beforeFailure);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM memory_item_embeddings').get().count, embeddingsBeforeFailure);
-    assert.ok(await protocols.getById(failingSource.id));
+    assert.ok(await findProtocol(failingSource.id));
     assert.equal(changes, 1, '回滚不能发布刷新信号');
     database.exec('DROP TRIGGER reject_protocol_transfer');
     database.exec("CREATE TRIGGER reject_memory_transfer BEFORE INSERT ON memory_items BEGIN SELECT RAISE(ABORT, '记忆创建失败'); END;");
     await assert.rejects(transferProtocolToMemory('a', failingSource, values(failingSource)), /记忆创建失败/);
-    assert.ok(await protocols.getById(failingSource.id));
+    assert.ok(await findProtocol(failingSource.id));
     database.exec('DROP TRIGGER reject_memory_transfer');
     await assert.rejects(transferProtocolToMemory('b', failingSource, values(failingSource)), /不属于当前 AI/);
     await protocols.update('a', failingSource.id, { content: 'AI 更新后的协议' });
     database.prepare('UPDATE protocols SET updated_at = ? WHERE id = ?').run(failingSource.updatedAt, failingSource.id);
     await assert.rejects(transferProtocolToMemory('a', failingSource, values(failingSource)), /协议已被修改/);
-    const freshSource = await protocols.getById(failingSource.id);
+    const freshSource = await findProtocol(failingSource.id);
     await assert.rejects(transferProtocolToMemory('a', freshSource, { content: '猫'.repeat(501), summary: freshSource.summary }), domain.MemoryInputError);
     assert.equal(countMemories(), beforeFailure);
-    assert.equal((await protocols.getById(failingSource.id)).content, 'AI 更新后的协议');
+    assert.equal((await findProtocol(failingSource.id)).content, 'AI 更新后的协议');
     currentModel = null;
-    await repository.syncEmbeddingModel(null);
+    await syncMemoryModel(null);
     const plainSource = await protocols.insert({ aiAssistantId: 'a', content: '没有摘要的协议' });
     await transferProtocolToMemory('a', plainSource, { content: '编辑后直接转存的正文', summary: null });
-    assert.equal(await protocols.getById(plainSource.id), null);
+    assert.equal(await findProtocol(plainSource.id), null);
     const plainMemory = (await repository.listEntries('pool-a')).find((entry) => entry.content === '编辑后直接转存的正文');
     assert.equal(plainMemory.summary, null);
     assert.equal(plainMemory.embeddingStatus, 'not_requested');
@@ -1659,7 +2176,7 @@ try {
     assert.equal((await repository.getEntry('pool-a', withSummary.id)).summary, '晚安协议');
     assert.equal((await repository.getEntry('pool-a', withSummary.id)).content, '约定每天互道晚安');
     assert.equal((await repository.getEntry('pool-a', transferred.id)).summary, conversionSource.summary);
-    assert.equal(await protocols.getById(conversionSource.id), null);
+    assert.equal(await findProtocol(conversionSource.id), null);
   }
 
   // 大积压只读取足够确定本批的原文；分段跨页、通话闭合和无投影行不能改变领取范围。
@@ -1681,12 +2198,12 @@ try {
     let callSources = [];
     let callReads = 0;
     const bounded = new SQLiteChatSummaryRepository(async () => { callReads++; return callSources; });
-    const expected = timelineDomain.selectSummaryRange((await bounded.readContext(conversationId, [])).timeline, 20);
+    const expected = timelineDomain.selectSummaryRange((await bounded.readContext(conversationId, [])).timeline, 20, 0);
     const getAll = raw.getAllAsync;
     let returnedRows = 0;
     raw.getAllAsync = async (...args) => { const rows = await getAll(...args); returnedRows += rows.length; return rows; };
     try {
-      const range = await bounded.claim(conversationId, 20, 'bounded-primary', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai');
+      const range = await bounded.claim(conversationId, 20, 'bounded-primary', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0);
       assert.deepEqual(range.messages, expected);
       assert.equal(range.messages.length, 319, '同一逻辑消息的三百个分段必须完整领取');
       assert.ok(returnedRows < 1000, '小批摘要的数据库结果不能随八千条积压全量传回');
@@ -1695,27 +2212,27 @@ try {
         startedAt: at(0), acceptedAt: at(0), endedAt: at(350), endReason: 'user_hangup', durationSeconds: 350 },
       historyStartsAfter: null, transcripts: [{ eventId: 'crossing-transcript', timestamp: at(100), speaker: 'user', content: '通话内原文' }] }];
       const completeTimeline = (await bounded.readContext(conversationId, [])).timeline;
-      const withCall = await bounded.claim(conversationId, 1, 'bounded-call', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai');
-      assert.deepEqual(withCall.messages, timelineDomain.selectSummaryRange(completeTimeline, 1), '分页不能在通话结束前封口或漏掉通话内聊天');
+      const withCall = await bounded.claim(conversationId, 1, 'bounded-call', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0);
+      assert.deepEqual(withCall.messages, timelineDomain.selectSummaryRange(completeTimeline, 1, 0), '分页不能在通话结束前封口或漏掉通话内聊天');
       assert.equal(withCall.messages.at(-1).callBoundary, 'end');
       await bounded.releaseClaim(withCall);
       callSources = [];
       database.prepare("UPDATE messages SET sender_type='reasoning' WHERE id IN (SELECT value FROM json_each(?))").run(JSON.stringify(messageIds.slice(0, 300)));
-      const projected = timelineDomain.selectSummaryRange((await bounded.readContext(conversationId, [])).timeline, 20);
-      const afterReasoning = await bounded.claim(conversationId, 20, 'bounded-non-dialogue', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai');
+      const projected = timelineDomain.selectSummaryRange((await bounded.readContext(conversationId, [])).timeline, 20, 0);
+      const afterReasoning = await bounded.claim(conversationId, 20, 'bounded-non-dialogue', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0);
       assert.deepEqual(afterReasoning.messages, projected, '没有上下文投影的整页仍需推进数据库游标');
       await bounded.failTask(afterReasoning, { kind: 'request', message: '冷却中', retryable: true }, now);
       await bounded.releaseClaim(afterReasoning);
       returnedRows = 0; callReads = 0;
-      assert.equal(await bounded.claim(conversationId, 20, 'bounded-cooling', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai'), null);
+      assert.equal(await bounded.claim(conversationId, 20, 'bounded-cooling', now, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0), null);
       assert.equal(returnedRows, 0, '冷却任务在读取原文和已有摘要前退出');
       assert.equal(callReads, 0, '冷却任务不读取通话来源');
-      const retry = await bounded.claim(conversationId, 20, 'bounded-retry', later, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai');
+      const retry = await bounded.claim(conversationId, 20, 'bounded-retry', later, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0);
       assert.ok(retry, '冷却结束仍可正常领取');
       await bounded.failTask(retry, { kind: 'request', message: '暂停中', retryable: false }, later);
       await bounded.releaseClaim(retry);
       returnedRows = 0; callReads = 0;
-      assert.equal(await bounded.claim(conversationId, 20, 'bounded-paused', later, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai'), null);
+      assert.equal(await bounded.claim(conversationId, 20, 'bounded-paused', later, '2099-01-01T00:00:00.000Z', 'Asia/Shanghai', 0), null);
       assert.equal(returnedRows, 0);
       assert.equal(callReads, 0);
     } finally { raw.getAllAsync = getAll; }
@@ -1754,7 +2271,7 @@ try {
       await bootstrap();
       assert.deepEqual(await pending(), ['pending-chat'], '没有前台内存唤醒也能在重启后恢复');
       let generated = 0;
-      const configureQueued = getBatchSize => summaryRuntime.configureChatSummaryRuntime({ repository: queued, getBatchSize,
+      const configureQueued = getBatchSize => summaryRuntime.configureChatSummaryRuntime({ repository: queued, getBatchSettings: async () => ({ batchSize: await getBatchSize(), recentWindowLimit: 0 }),
         generateAddition: async () => { generated++; return '队列摘要'; }, generateSecondary: async () => '二级摘要' });
       configureQueued(async () => 5);
       assert.equal(await summaryApplication.processChatSummary('pending-chat', signal), false);
@@ -1815,7 +2332,7 @@ try {
 
       // 已确认的会话没有新事实时只由到期任务唤醒，失败暂停与有效租约都不进入恢复候选。
       addQueuedMessage('pending-chat','重试范围');
-      const failureClaim = await queued.claim('pending-chat',1,'queued-retry',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+      const failureClaim = await queued.claim('pending-chat',1,'queued-retry',now,'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
       const future = new Date(Date.now()+60_000).toISOString();
       await queued.failTask(failureClaim,{kind:'timeout',message:'稍后重试',retryable:true},new Date().toISOString());
       await queued.releaseClaim(failureClaim);
@@ -1828,7 +2345,7 @@ try {
       assert.deepEqual(await pending(), [],'失败暂停不被启动复活');
       await queued.retryTask('pending-chat',failureClaim.taskId,new Date().toISOString());
       assert.deepEqual(await pending(), ['pending-chat'],'显式手动重试可消费');
-      const resumed = await queued.claim('pending-chat',1,'queued-resumed',new Date().toISOString(),'2099-01-01T00:00:00.000Z','Asia/Shanghai');
+      const resumed = await queued.claim('pending-chat',1,'queued-resumed',new Date().toISOString(),'2099-01-01T00:00:00.000Z','Asia/Shanghai', 0);
       assert.deepEqual(await pending(), [],'有效在途租约不重复恢复');
       database.prepare("UPDATE chat_summary_state SET claim_expires_at=? WHERE conversation_id='pending-chat'").run(now);
       assert.deepEqual(await pending(), ['pending-chat'],'过期的在途任务可以恢复');
@@ -1846,20 +2363,20 @@ try {
   const { initDatabase } = load('src/platform/persistence/sqlite/initialization.ts');
   const { clearDB } = load('src/platform/persistence/helpers.ts');
   await initDatabase();
-  assert.equal(await repository.getEmbeddingModelId(), 'retained-choice', '普通重启初始化不能覆盖用户模型选择');
+  assert.equal((await repository.getEmbeddingSettings()).modelConfigId, 'retained-choice', '普通重启初始化不能覆盖用户模型选择');
   database.exec("CREATE TRIGGER reject_reset BEFORE DELETE ON memory_model_settings BEGIN SELECT RAISE(ABORT, '注入清库失败'); END;");
   await assert.rejects(clearDB(), /清空应用表失败/u);
-  assert.equal(await repository.getEmbeddingModelId(), 'retained-choice', '清库回滚不能丢失用户配置');
+  assert.equal((await repository.getEmbeddingSettings()).modelConfigId, 'retained-choice', '清库回滚不能丢失用户配置');
   database.exec('DROP TRIGGER reject_reset');
   runtime.configureMemoryRuntimeDependencies({
     ...runtime.getMemoryRuntimeDependencies(),
-    resolveEmbeddingModel: async () => await repository.getEmbeddingModelId() === modelA.id ? modelA : null,
+    resolveEmbeddingModel: async () => (await repository.getEmbeddingSettings()).modelConfigId === modelA.id ? modelA : null,
   });
   for (let reset = 0; reset < 2; reset++) {
     await repository.setEmbeddingModelId(modelA.id);
     await clearDB();
     await initDatabase();
-    assert.equal(await repository.getEmbeddingModelId(), null);
+    assert.equal((await repository.getEmbeddingSettings()).modelConfigId, null);
     assert.equal(await repository.getPreferredAssistantId(), null);
     assert.equal((await raw.getFirstAsync('SELECT model_config_id FROM speech_recognition_settings WHERE id = 1')).model_config_id, null);
     assert.equal((await raw.getFirstAsync('SELECT COUNT(*) AS count FROM auxiliary_model_configs')).count, 0);

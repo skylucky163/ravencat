@@ -1,3 +1,4 @@
+import { chatSharingDependencies } from './chat-sharing-fixture.mjs';
 /** 消息改写与多选行为测试共用的源码装载与内存 SQLite 装配；每次创建独立数据库与事务队列。 */
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -75,7 +76,7 @@ export function createChatMessageMutationFixture() {
   const persistence = { databaseCoordinator: { openTaskExecutor: () => executor } };
   const metadata = load(`${messageDomain}chatMessageMetadata.ts`, {
     './ChatSticker': load(`${messageDomain}ChatSticker.ts`),
-    './SharedChatRecord': load(`${messageDomain}SharedChatRecord.ts`),
+    ...chatSharingDependencies,
   });
   const { MessageRepository } = load('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts', {
     '@platform/persistence': persistence,
@@ -86,7 +87,7 @@ export function createChatMessageMutationFixture() {
     '../domain/chatMessageMetadata': metadata,
   });
   const { GroupChatRepository } = load('src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts', {
-    '@platform/persistence': persistence, '@features/profile': {}, '@features/media': {},
+    '@platform/persistence': persistence, '@features/profile': {}, '@features/media': {}, '@features/assistants': {},
   });
   return {
     db,

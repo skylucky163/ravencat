@@ -33,7 +33,7 @@ export async function recallMemoryForRun(assistantId: string, runId: string, inp
     let semanticUnavailable: string | null = null;
     let vector: number[] | null = null;
     if (query) {
-      if (!model) semanticUnavailable = '记忆向量模型未选择或不可用；语义查询不可用';
+      if (!model) semanticUnavailable = '当前未启用可用的记忆向量模型；请使用 keywords 进行关键词检索';
       else {
         try { vector = await runtime.embed(query, model, signal); }
         catch (error) {
@@ -53,7 +53,7 @@ export async function recallMemoryForRun(assistantId: string, runId: string, inp
     const entries = candidates.entries;
     if (vector) for (const item of candidates.vectors) similarities.set(item.memoryId, similarity(vector, item.vector));
     if (query && vector && entries.length > 0 && candidates.vectors.length === 0 && !semanticUnavailable) {
-      semanticUnavailable = '当前空间尚无可用的记忆向量，向量更新完成后可进行语义召回';
+      semanticUnavailable = '当前空间尚无适用于当前模型的记忆向量，可在记忆设置中手动重建，或使用 keywords 检索';
     }
     throwIfAbortSignalAborted(signal);
     queue = { key, entries: rankMemoryEntries(entries, keywords, similarities), pageSize: settings.activePageSize, semanticUnavailable };

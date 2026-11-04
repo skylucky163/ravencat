@@ -102,8 +102,8 @@ currentExecutor = executorFor(db);
 const repository = new repositoryModule.SQLiteMomentRepository();
 
 const configs = new Map([
-  ['model-a', { id: 'model-a', capabilityKind: 'ocr', name: '视觉 A', enabled: true, baseUrl: 'https://example.test', apiKey: null, model: 'vision-a', temperature: null, topP: null, maxTokens: null }],
-  ['model-b', { id: 'model-b', capabilityKind: 'ocr', name: '视觉 B', enabled: true, baseUrl: 'https://example.test', apiKey: null, model: 'vision-b', temperature: null, topP: null, maxTokens: null }],
+  ['model-a', { id: 'model-a', capabilityKind: 'ocr', name: '视觉 A', enabled: true, baseUrl: 'https://example.test', apiKey: 'test', model: 'vision-a', temperature: null, topP: null, maxTokens: null }],
+  ['model-b', { id: 'model-b', capabilityKind: 'ocr', name: '视觉 B', enabled: true, baseUrl: 'https://example.test', apiKey: 'test', model: 'vision-b', temperature: null, topP: null, maxTokens: null }],
 ]);
 let executorCalls = 0;
 let analysisBehavior = async () => '桌上放着一杯咖啡';
@@ -264,6 +264,31 @@ assert.equal(successfulReanalysis.success, true);
 const afterSuccessfulReanalysis = await repository.getMedia(first.id);
 assert.equal(afterSuccessfulReanalysis.analysisText, '重新识别：窗边的一杯咖啡');
 assert.equal(afterSuccessfulReanalysis.analysisModelConfigId, 'model-b');
+
+const originalGetSettings = repository.getSettings;
+let settingReads = 0;
+repository.getSettings = async (...args) => {
+  settingReads += 1;
+  return originalGetSettings.call(repository, ...args);
+};
+try {
+  await analysisModule.reanalyzeMomentMedia(first.id);
+  assert.equal(settingReads, 1, '一次图片分析只读取一次设置快照');
+} finally {
+  repository.getSettings = originalGetSettings;
+}
+
+// 保存成功结果的数据库异常不能改写成模型失败，也不能覆盖已有可靠描述。
+const beforeDbFailure = await repository.getMedia(first.id);
+const originalSaveModelAnalysis = repository.saveModelAnalysis;
+const dbFailure = new Error('模拟 SQLite 写入失败');
+repository.saveModelAnalysis = async () => { throw dbFailure; };
+try {
+  await assert.rejects(analysisModule.reanalyzeMomentMedia(first.id), error => error === dbFailure);
+  assert.deepEqual(await repository.getMedia(first.id), beforeDbFailure, '数据库异常不得污染已有分析快照');
+} finally {
+  repository.saveModelAnalysis = originalSaveModelAnalysis;
+}
 
 // retry 失败时保留旧成功 snapshot。
 const beforeFailure = await repository.getMedia(first.id);

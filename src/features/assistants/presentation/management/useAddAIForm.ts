@@ -5,7 +5,6 @@ import useAddAIFormState from './useAddAIFormState';
 import useAddAIModelSelection, { ModelItem } from './useAddAIModelSelection';
 import useAddAIConnectionTest from './useAddAIConnectionTest';
 import { getTrimmedAPIConfig } from './addAIFormHelpers';
-import type { ModelCallConfig } from '../../domain/ModelCallConfig';
 
 interface UseAddAIFormOptions {
   onAdded?: () => void;
@@ -38,7 +37,7 @@ interface UseAddAIFormResult {
   handleSelectModel: (modelId: string) => void;
   handleTestConnection: () => Promise<void>;
   handleSave: () => Promise<void>;
-  handleFillModelConfig: (config: ModelCallConfig) => void;
+  handleFillServiceConnection(service: { id: string; baseUrl: string; apiKey: string }): void;
 }
 
 /**
@@ -57,8 +56,7 @@ export default function useAddAIForm({ onAdded, onBack }: UseAddAIFormOptions): 
     systemPrompt,
     setSystemPrompt,
     currentStep,
-    handleSave,
-    modelParams, fillModelConfig,
+    handleSave, fillServiceConnection,
   } = useAddAIFormState({ onAdded, onBack });
 
   const trimmedConfig = getTrimmedAPIConfig({ apiBaseUrl, apiKey });
@@ -86,7 +84,6 @@ export default function useAddAIForm({ onAdded, onBack }: UseAddAIFormOptions): 
     apiBaseUrl: trimmedConfig.apiBaseUrl,
     apiKey: trimmedConfig.apiKey,
     selectedModel,
-    requestOptions: modelParams,
   });
 
   const resetModelFlow = useCallback(() => {
@@ -116,11 +113,7 @@ export default function useAddAIForm({ onAdded, onBack }: UseAddAIFormOptions): 
   }, [selectModel, resetConnectionTest]);
 
   return {
-    handleFillModelConfig: (config) => {
-      resetModelSelection();
-      resetConnectionTest();
-      fillModelConfig(config);
-    },
+    handleFillServiceConnection: service => { resetModelFlow(); fillServiceConnection(service); },
     // 表单字段
     name,
     setName,

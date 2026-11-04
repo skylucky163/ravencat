@@ -97,7 +97,7 @@ const createStyles = (theme: PresentationTheme) =>
       position: 'relative',
       marginRight: theme.spacing.lg,
     },
-    // AvatarImage 默认底是 brand.primary + '15'，列表里不要那块淡蓝，头像直接贴列表背景。
+    // 列表头像保持透明底，不在列表表面上叠加额外底色。
     listAvatar: {
       backgroundColor: 'transparent',
     },

@@ -12,10 +12,10 @@ import type { GroupChatAdminConfig, UpdateGroupChatAdminConfigInput } from '../.
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import { KeyboardAvoidingContainer, ModelPickerModal, Button, InputField, SliderField } from '@shared/ui';
 import { createCommonStyles } from '@shared/ui/commonStyles';
-import { useTheme } from '@shared/theme';
+import { ThemedSurface, useTheme } from '@shared/theme';
 import { AutoSaveErrors } from '@shared/ui/AutoSaveErrors';
 
-import { ModelSection, CopyToGeneralModel } from '@features/assistants';
+import { ModelSection, ServiceConnectionPicker } from '@features/assistants';
 import NumberInputPresetsSection from './NumberInputPresetsSection';
 import useGroupAdminSettings from './useGroupAdminSettings';
 
@@ -59,7 +59,7 @@ export default function GroupAdminSettings({
     handleFetchModels,
     handleSelectModel,
     handleTestConnection,
-    readModelConfig,
+    fillServiceConnection,
     errors, saveError, commit, back, restoreDraft, feedback, connectionError,
   } = useGroupAdminSettings({ adminConfig, onUpdate, onBack });
   const blur = () => { void commit(); };
@@ -107,6 +107,12 @@ export default function GroupAdminSettings({
               autoGrow
               autoCapitalize="none"
             />
+          </View>
+
+          <View style={commonStyles.section}>
+            <ThemedSurface variant="card" style={{ borderRadius: theme.radius.lg, overflow: 'hidden' }}>
+              <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} onFill={fillServiceConnection} disabled={isTesting || isLoadingModels} />
+            </ThemedSurface>
           </View>
 
           {/* 模型选择 + 测试连接 */}
@@ -163,8 +169,6 @@ export default function GroupAdminSettings({
             onChangeText={handleMaxTokensChange}
             presets={['2000', '4000', '8000', '无限制']}
           /></View>
-
-          <View style={commonStyles.section}><CopyToGeneralModel readConfig={readModelConfig} /></View>
 
           {/* 管理员上下文消息数量 */}
           <View onLayout={feedback.fieldLayout(['contextMessageCount'])}><NumberInputPresetsSection

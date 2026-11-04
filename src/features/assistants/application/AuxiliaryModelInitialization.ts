@@ -6,6 +6,7 @@ import type { AuxiliaryModelConfig } from '../domain/AuxiliaryModel';
 export interface AuxiliaryModelInitialization {
   /** 资产参数或可用性变化与引用方的在途资格撤销共享提交边界，不改写引用ID。 */
   invalidateModelReferencesInTransaction(transaction: DatabaseTransactionExecutor, modelConfigId: string): Promise<void>;
+  invalidateServiceReferencesInTransaction(transaction: DatabaseTransactionExecutor, serviceConfigId: string): Promise<void>;
   initializeModelSelections(transaction: DatabaseTransactionExecutor, model: AuxiliaryModelConfig): Promise<void>;
   initializeAssistantSelections(transaction: DatabaseTransactionExecutor, assistantId: string, models: AuxiliaryModelConfig[]): Promise<void>;
   modelSelectionsInitialized(model: AuxiliaryModelConfig): void;

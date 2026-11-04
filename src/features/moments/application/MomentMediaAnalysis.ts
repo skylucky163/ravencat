@@ -80,7 +80,7 @@ async function analyze(
     });
     return settleAnalysisFailure(media.id, 'model_not_configured', errorMessage, saved, options.initial);
   }
-  const model = await resolveMomentImageAnalysisModel();
+  const model = await resolveMomentImageAnalysisModel(settings);
   if (!model) {
     const at = runtime.now();
     const errorMessage = '所选图片理解模型不可用，请在时刻设置中检查模型配置。';
@@ -95,28 +95,17 @@ async function analyze(
     return settleAnalysisFailure(media.id, 'model_unavailable', errorMessage, saved, options.initial);
   }
 
+  let text: string;
   try {
     throwIfAbortSignalAborted(options.signal);
-    const text = normalizeAnalysisText(await runtime.executeImageAnalysis({
+    text = normalizeAnalysisText(await runtime.executeImageAnalysis({
       mediaAssetId: media.mediaAssetId,
       model,
       signal: options.signal,
     }));
-    const saved = await runtime.repository.saveModelAnalysis({
-      mediaId: media.id,
-      expectedRevision: media.analysisRevision,
-      expectedPending: options.initial,
-      text,
-      modelConfigId: model.id,
-      analyzedAt: runtime.now(),
-    });
-    if (saved) emitUpdated(media.id);
-    return saved
-      ? { success: true, mediaId: media.id }
-      : { success: false, mediaId: media.id, errorCode: 'stale_analysis_attempt', errorMessage: '图片描述已更新，本次识别未覆盖当前描述。' };
   } catch (error) {
     throwIfAbortSignalAborted(options.signal);
-    // 模型接口原因由 Host/Client 边界脱敏；未知内部异常不作为接口原文展示。
+    // 只有模型调用与输出校验可以转换为识别失败；持久化异常必须继续上抛。
     const failure = error instanceof MomentImageAnalysisError
       ? error
       : new MomentImageAnalysisError('model_request_failed', '图片理解处理失败，请稍后重试。');
@@ -130,6 +119,19 @@ async function analyze(
     });
     return settleAnalysisFailure(media.id, failure.code, failure.message, saved, options.initial);
   }
+
+  const saved = await runtime.repository.saveModelAnalysis({
+    mediaId: media.id,
+    expectedRevision: media.analysisRevision,
+    expectedPending: options.initial,
+    text,
+    modelConfigId: model.id,
+    analyzedAt: runtime.now(),
+  });
+  if (saved) emitUpdated(media.id);
+  return saved
+    ? { success: true, mediaId: media.id }
+    : { success: false, mediaId: media.id, errorCode: 'stale_analysis_attempt', errorMessage: '图片描述已更新，本次识别未覆盖当前描述。' };
 }
 
 /** 仅处理这次刚提交、仍为 pending 的图片；顺序执行，单图失败不阻断下一张。 */

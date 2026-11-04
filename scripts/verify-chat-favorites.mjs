@@ -249,7 +249,7 @@ boundaries.set('@react-navigation/native', { useFocusEffect: callback => {
   const isFocused = focused;
   React.useEffect(() => isFocused ? callback() : undefined, [callback, isFocused]);
 } });
-boundaries.set('lucide-react-native', { StarOff: 'StarOff', Star: 'Star', Pin: 'Pin', PinOff: 'PinOff', History: 'History', UserRound: 'UserRound', ArchiveRestore: 'ArchiveRestore', RefreshCw: 'RefreshCw', Trash2: 'Trash2' });
+boundaries.set('lucide-react-native', { StarOff: 'StarOff', Star: 'Star', Pin: 'Pin', PinOff: 'PinOff', History: 'History', TextSelect: 'TextSelect', UserRound: 'UserRound', ArchiveRestore: 'ArchiveRestore', RefreshCw: 'RefreshCw', Trash2: 'Trash2' });
 boundaries.set('@expo/vector-icons', { Ionicons: 'Icon' });
 for (const [id, name] of [['../messages/MessageBubble/ImageAttachmentCard', 'ImagePreview'], ['../messages/MessageBubble/AttachmentCard', 'AttachmentPreview'],
   ['../messages/MessageBubble/VoiceMessageCard', 'AudioPlayer'], ['../messages/FilePreview', 'FilePreview']]) boundaries.set(id, { __esModule: true, default: name });

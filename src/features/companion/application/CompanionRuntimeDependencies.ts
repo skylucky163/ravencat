@@ -8,7 +8,6 @@ import type {
   findCommittedAssistantMessageIdByRelatedSource,
   getCanonicalChatConversation,
   resolveCanonicalChatSourceMessages,
-  findFirstVisibleTimelineAnchorsByRunIds,
   runChatVisibleAgent,
   listChatAgentActivityEvidence,
   SendUserMessageParams,
@@ -100,8 +99,6 @@ export interface CompanionChatPort {
   runVisibleAgent: typeof runChatVisibleAgent;
   findCommittedAssistantMessageIdByRelatedSource:
     typeof findCommittedAssistantMessageIdByRelatedSource;
-  findFirstVisibleTimelineAnchorsByRunIds:
-    typeof findFirstVisibleTimelineAnchorsByRunIds;
   /**
    * 由 Host 注入的受控 Headless 消息入口。
    *
@@ -118,6 +115,7 @@ export interface CompanionExecutionHostMessageParams {
   message: SendUserMessageParams;
   aiConfig: AIAssistantConfig;
   correlationId: string;
+  execution: { signal: AbortSignal; executionDeadlineAt: number };
   replyCallbacks: CompanionExecutionHostReplyCallbacks;
 }
 

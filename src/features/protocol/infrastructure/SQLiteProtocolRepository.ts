@@ -4,6 +4,7 @@ import { databaseCoordinator, type DatabaseTransactionExecutor } from '@platform
 import type {
   IProtocolRepository,
   Protocol,
+  ProtocolInsertResult,
   CreateProtocolInput,
   UpdateProtocolInput,
 } from '../domain/ProtocolRepository';
@@ -75,7 +76,7 @@ export class SQLiteProtocolRepository implements IProtocolRepository {
     return rows.map(mapRow);
   }
 
-  async insert({ aiAssistantId, content, summary }: CreateProtocolInput): Promise<Protocol & { alreadyExists: boolean }> {
+  async insert({ aiAssistantId, content, summary }: CreateProtocolInput): Promise<ProtocolInsertResult> {
     const trimmedContent = normalizeContent(content);
     const database = databaseCoordinator.openTaskExecutor({ name: 'protocol.insert', feature: 'protocol', priority: 'runtime' });
     // 去重与写入由同一事务拥有，界面与 AI 工具同时保存也不能制造重复条目。
@@ -132,12 +133,6 @@ export class SQLiteProtocolRepository implements IProtocolRepository {
     const database = databaseCoordinator.openTaskExecutor({ name: 'protocol.delete', feature: 'protocol', priority: 'runtime' });
     const result = await database.runAsync('DELETE FROM protocols WHERE ai_assistant_id = ? AND id = ?', [aiAssistantId, id]);
     return result.changes > 0;
-  }
-
-  async getById(id: string): Promise<Protocol | null> {
-    const database = databaseCoordinator.openTaskExecutor({ name: 'protocol.getById', feature: 'protocol', priority: 'runtime' });
-    const row = await database.getFirstAsync<ProtocolRow>('SELECT * FROM protocols WHERE id = ?', [id]);
-    return row ? mapRow(row) : null;
   }
 }
 

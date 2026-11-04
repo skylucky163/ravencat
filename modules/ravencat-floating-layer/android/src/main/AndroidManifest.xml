@@ -22,21 +22,5 @@
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
         android:value="持续显示用户可见且可交互的 RavenCat 悬浮球与消息面板" />
     </service>
-    <service
-      android:name="expo.modules.ravencatfloatinglayer.RavenCatCompanionWakeHeadlessTaskService"
-      android:exported="false" />
-    <!-- 一次 wake 执行的有界前台执行宿主；生命周期归 Proactive Companion execution host，
-         不是常驻服务，也不属于 Floating Interaction。 -->
-    <service
-      android:name="expo.modules.ravencatfloatinglayer.companion.RavenCatCompanionExecutionService"
-      android:exported="false"
-      android:foregroundServiceType="specialUse">
-      <property
-        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-        android:value="在后台完成一次已经到期的 AI 主动行动执行，执行结束即停止" />
-    </service>
-    <service
-      android:name="expo.modules.ravencatfloatinglayer.RavenCatFloatingMessageHeadlessTaskService"
-      android:exported="false" />
   </application>
 </manifest>

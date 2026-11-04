@@ -336,13 +336,13 @@ assistant commit
 → consumer 已展示：handled_by_consumer
 → 其他情况：native notification
 
-### 6.1 AI 日程 / Companion Headless / Overlay FGS
+### 6.1 AI 日程 / 应用后台执行 / Overlay FGS
 
-修改 AI 日程自主执行、Companion Headless execution、`RavenCatCompanionExecutionHost`、`RavenCatOverlayService`
+修改 AI 日程自主执行、Companion 后台执行、`RavenCatCompanionExecutionHost`、`RavenCatOverlayService`
 或它们的通知/诊断前，必须阅读：
 
 ```text
-docs/ravencat/proactive-companion.md        （§6.3 Background Execution / Headless Execution Host）
+docs/ravencat/proactive-companion.md        （§6.3 后台执行宿主与应用持续运行）
 docs/ravencat/floating-interaction.md       （§9.1 Overlay FGS 的所有权与不可依赖关系）
 ```
 
@@ -355,10 +355,11 @@ Proactive Companion ON
 ```
 
 Overlay FGS 属于 Floating Interaction；Proactive Companion 不拥有、也不得依赖它。
-Companion 的 foreground execution 只能是**一次任务的 bounded execution lifetime**
-（随该次日程执行开始、随终态结束），不能是产品开关的 lifetime，也不允许用
-`Worker → fire-and-forget startService()` 把执行生命周期留给系统或另一个 foreground service。
-
+应用级通用保活由 `modules/background-runtime` 的独立总开关拥有，开启后跨业务任务持续运行，
+只有用户关闭或恢复出厂才撤销。聊天、悬浮消息与 Companion 共用应用唯一 RN 后台身份，不得为每条消息／日程创建 Service 或 RN task。
+Companion execution host 仍必须有界等待本次任务终态与取消回执，不能用 fire-and-forget 替代执行所有权。
+通话媒体、悬浮 UI 与设备控制的功能服务继续由各自 owner 管理；不得借通用保活接管业务事实或绕过系统权限。
+完整契约见 `docs/architecture/application-background-runtime.md`。
 
 ## 7. 并发与业务所有权
 

@@ -116,7 +116,8 @@ export default function StickerSystemGroupsScreen() {
                   </View>
                   <View style={styles.rowRight}>
                     <TouchableOpacity
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="重命名分组"
+                      style={styles.rowIconButton}
                       onPress={() => {
                         setRenaming(group);
                         setRenameDraft(group.name);
@@ -129,7 +130,8 @@ export default function StickerSystemGroupsScreen() {
                       />
                     </TouchableOpacity>
                     <TouchableOpacity
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="删除分组"
+                      style={styles.rowIconButton}
                       onPress={() => handleDelete(group)}
                     >
                       <Ionicons name="trash-outline" size={20} color={theme.colors.text.secondary} />
@@ -155,7 +157,6 @@ export default function StickerSystemGroupsScreen() {
       )}
 
       <ModalSheet
-        avoidKeyboard
         visible={creating || renaming !== null}
         onClose={() => {
           setCreating(false);

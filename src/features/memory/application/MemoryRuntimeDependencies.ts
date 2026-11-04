@@ -28,6 +28,9 @@ export interface MemoryRuntimeDependencies {
   resolveEmbeddingModel(): Promise<MemoryEmbeddingModel | null>;
   getEmbeddingModelSettings(): Promise<MemoryEmbeddingModelSettings>;
   selectEmbeddingModel(modelConfigId: string | null): Promise<void>;
+  setEmbeddingEnabled(enabled: boolean): Promise<void>;
+  clearEmbeddings(): Promise<void>;
+  withEmbeddingMaintenance<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T>;
   embed(text: string, model: MemoryEmbeddingModel, signal: AbortSignal): Promise<number[]>;
 }
 const slot = createRuntimeSlot<MemoryRuntimeDependencies>('Memory');

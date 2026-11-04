@@ -39,7 +39,7 @@ function write(relativePath, content) {
 }
 
 write('node_modules/@shared/prompt/index.js', [
-  "exports.DEFAULT_VISION_OCR_TASK_PROMPT = 'ocr';",
+  "exports.__stub = true;",
 ].join('\n'));
 compile('src/host/prompt/PromptBuiltInContent.ts');
 compile('src/features/calls/application/CallPromptBlocks.ts');

@@ -3,7 +3,6 @@ export interface MomentImageAnalysisModelRef {
   id: string;
   capabilityKind: string;
   name: string;
-  enabled: boolean;
   baseUrl: string;
   apiKey: string | null;
   model: string;
@@ -15,7 +14,7 @@ export interface MomentImageAnalysisModelRef {
 export type MomentImageAnalysisModelSelectionStatus =
   | 'unconfigured'
   | 'active'
-  | 'disabled'
+  | 'incomplete'
   | 'deleted'
   | 'capability_mismatch';
 

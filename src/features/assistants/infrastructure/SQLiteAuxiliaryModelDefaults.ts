@@ -5,8 +5,8 @@ import { getAuxiliaryModelUnavailableReason } from '../AuxiliaryModelAvailabilit
 import type { AuxiliaryModelConfig, CapabilityKind } from '../domain/AuxiliaryModel';
 
 export async function initializeAuxiliaryModelInTransaction(transaction: DatabaseTransactionExecutor, model: AuxiliaryModelConfig): Promise<boolean> {
-  // 通用配置只由用户主动复制或由业务显式选择，不参与首次资产初始化。
-  if (model.capabilityKind === 'general') return false;
+  // 摘要配置只由业务显式选择，不参与首次资产初始化。
+  if (model.capabilityKind === 'summary') return false;
   await transaction.runAsync(`INSERT OR IGNORE INTO auxiliary_model_initial_defaults (capability_kind, model_config_id)
     VALUES (?, ?)`, [model.capabilityKind, model.id]);
   if (getAuxiliaryModelUnavailableReason(model, model.capabilityKind) !== null) return false;

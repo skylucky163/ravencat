@@ -1,5 +1,6 @@
 /** 在 Host 组合根维护 Built-in Tool 的唯一注册、元数据与暴露策略。 */
 import { groupManagementTools } from './GroupManagementTools';
+import { ShareMomentTool } from './ShareMomentTool';
 
 
 import { readPromptDefaults, listAssistantDirectToolNames } from '@features/prompting';
@@ -42,7 +43,10 @@ import {
   ReadSocialInboxTool,
   SearchMomentsTool,
 } from '@features/moments';
-import { AddLedgerRecordTool, DeleteLedgerRecordTool, GetLedgerContextTool, SearchLedgerTool, UpdateLedgerRecordTool } from '@features/wallet';
+import {
+  AddLedgerRecordTool, DeleteLedgerRecordTool, GetLedgerContextTool, UpdateLedgerRecordTool,
+  CreateLedgerQuickActionTool, UpdateLedgerQuickActionTool, DeleteLedgerQuickActionTool, UseLedgerQuickActionTool,
+} from '@features/wallet';
 import { LookAtUserTool, RequestVideoCallTool } from '@features/calls';
 import {
   releaseMemoryRecallRun,
@@ -297,6 +301,7 @@ const BUILT_IN_TOOL_REGISTRATIONS: readonly BuiltInToolRegistration[] = [
   builtInTool(DeleteProtocolTool, 'protocol', REVERSIBLE_WRITE),
   builtInTool(SearchMomentsTool, 'moments', SAFE_READ),
   builtInTool(GetMomentDetailTool, 'moments', SAFE_READ),
+  agentNativeBuiltInTool(ShareMomentTool, 'moments', EXTERNAL_SIDE_EFFECT, { directChatOnly: true, groupChatAllowed: true }),
   builtInTool(ReadSocialInboxTool, 'moments', SAFE_READ),
   builtInTool(AILikeMomentTool, 'moments', REVERSIBLE_WRITE),
   builtInTool(AICommentMomentTool, 'moments', REVERSIBLE_WRITE),
@@ -306,10 +311,13 @@ const BUILT_IN_TOOL_REGISTRATIONS: readonly BuiltInToolRegistration[] = [
   builtInTool(AIDeleteOwnMomentTool, 'moments', REVERSIBLE_WRITE),
   builtInTool(AIDeleteOwnMomentCommentTool, 'moments', REVERSIBLE_WRITE),
   builtInTool(GetLedgerContextTool, 'wallet', PRIVATE_READ),
-  builtInTool(SearchLedgerTool, 'wallet', PRIVATE_READ),
   builtInTool(AddLedgerRecordTool, 'wallet', REVERSIBLE_ACTION),
   builtInTool(UpdateLedgerRecordTool, 'wallet', REVERSIBLE_ACTION),
   builtInTool(DeleteLedgerRecordTool, 'wallet', REVERSIBLE_ACTION),
+  builtInTool(CreateLedgerQuickActionTool, 'wallet', REVERSIBLE_ACTION),
+  builtInTool(UpdateLedgerQuickActionTool, 'wallet', REVERSIBLE_ACTION),
+  builtInTool(DeleteLedgerQuickActionTool, 'wallet', REVERSIBLE_ACTION),
+  builtInTool(UseLedgerQuickActionTool, 'wallet', REVERSIBLE_ACTION),
   builtInTool(RequestVideoCallTool, 'calls', EXTERNAL_SIDE_EFFECT, { groupChatForbidden: true, callForbidden: true }),
   builtInTool(LookAtUserTool, 'calls', SENSITIVE_ACTION, { callOnly: true }),
   agentNativeBuiltInTool(RememberMemoryTool, 'memory', REVERSIBLE_WRITE, { memoryParticipation: 'read_write' }),

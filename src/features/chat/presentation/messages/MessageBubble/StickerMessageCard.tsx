@@ -1,6 +1,6 @@
 /** 渲染独立 Sticker 消息卡；媒体通过 MediaAsset resolver 解析，不走普通图片附件链。 */
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -9,12 +9,12 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRecyclingState } from '@shopify/flash-list';
 
 import { resolveMediaAsset } from '@features/media';
 import type { StickerMessageSnapshot } from '@features/chat/messages/domain';
 import { useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
+import { ChatMediaResolutionCacheContext } from '../components/chatMediaResolutionCache';
 
 interface StickerMessageCardProps {
   sticker: StickerMessageSnapshot;
@@ -32,25 +32,39 @@ type StickerResolutionState =
   | { status: 'ready'; localUri: string };
 
 export default function StickerMessageCard({ sticker }: StickerMessageCardProps) {
+  // FlashList 会复用外层卡片；素材更换时重建内容，使旧原生回调与异步解析只拥有旧状态。
+  return <StickerMessageContent key={sticker.mediaAssetId} sticker={sticker} />;
+}
+
+function StickerMessageContent({ sticker }: StickerMessageCardProps) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
-  const [resolution, setResolution] = useRecyclingState<StickerResolutionState>(
-    { status: 'loading' },
-    [sticker.mediaAssetId],
+  const mediaCache = useContext(ChatMediaResolutionCacheContext)?.stickers;
+  const [resolution, setResolution] = useState<StickerResolutionState>(
+    () => {
+      const localUri = mediaCache?.get(sticker.mediaAssetId);
+      return localUri ? { status: 'ready', localUri } : { status: 'loading' };
+    },
   );
 
   useEffect(() => {
+    if (resolution.status !== 'loading') return;
     let isMounted = true;
 
     void resolveMediaAsset(sticker.mediaAssetId)
       .then((resolved) => {
+        mediaCache?.set(sticker.mediaAssetId, resolved.localUri);
         if (isMounted) {
           setResolution({ status: 'ready', localUri: resolved.localUri });
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         // backing 缺失是可展示的历史消息状态，卡片保留占位而不改写消息事实。
         if (isMounted) {
+          console.warn('[StickerMessageCard] 表情素材解析失败', {
+            stickerId: sticker.stickerId, mediaAssetId: sticker.mediaAssetId,
+            mimeType: sticker.mimeType, stage: 'resolve', error,
+          });
           setResolution({ status: 'unavailable' });
         }
       });
@@ -58,7 +72,7 @@ export default function StickerMessageCard({ sticker }: StickerMessageCardProps)
     return () => {
       isMounted = false;
     };
-  }, [sticker.mediaAssetId, setResolution]);
+  }, [sticker.mediaAssetId, sticker.stickerId, sticker.mimeType, mediaCache, resolution.status]);
 
   const imageStyle = useMemo(() => {
     const width = sticker.width || 0;
@@ -77,9 +91,18 @@ export default function StickerMessageCard({ sticker }: StickerMessageCardProps)
     <View style={styles.container}>
       {resolution.status === 'ready' ? (
         <Image
+          key={resolution.localUri}
           source={{ uri: resolution.localUri }}
           style={imageStyle}
           resizeMode="contain"
+          onError={(event) => {
+            console.warn('[StickerMessageCard] 表情图片加载失败', {
+              stickerId: sticker.stickerId, mediaAssetId: sticker.mediaAssetId,
+              mimeType: sticker.mimeType, localUri: resolution.localUri,
+              stage: 'image', error: event.nativeEvent.error,
+            });
+            setResolution({ status: 'unavailable' });
+          }}
         />
       ) : (
         <View style={[imageStyle, styles.placeholder]}>

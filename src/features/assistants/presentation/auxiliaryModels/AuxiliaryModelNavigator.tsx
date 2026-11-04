@@ -1,3 +1,5 @@
+import ModelServiceListScreen from './ModelServiceListScreen';
+import ModelServiceEditScreen from './ModelServiceEditScreen';
 /** 辅助模型中心只管理资产，路由适配由 Host 负责。 */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
@@ -18,6 +20,8 @@ import type { AuxiliaryModelFormData, CapabilityEntryItem } from './types';
 
 export type AuxiliaryModelRoute =
   | { screen: 'center' }
+  | { screen: 'services' }
+  | { screen: 'service-edit'; serviceId?: string }
   | { screen: 'pool'; kind: CapabilityKind }
   | { screen: 'edit'; capabilityKind: CapabilityKind; modelId?: string };
 function getErrorMessage(error: unknown, fallback: string): string { return error instanceof Error ? error.message : fallback; }
@@ -130,8 +134,12 @@ export default function AuxiliaryModelNavigator({ onBack, route, onNavigate, ref
   }, [route, showConnectionTestResult, testingConnection]);
 
   switch (route.screen) {
+    case 'services':
+      return <ModelServiceListScreen onBack={() => onNavigate({ screen: 'center' })} onEdit={serviceId => onNavigate({ screen: 'service-edit', serviceId })} refreshRevision={refreshRevision} />;
+    case 'service-edit':
+      return <ModelServiceEditScreen serviceId={route.serviceId} onBack={() => onNavigate({ screen: 'services' })} />;
     case 'center':
-      return <AuxiliaryModelCenterScreen capabilityItems={capabilityItems} loading={loading} onBack={onBack} onOpenCapabilityPool={(kind) => onNavigate({ screen: 'pool', kind })} />;
+      return <AuxiliaryModelCenterScreen onOpenServices={() => onNavigate({ screen: 'services' })} capabilityItems={capabilityItems} loading={loading} onBack={onBack} onOpenCapabilityPool={(kind) => onNavigate({ screen: 'pool', kind })} />;
     case 'pool':
       return <AuxiliaryModelPoolScreen label={CAPABILITY_META[route.kind].label} description={CAPABILITY_META[route.kind].description}
         models={modelConfigs.filter((model) => model.capabilityKind === route.kind)} loading={loading} onBack={goCenter}

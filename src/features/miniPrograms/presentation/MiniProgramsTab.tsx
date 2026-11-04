@@ -7,7 +7,7 @@ import type { PresentationTheme } from '@shared/theme';
 import { useFloatingTabBarScrollPadding, showAppDialog } from '@shared/ui';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 
-type MiniProgramId =
+export type MiniProgramId =
   | 'wallet'
   | 'auxiliaryModels'
   | 'aiRequestDiagnostics'
@@ -172,7 +172,7 @@ const createStyles = (theme: PresentationTheme) =>
   });
 
 interface MiniProgramsTabProps {
-  onOpenApp?: ((appId: string) => void) | null;
+  onOpenApp?: ((appId: MiniProgramId) => void) | null;
 }
 
 export default function MiniProgramsTab({ onOpenApp = null }: MiniProgramsTabProps) {
@@ -239,13 +239,7 @@ export default function MiniProgramsTab({ onOpenApp = null }: MiniProgramsTabPro
                     index === groupedApps[category].length - 1 && styles.itemLast,
                   ]}
                   activeOpacity={0.7}
-                  onPress={() => {
-                    if (app.id === 'themePicker') {
-                      onOpenApp?.('appearance');
-                    } else {
-                      onOpenApp?.(app.id);
-                    }
-                  }}
+                  onPress={() => onOpenApp?.(app.id)}
                   onLongPress={() => handleLongPress(app)}
                 >
                   <View style={styles.iconContainer}>

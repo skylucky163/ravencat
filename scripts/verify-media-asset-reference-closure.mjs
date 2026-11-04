@@ -1,3 +1,4 @@
+import { chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionSql, chatMessageMutations, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /**
  * MediaAsset M5 correctness closure：引用写入与 release 的 TOCTOU、级联删除候选收集。
@@ -22,6 +23,7 @@ import { chatReplyVersionSql, chatMessageMutations, installChatTimelineSchema } 
  *    CAS 整体回滚，不产生「已经失去业务引用的新 asset 事实」。
  */
 import assert from 'node:assert/strict';
+import { SCHEMAS } from './helpers/sqlite-bootstrap-fixture.mjs';
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -60,6 +62,7 @@ const { MEDIA_ASSET_SCHEMA, MEDIA_ASSET_CONTENT_HASH_INDEX } = await loadTypeScr
   'src/platform/persistence/sqlite/mediaAssetSchema.ts',
 );
 const { CALL_BACKGROUND_SELECTION_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/callBackgroundSchema.ts');
+const { CHAT_BUBBLE_SKINS_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/chatBubbleSkinSchema.ts');
 const { CALL_RINGTONE_SELECTION_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/callRingtoneSchema.ts');
 const { CALL_HISTORY_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/callHistorySchema.ts');
 const { CHAT_FAVORITES_SCHEMA } = await loadTypeScriptModule('src/platform/persistence/sqlite/chatFavoriteSchema.ts');
@@ -85,7 +88,7 @@ const chatStickerModule = await loadTypeScriptModule(
 const chatMessageMetadata = loadTypeScriptModuleWithMocks(
   'src/features/chat/messages/domain/chatMessageMetadata.ts',
   { './ChatSticker': chatStickerModule,
-    './SharedChatRecord': loadTypeScriptModuleWithMocks('src/features/chat/messages/domain/SharedChatRecord.ts', {}) },
+    ...chatSharingDependencies },
 );
 // 真实 legacy 迁移驱动扫描、定位、catalog 与 owner CAS 的并发路径。
 const chatAttachmentMigration = loadTypeScriptModuleWithMocks(
@@ -100,6 +103,8 @@ function createDatabase() {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(MEDIA_ASSET_SCHEMA);
+  db.exec(SCHEMAS.assistantProfileCovers);
+  db.exec(CHAT_BUBBLE_SKINS_SCHEMA);
   db.exec(CHAT_FAVORITES_SCHEMA);
   db.exec(MEDIA_ASSET_CONTENT_HASH_INDEX);
   db.exec(`
@@ -314,6 +319,7 @@ function createHarness() {
       '../../reply/infrastructure/ChatReplyVersionSql': chatReplyVersionSql,
       './ChatTimelineSql': chatTimelineSqlModule,
       '../domain/MessageTimeSeparator': messageTimeSeparatorModule,
+      '../domain/chatMessageMetadata': chatMessageMetadata,
     },
   ).MessageRepository)();
 
@@ -322,6 +328,8 @@ function createHarness() {
     {
       './SQLiteAuxiliaryModelDefaults': {},
       './SQLiteAuxiliaryModelRepository': {},
+      './SQLiteModelServiceRepository': {},
+      '../domain/ModelService': {},
       '@platform/persistence': persistenceMock,
       '@features/media': mediaMock,
       '@features/profile': profileMock,
@@ -337,6 +345,7 @@ function createHarness() {
     'src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts',
     {
       '@platform/persistence': persistenceMock,
+      '@features/assistants': {},
       '@features/media': mediaMock,
       '@features/profile': profileMock,
     },

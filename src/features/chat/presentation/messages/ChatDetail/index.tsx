@@ -9,13 +9,15 @@ import ChatHeader from '../components/ChatHeader';
 import { useChatMessageSelection } from '../components/useChatMessageSelection';
 import { useChatMessageShare } from '../components/useChatMessageShare';
 import { useChatFavoriteAction } from '../components/useChatFavoriteAction';
+import { useChatStickerAction } from '../components/useChatStickerAction';
 import { getChatMessageActions } from '../../../messages/domain/ChatMessageActions';
-import ChatShareSheet from '../components/ChatShareSheet';
+import ChatContentShareSheet from '../components/ChatContentShareSheet';
 import { ChatSelectionHeader, ChatSelectionFooter } from '../components/ChatSelectionBars';
 import ChatMessageList from '../components/ChatMessageList';
 import ChatInputArea from '../components/ChatInputArea';
 import ChatMessageActionMenu from '../components/ChatMessageActionMenu';
 import ChatMessageEditor from '../components/ChatMessageEditor';
+import ChatMessageTextSelectionSheet from '../components/ChatMessageTextSelectionSheet';
 import ChatRegenerationConfirm, { shouldConfirmChatRegeneration } from '../components/ChatRegenerationConfirm';
 import ChatReplyVersionSheet from '../components/ChatReplyVersionSheet';
 import { getChatSelectionKey } from '../../../messages/domain/ChatMessageSelection';
@@ -32,7 +34,6 @@ import { isAgentTransientTimelineMessage } from '../../../messages/application/A
 import { voiceMessagePlaybackCoordinator } from '../../../messages/application/VoiceMessagePlaybackCoordinator';
 import {
   getMessageVoice,
-  createChatReplyTarget,
   type ChatReplyTarget,
 } from '../../../messages/domain/chatMessageMetadata';
 import type { ChatMessage } from '../../../messages/domain/ChatMessage';
@@ -40,7 +41,7 @@ import type { StickerMessageSnapshot } from '../../../messages/domain/ChatSticke
 import type { ChatCallSession } from '../../../conversation/application/ChatCallGateway';
 import { shouldShowTogetherListeningChatEntry } from '../../../conversation/application/ChatTogetherListeningGateway';
 import type { ChatSession } from '../../../conversation/domain/SessionRepository';
-import type { ChatDetailAIAssistantLike } from '../components/chatTypes';
+import { createChatReplyTarget, type ChatDetailAIAssistantLike } from '../components/chatTypes';
 import type { MessageTranslationBlock } from '../components/chatMessageRenderUtils';
 import type { UserProfile } from '@features/profile';
 import { createChatDetailStyles } from '../components/chatStyles';
@@ -65,6 +66,7 @@ interface ChatDetailModuleProps {
   currentUser: ChatDetailCurrentUser;
   aiAssistants: ChatDetailAIAssistantLike[];
   onOpenMenu?: () => void;
+  onOpenAssistantProfile?: (aiId: string) => void;
   onOpenFilePreview?: (params: { fileUri: string; fileName: string; mimeType?: string | null }) => void;
   onGoBack?: () => void;
   onCallCreated?: (call: ChatCallSession) => void;
@@ -78,6 +80,7 @@ export default function ChatDetailModule({
   currentUser,
   aiAssistants,
   onOpenMenu,
+  onOpenAssistantProfile,
   onOpenFilePreview,
   onGoBack,
   onCallCreated,
@@ -114,6 +117,7 @@ export default function ChatDetailModule({
   const [replyTo, setReplyTo] = useState<ChatReplyTarget | null>(null);
   const [actionMenuVisible, setActionMenuVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
+  const [textSelectionText, setTextSelectionText] = useState<string | null>(null);
   const [regenerationPrompt, setRegenerationPrompt] = useState<ChatMessage | null>(null);
   const [historyRunId, setHistoryRunId] = useState<string | null>(null);
   const activeConversation = useRef({ sessionId, isActive });
@@ -121,6 +125,7 @@ export default function ChatDetailModule({
   useEffect(() => {
     setRegenerationPrompt(null);
     setHistoryRunId(null);
+    setTextSelectionText(null);
   }, [sessionId, isActive]);
   const [summarySettings, setSummarySettings] = useState<ChatSummarySettings | null>(null);
   useEffect(() => {
@@ -162,9 +167,6 @@ export default function ChatDetailModule({
 
     return assistants;
   }, [aiAssistant, aiAssistants]);
-  const publicMentionMembers = useMemo(() => availableAssistants.map((assistant) => ({
-    aiAssistantId: assistant.id, name: assistant.name,
-  })), [availableAssistants]);
 
   const {
     activeSurface,
@@ -257,6 +259,7 @@ export default function ChatDetailModule({
   });
   const share = useChatMessageShare({ sessionId, sourceName: headerTitle, assistantId: aiAssistant?.id, isActive, onShared: selection.exit });
   const favoriteMessage = useChatFavoriteAction(selectedMessage, headerTitle, aiAssistant?.id);
+  const stickerAction = useChatStickerAction(selectedMessage);
   const messageActions = selectedMessage ? getChatMessageActions(selectedMessage) : null;
   const handleShareMessage = useCallback(() => {
     dismissInputSurface();
@@ -292,13 +295,13 @@ export default function ChatDetailModule({
     const draft = textDrafts.read(sessionId!);
 
     await withAttachmentSubmission(
-      (attachments) => sendMessage(inputText.trim(), replyTo, attachments, {
+      (attachments, consumeDraft) => sendMessage(inputText.trim(), replyTo, attachments, {
         onQueued: () => {
+          consumeDraft();
           textDrafts.replaceIfUnchanged(sessionId!, draft, '');
           setReplyTo(null);
         },
       }),
-      (queued) => queued,
     );
   }, [inputText, replyTo, readyAttachments, sendMessage, withAttachmentSubmission, sessionId, textDrafts]);
 
@@ -341,11 +344,17 @@ export default function ChatDetailModule({
       showAppDialog({ title: '复制失败', message: error instanceof Error ? error.message : '无法写入剪贴板', tone: 'error' });
     }
   }, [selectedMessage]);
+
+  const handleSelectMessageText = useCallback(() => {
+    dismissInputSurface();
+    // 菜单关闭会清空 selectedMessage；选字窗口独立持有打开时的正文快照。
+    setTextSelectionText(selectedMessage!.text);
+  }, [dismissInputSurface, selectedMessage]);
   const handleFixedStart = useCallback(() => {
     if (!selectedMessage || !sessionId || !summarySettings) return;
     const cancelling = summarySettings.fixedMessageId === selectedMessage.id;
     void setFixedChatContextStart(sessionId, cancelling ? null : selectedMessage.id).then(() => {
-      ToastAndroid.show(cancelling ? '已取消固定，自动生成摘要仍保持关闭' : '已固定上下文起点，自动生成摘要已暂停', ToastAndroid.LONG);
+      ToastAndroid.show(cancelling ? '已取消固定，一级摘要仍保持关闭' : '已固定上下文起点，一级摘要已暂停', ToastAndroid.LONG);
     }).catch((error: unknown) => {
       showAppDialog({ title: '设置固定起点失败', message: error instanceof Error ? error.message : '请稍后再试', tone: 'error' });
     });
@@ -363,8 +372,8 @@ export default function ChatDetailModule({
       delete next[edited.id];
       return next;
     });
-    setReplyTo((previous) => previous?.id === edited.id ? createChatReplyTarget(edited, publicMentionMembers) : previous);
-  }, [publicMentionMembers, setMessages]);
+    setReplyTo((previous) => previous?.id === edited.id ? createChatReplyTarget(edited, availableAssistants, currentUser.name, aiAssistant) : previous);
+  }, [aiAssistant, availableAssistants, currentUser.name, setMessages]);
 
   const handleDeleteMessage = useCallback(() => {
     if (!selectedMessage) return;
@@ -392,8 +401,8 @@ export default function ChatDetailModule({
 
   const handleQuoteMessage = useCallback(() => {
     if (!selectedMessage) return;
-    setReplyTo(createChatReplyTarget(selectedMessage, publicMentionMembers));
-  }, [publicMentionMembers, selectedMessage]);
+    setReplyTo(createChatReplyTarget(selectedMessage, availableAssistants, currentUser.name, aiAssistant));
+  }, [aiAssistant, availableAssistants, currentUser.name, selectedMessage]);
 
   const handleToggleVoiceTranscript = useCallback(() => {
     if (!selectedMessage || !getMessageVoice(selectedMessage)) return;
@@ -509,12 +518,13 @@ export default function ChatDetailModule({
             sessionId={sessionId}
             messages={messages}
             hiddenRunId={regeneration.sourceRunId}
-            pauseAutoScroll={share.visible}
+            pauseAutoScroll={share.visible || textSelectionText !== null}
             anchorMessageId={anchorMessageId}
             aiAssistant={aiAssistant}
             aiAssistants={availableAssistants}
             userAvatar={currentUser.avatar}
             userName={currentUser.name}
+            onOpenAssistantProfile={onOpenAssistantProfile}
             onMessageLongPress={handleMessageLongPress}
             onLoadMore={loadMore}
             hasMore={hasMore}
@@ -595,6 +605,10 @@ export default function ChatDetailModule({
         />
       )}
 
+      {textSelectionText !== null && isActive && (
+        <ChatMessageTextSelectionSheet text={textSelectionText} onClose={() => setTextSelectionText(null)} />
+      )}
+
       {regenerationPrompt ? <ChatRegenerationConfirm
         onClose={() => setRegenerationPrompt(null)}
         onConfirm={() => {
@@ -614,6 +628,7 @@ export default function ChatDetailModule({
         onClose={handleCloseActionMenu}
         position={menuPosition}
         onCopy={selectedMessage?.text.trim() ? handleCopyMessage : undefined}
+        onSelectText={selectedMessage?.text.trim() ? handleSelectMessageText : undefined}
         onRewrite={selectedMessage && canEditChatMessage(selectedMessage) ? handleRewriteMessage : undefined}
         onRegenerate={selectedMessage?.senderType === 'assistant'
           && selectedMessage.turnItemIndex != null
@@ -632,6 +647,7 @@ export default function ChatDetailModule({
         onTranslate={messageActions?.translate ? handleTranslateMessage : undefined}
         onFavorite={messageActions?.favorite ? favoriteMessage.toggle : undefined}
         isFavorited={favoriteMessage.isFavorited}
+        stickerAction={stickerAction}
         onToggleVoiceTranscript={getMessageVoice(selectedMessage)
           ? handleToggleVoiceTranscript
           : undefined}
@@ -639,7 +655,7 @@ export default function ChatDetailModule({
           selectedMessage && expandedVoiceTranscriptIds.has(selectedMessage.id)
         )}
       />
-      <ChatShareSheet share={share} onPreviewFile={(params) => { share.close(); onOpenFilePreview?.(params); }} />
+      <ChatContentShareSheet share={share} onPreviewFile={(params) => { share.close(); onOpenFilePreview?.(params); }} />
       </SafeAreaView>
     </ChatBackground>
   );

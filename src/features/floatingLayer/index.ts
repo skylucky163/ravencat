@@ -1,6 +1,5 @@
 /** Floating Layer 功能公共 API；只暴露当前跨 Feature 与路由入口所需能力。 */
 
-export { runFloatingMessageHeadlessTask } from './application/FloatingMessageHeadlessTask';
 export {
   addConversationDisplayedListener,
   addConversationRefreshListener,

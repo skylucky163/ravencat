@@ -12,6 +12,7 @@ import {
   SELF_USER_PROFILE_ID,
   type UpdateUserProfileInput,
   type UserProfile,
+  type UserProfileRow,
 } from '../domain/UserProfile';
 import type {
   MomentsCoverSelection,
@@ -19,22 +20,6 @@ import type {
   UserAvatarMediaAssetReference,
   UserAvatarMediaAssetMigrationCandidate,
 } from '../domain/UserProfileRepository';
-
-interface UserProfileRow {
-  id: string;
-  name: string;
-  gender: string;
-  age: number | null;
-  identity: string;
-  region: string;
-  other: string;
-  signature: string;
-  avatar: string | null;
-  avatar_media_asset_id: string | null;
-  moments_cover: string | null;
-  moments_cover_media_asset_id: string | null;
-  updated_at: string;
-}
 
 export class SQLiteUserProfileRepository {
   /** 恢复只重定位尚未迁移的头像；封面已进入稳定资产，不再重写运行时 URI。 */
@@ -62,19 +47,15 @@ export class SQLiteUserProfileRepository {
     return resolved;
   }
 
+  /** null 只表示资料行不存在；读取故障交给调用方处理。 */
   async get(): Promise<UserProfile | null> {
-    try {
-      const db = databaseCoordinator.openTaskExecutor({ name: 'profile.get', feature: 'profile', priority: 'runtime' });
-      const row = await db.getFirstAsync<UserProfileRow>(
-        'SELECT * FROM user_profile WHERE id = ? LIMIT 1',
-        [SELF_USER_PROFILE_ID]
-      );
-      const profile = createUserProfileFromRow(row);
-      return profile ? await this.resolveMedia(profile) : null;
-    } catch (error) {
-      console.error('[UserProfileRepository] Failed to get profile:', error);
-      return null;
-    }
+    const db = databaseCoordinator.openTaskExecutor({ name: 'profile.get', feature: 'profile', priority: 'runtime' });
+    const row = await db.getFirstAsync<UserProfileRow>(
+      'SELECT * FROM user_profile WHERE id = ? LIMIT 1',
+      [SELF_USER_PROFILE_ID]
+    );
+    const profile = createUserProfileFromRow(row);
+    return profile ? await this.resolveMedia(profile) : null;
   }
 
   async ensureDefault(): Promise<UserProfile> {
@@ -98,7 +79,8 @@ export class SQLiteUserProfileRepository {
     );
 
     const persisted = await this.get();
-    return persisted || profile;
+    if (!persisted) throw new Error('当前用户资料不存在');
+    return persisted;
   }
 
   async update(updates: UpdateUserProfileInput): Promise<UserProfile> {
@@ -106,16 +88,7 @@ export class SQLiteUserProfileRepository {
     const nextProfile = createUserProfile({
       ...existing,
       name: updates.name !== undefined ? updates.name : existing.name,
-      avatar: updates.avatarMediaAssetId !== undefined
-        ? updates.avatarMediaAssetId
-          ? null
-          : updates.avatar ?? null
-        : updates.avatar !== undefined
-          ? updates.avatar
-          : existing.avatar,
-      avatarMediaAssetId: updates.avatarMediaAssetId !== undefined
-        ? updates.avatarMediaAssetId
-        : existing.avatarMediaAssetId,
+      avatar: updates.avatar !== undefined ? updates.avatar : existing.avatar,
       updatedAt: new Date().toISOString(),
     });
 
@@ -133,13 +106,7 @@ export class SQLiteUserProfileRepository {
         values.push(updates[field]);
       }
     }
-    if (updates.avatarMediaAssetId !== undefined) {
-      fields.push('avatar = ?', 'avatar_media_asset_id = ?');
-      values.push(
-        nextProfile.avatarMediaAssetId ? null : nextProfile.avatar,
-        nextProfile.avatarMediaAssetId,
-      );
-    } else if (updates.avatar !== undefined) {
+    if (updates.avatar !== undefined) {
       fields.push('avatar = ?', 'avatar_media_asset_id = NULL');
       values.push(nextProfile.avatar);
     }
@@ -168,10 +135,6 @@ export class SQLiteUserProfileRepository {
       throw new Error('当前用户资料解析失败');
     }
     return this.resolveMedia(persistedProfile);
-  }
-
-  async updateAvatar(avatar: string | null): Promise<UserProfile> {
-    return this.update({ avatar });
   }
 
   getMomentsCoverSelection(): Promise<MomentsCoverSelection> {
@@ -216,52 +179,14 @@ export class SQLiteUserProfileRepository {
       feature: 'profile',
       priority: 'maintenance',
     });
-    const rows = await db.getAllAsync<{
-      id: string;
-      avatar: string;
-      avatar_media_asset_id: string | null;
-    }>(
-      `SELECT id, avatar, avatar_media_asset_id
+    return db.getAllAsync<UserAvatarMediaAssetMigrationCandidate>(
+      `SELECT id, avatar
        FROM user_profile
        WHERE avatar IS NOT NULL
          AND TRIM(avatar) <> ''
          AND avatar_media_asset_id IS NULL
        ORDER BY id ASC`,
     );
-    return rows.map((row) => ({
-      id: row.id,
-      avatar: row.avatar,
-      avatarMediaAssetId: row.avatar_media_asset_id || null,
-    }));
-  }
-
-  async getAvatarMediaAssetMigrationCandidate(
-    ownerId: string,
-  ): Promise<UserAvatarMediaAssetMigrationCandidate | null> {
-    const db = databaseCoordinator.openTaskExecutor({
-      name: 'profile.get-avatar-media-asset-candidate',
-      feature: 'profile',
-      priority: 'maintenance',
-    });
-    const row = await db.getFirstAsync<{
-      id: string;
-      avatar: string;
-      avatar_media_asset_id: string | null;
-    }>(
-      `SELECT id, avatar, avatar_media_asset_id
-       FROM user_profile
-       WHERE id = ?
-         AND avatar IS NOT NULL
-         AND TRIM(avatar) <> ''`,
-      [ownerId],
-    );
-    return row
-      ? {
-          id: row.id,
-          avatar: row.avatar,
-          avatarMediaAssetId: row.avatar_media_asset_id || null,
-        }
-      : null;
   }
 
   async commitAvatarMediaAssetReferenceInTransaction(

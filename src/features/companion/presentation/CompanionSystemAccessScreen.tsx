@@ -3,6 +3,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
 import NavigationHeader from '@shared/ui/NavigationHeader';
+import { ToggleField } from '@shared/ui';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -52,6 +53,9 @@ import {
   openDeviceLocationSettings,
   openUsageAccessSettings,
   type DeviceLocationAccessState,
+  getBackgroundRuntimeState,
+  setBackgroundRuntimeEnabled,
+  type BackgroundRuntimeState,
 } from '@platform/device';
 import { isApplicationUpdateInstallAllowed, openApplicationUpdateInstallSettings } from '@platform/updates/DownloadApplicationUpdate';
 
@@ -66,6 +70,7 @@ interface SystemAccessSnapshot {
   fullScreenIntentAllowed: boolean;
   incomingCallChannelEnabled: boolean;
   batteryGranted: boolean;
+  background: BackgroundRuntimeState;
   usageAccessGranted: boolean;
   notificationListenerGranted: boolean;
   updateInstallAllowed: boolean;
@@ -81,11 +86,12 @@ export default function CompanionSystemAccessScreen({ onBack }: CompanionSystemA
   const [snapshot, setSnapshot] = useState<SystemAccessSnapshot | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [changingBackground, setChangingBackground] = useState(false);
 
   const refresh = useCallback(async (pullToRefresh = false) => {
     if (pullToRefresh) setRefreshing(true);
     try {
-      const [overlayGranted, notification, battery, observer, incomingCallDiagnostics, usageAccessGranted, notificationListener, location, calendarGranted] =
+      const [overlayGranted, notification, battery, observer, incomingCallDiagnostics, usageAccessGranted, notificationListener, location, calendarGranted, background] =
         await Promise.all([
           isOverlayPermissionGranted(),
           getCompanionNotificationDiagnostics(),
@@ -96,6 +102,7 @@ export default function CompanionSystemAccessScreen({ onBack }: CompanionSystemA
           getNotificationListenerAccessState(),
           getDeviceLocationAccessState(),
           isSystemCalendarPermissionGranted(),
+          getBackgroundRuntimeState(),
         ]);
       setSnapshot({
         overlayGranted,
@@ -106,6 +113,7 @@ export default function CompanionSystemAccessScreen({ onBack }: CompanionSystemA
         fullScreenIntentAllowed: incomingCallDiagnostics.fullScreenIntentAllowed,
         incomingCallChannelEnabled: incomingCallDiagnostics.incomingCallChannelImportance > 0,
         batteryGranted: battery.ignoringBatteryOptimizations,
+        background,
         usageAccessGranted,
         notificationListenerGranted: notificationListener.status === 'granted',
         updateInstallAllowed: isApplicationUpdateInstallAllowed(),
@@ -120,6 +128,19 @@ export default function CompanionSystemAccessScreen({ onBack }: CompanionSystemA
       setRefreshing(false);
     }
   }, []);
+
+  const changeBackground = async (enabled: boolean) => {
+    setChangingBackground(true);
+    let failure: string | null = null;
+    try { await setBackgroundRuntimeEnabled(enabled); }
+    catch (error) { failure = toMessage(error, '无法更改持续后台运行状态。'); }
+    finally {
+      // 启动被拒绝时保留已保存的开关，实际运行状态单独展示。
+      await refresh();
+      if (failure) setErrorMessage(failure);
+      setChangingBackground(false);
+    }
+  };
 
   useEffect(() => {
     void refresh();
@@ -211,6 +232,13 @@ export default function CompanionSystemAccessScreen({ onBack }: CompanionSystemA
             <Text style={styles.sectionTitle}>后台可靠性</Text>
             <ThemedSurface variant="card" style={styles.card}>
               <View style={styles.cardContent}>
+                <ToggleField label="持续后台运行" layout="inline"
+                  hint="让 RavenCat 跨聊天持续在后台运行，直到手动关闭。关闭只撤销持续运行保障，不改变各功能开关。"
+                  value={snapshot.background.enabled} disabled={changingBackground}
+                  onValueChange={(enabled) => void changeBackground(enabled)}
+                  rowStyle={styles.permissionRow} contentStyle={styles.permissionText}
+                  labelStyle={styles.permissionLabel} hintStyle={styles.permissionHint} />
+                <DiagnosticRow label="后台服务" value={snapshot.background.running ? '运行中' : snapshot.background.enabled ? '尚未运行，可关闭后重新开启' : '已关闭'} styles={styles} />
                 <PermissionRow label="电池优化" value={snapshot.batteryGranted} onPress={() => void (snapshot.batteryGranted ? openBatteryOptimizationSettings() : requestIgnoreBatteryOptimizations())} styles={styles} description="允许后台运行可减少系统延迟，但不能阻止强制停止或厂商清理。" last />
               </View>
             </ThemedSurface>

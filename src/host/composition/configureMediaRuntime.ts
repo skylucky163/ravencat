@@ -6,7 +6,6 @@ import {
   MediaAssetCatalog,
   MediaAssetLifecycle,
   MediaAssetResolver,
-  NativeBubbleSkinAssetBacking,
   PersistentImageAssetBacking,
   PersistentMediaAssetBacking,
   PrepareMediaAssetBatch,
@@ -51,7 +50,6 @@ export function configureMediaRuntime(): void {
       new PersistentMediaAssetBacking(persistentMediaStore),
       new PersistentImageAssetBacking(persistentImageStore),
     ],
-    resolvers: [new NativeBubbleSkinAssetBacking()],
   });
   const resolver = new MediaAssetResolver(catalog, backings);
   const creator = new CreateMediaAsset({
