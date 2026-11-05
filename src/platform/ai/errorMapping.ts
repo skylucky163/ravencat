@@ -171,15 +171,19 @@ export function detectServiceBusyError(message: string): ServiceBusyErrorInfo {
  * @param error - 错误对象或消息
  * @returns 错误显示信息
  */
-export function getErrorDisplayInfo(error: Error | string, options: { includeDetails?: boolean } = {}): ErrorDisplayInfo {
-  const display = mapErrorDisplayInfo(error);
+export function getErrorDisplayInfo(error: Error | string, options: { includeDetails?: boolean; httpStatus?: number | null } = {}): ErrorDisplayInfo {
+  const display = mapErrorDisplayInfo(error, options.httpStatus);
   if (!options.includeDetails) return display;
   const detail = error instanceof Error ? error.message : error;
   return { ...display, message: display.type === 'request' ? detail : `${display.message}\n${detail}` };
 }
 
-function mapErrorDisplayInfo(error: Error | string): ErrorDisplayInfo {
+function mapErrorDisplayInfo(error: Error | string, httpStatus?: number | null): ErrorDisplayInfo {
   const message = error instanceof Error ? error.message : String(error || '');
+  // 传输层提供的状态码优先于 Provider 正文里的描述。
+  if (httpStatus === 408 || httpStatus === 504) {
+    return { title: '请求超时', message: '服务器响应超时，请稍后重试', type: 'timeout' };
+  }
   const normalizedMessage = message.toLowerCase();
   const paramErrorInfo = detectParamError(message);
   const quotaErrorInfo = detectQuotaError(message);
@@ -205,6 +209,12 @@ function mapErrorDisplayInfo(error: Error | string): ErrorDisplayInfo {
   if (quotaErrorInfo.isQuotaError) return { title: '余额或配额不足', message: quotaErrorInfo.message, type: 'quota' };
   if (serviceBusyErrorInfo.isServiceBusyError) return { title: '服务繁忙', message: serviceBusyErrorInfo.message, type: 'service_busy' };
 
+  // 超时可能没有错误正文，也可能带图片字段或 RN 的 Network 文案；先于通用请求与网络分类。
+  if (hasErrorCode(message, 408) || hasErrorCode(message, 504)
+    || /timeout|timed\s+out|超时/i.test(message)) {
+    return { title: '请求超时', message: '服务器响应超时，请稍后重试', type: 'timeout' };
+  }
+
   // 只表达接口拒图，不从笼统错误猜测尺寸、比例或文件损坏。原始文案留在请求错误与日志。
   if (/unsupported image|invalid image|image_url|image dimensions|image size|image[^\n]*(?:not supported|failed to decode)|图片[^\n]*(?:不支持|解码失败)/i.test(message)) {
     return { title: '图片处理失败', message: '接口未能处理这张图片，请换一张或稍后再试。', type: 'request' };
@@ -229,15 +239,6 @@ function mapErrorDisplayInfo(error: Error | string): ErrorDisplayInfo {
       isParamError: true,
       paramName: paramErrorInfo.paramName,
       allowedValue: paramErrorInfo.allowedValue,
-    };
-  }
-
-  // RN 的超时文案也包含 Network，必须先识别超时，避免误提示用户修改 API 地址。
-  if (/timeout|timed\s+out/i.test(message)) {
-    return {
-      title: '请求超时',
-      message: '服务器响应超时，请稍后重试',
-      type: 'timeout',
     };
   }
 

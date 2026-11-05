@@ -6,17 +6,16 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
+import { ThemedSurface, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
-import { EmptyState } from '@shared/ui';
+import { EmptyState, HeaderAddButton, ToggleDetailRow } from '@shared/ui';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import { listAIAssistantSummaries, type AIAssistantSummary } from '@features/assistants';
 import { setMcpServerAssistantEnabled } from '../application/SetMcpServerAssistantEnabled';
+import { setMcpServerEnabled } from '../application/SetMcpServerEnabled';
 import McpAssistantSelection from './McpAssistantSelection';
 import { canCommitPresentationLoad } from '@shared/utils/presentationLoadRevision';
 import {
@@ -62,45 +61,16 @@ const createStyles = (theme: PresentationTheme) =>
       color: theme.colors.text.secondary,
       marginBottom: 16,
     },
-    addButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
-      paddingVertical: 12,
-      borderRadius: theme.radius.lg,
-      backgroundColor: theme.colors.brand.primary,
-      marginBottom: 16,
-    },
-    addButtonText: {
-      fontSize: 15,
-      fontWeight: '600',
-      color: '#FFFFFF',
-    },
     listCard: {
       borderRadius: theme.radius.lg,
       backgroundColor: theme.colors.surface.default,
       overflow: 'hidden',
-    },
-    item: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: 12,
-      paddingHorizontal: 16,
     },
     server: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border.light },
     itemLast: {
       borderBottomWidth: 0,
     },
     selection: { paddingHorizontal: 16, paddingBottom: 12 },
-    itemMain: {
-      flex: 1,
-    },
-    itemName: {
-      fontSize: 16,
-      fontWeight: '500',
-      color: theme.colors.text.primary,
-    },
     itemMeta: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -131,7 +101,6 @@ export default function McpToolsCenterScreen({
   onOpenServer,
   refreshRevision = 0,
 }: McpToolsCenterScreenProps) {
-  const theme = useTheme();
   const styles = useThemedStyles(createStyles);
   const [servers, setServers] = useState<McpServerListItemWithEnabledToolCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -176,6 +145,26 @@ export default function McpToolsCenterScreen({
     }
   }, []);
 
+  const toggleServer = useCallback(async (serverId: string, enabled: boolean) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSavingServerId(serverId);
+    // 过期列表读取不能覆盖刚提交的开关。
+    loadRevisionRef.current += 1;
+    try {
+      const updated = await setMcpServerEnabled(serverId, enabled);
+      if (!mountedRef.current) return;
+      setServers((current) => current!.map((server) => server.id === serverId
+        ? { ...server, enabled: updated.enabled } : server));
+      setError(null);
+    } catch (saveError) {
+      if (mountedRef.current) setError(saveError instanceof Error ? saveError.message : '服务开关保存失败');
+    } finally {
+      savingRef.current = false;
+      if (mountedRef.current) setSavingServerId(null);
+    }
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     void load();
@@ -192,23 +181,17 @@ export default function McpToolsCenterScreen({
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <NavigationHeader title="MCP 工具" onGoBack={onBack} help={{ sections: [
+      <NavigationHeader title="MCP 工具" onGoBack={onBack} rightButton={
+        <HeaderAddButton accessibilityLabel="添加 MCP Server" onPress={onAddServer} />
+      } help={{ sections: [
         { title: '连接与授权', body: '连接 MCP 服务并选择生效 AI，只有勾选的 AI 可使用。' },
+        { title: '服务开关', body: '开关即时启用或关闭整个 Server，需先完成连接测试；点击下方说明行进入配置。' },
         { title: '修改生效 AI', body: '点击列表中的“生效 AI”展开修改，勾选即时保存。' },
       ] }} />
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.scrollContent}
       >
-        <TouchableOpacity
-          style={styles.addButton}
-          activeOpacity={0.7}
-          onPress={onAddServer}
-        >
-          <Ionicons name="add" size={20} color="#FFFFFF" />
-          <Text style={styles.addButtonText}>添加 MCP Server</Text>
-        </TouchableOpacity>
-
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
         {servers === null ? (
@@ -216,7 +199,7 @@ export default function McpToolsCenterScreen({
         ) : servers.length === 0 ? (
           <EmptyState
             title="还没有 MCP Server"
-            description="添加一个支持 Streamable HTTP 的 Server，并选择可使用它的 AI。"
+            description="点击右上角 + 添加一个支持 Streamable HTTP 的 Server，并选择可使用它的 AI。"
           />
         ) : (
           <ThemedSurface variant="card" style={styles.listCard}>
@@ -224,34 +207,22 @@ export default function McpToolsCenterScreen({
               const statusColor = CONNECTION_STATUS_COLORS[server.connectionStatus];
               return (
                 <View key={server.id} style={[styles.server, index === servers.length - 1 && styles.itemLast]}>
-                  <TouchableOpacity
-                    style={styles.item}
-                    activeOpacity={0.7}
-                    onPress={() => onOpenServer(server.id)}
-                  >
-                    <View style={styles.itemMain}>
-                      <Text style={styles.itemName} numberOfLines={1}>
-                        {server.name}
+                  <ToggleDetailRow title={server.name}
+                    detail={<View style={styles.itemMeta}>
+                      <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                      <Text style={styles.itemStatus}>
+                        {CONNECTION_STATUS_LABELS[server.connectionStatus]}
                       </Text>
-                      <View style={styles.itemMeta}>
-                        <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                        <Text style={styles.itemStatus}>
-                          {CONNECTION_STATUS_LABELS[server.connectionStatus]}
-                        </Text>
-                        <Text style={styles.enabledText}>
-                          {server.enabled ? '已启用' : '未启用'}
-                        </Text>
-                        <Text style={styles.enabledText}>
-                          {server.enabledToolCount} 个已授权工具
-                        </Text>
-                      </View>
-                    </View>
-                    <Ionicons
-                      name="chevron-forward"
-                      size={18}
-                      color={theme.colors.text.tertiary}
-                    />
-                  </TouchableOpacity>
+                      <Text style={styles.enabledText}>
+                        {server.enabledToolCount} 个已授权工具
+                      </Text>
+                    </View>}
+                    value={server.enabled}
+                    disabled={savingServerId !== null || server.connectionStatus !== 'available'}
+                    toggleAccessibilityLabel={`启用${server.name}`}
+                    detailAccessibilityLabel={`打开${server.name}配置`}
+                    onValueChange={(enabled) => { void toggleServer(server.id, enabled); }}
+                    onOpenDetail={() => onOpenServer(server.id)} />
                   <View style={styles.selection}>
                     <McpAssistantSelection assistants={assistants} selectedIds={server.assistantIds}
                       collapsible

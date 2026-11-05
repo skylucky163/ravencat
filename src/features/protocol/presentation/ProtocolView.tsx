@@ -15,10 +15,9 @@ import {
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import EmptyState from '@shared/ui/EmptyState';
 import ListItem from '@shared/ui/ListItem';
-import { ModalSheet, useBusyBackHandler, showAppDialog } from '@shared/ui';
+import { ModalSheet, HeaderAddButton, useBusyBackHandler, showAppDialog } from '@shared/ui';
 import { useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
-import { AddIcon } from './parts/AddIcon';
 
 interface ProtocolViewProps {
   onBack?: () => void;
@@ -31,10 +30,6 @@ const createStyles = (theme: PresentationTheme) =>
     container: {
       flex: 1,
       backgroundColor: theme.colors.background.screen,
-    },
-    headerBtn: {
-      padding: theme.spacing.sm,
-      marginRight: -theme.spacing.sm,
     },
     list: {
       flex: 1,
@@ -283,9 +278,7 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
   ), [handleEdit, handleLongPress, styles]);
 
   const rightButton = (
-    <TouchableOpacity onPress={handleAdd} style={styles.headerBtn} activeOpacity={0.7}>
-      <AddIcon />
-    </TouchableOpacity>
+    <HeaderAddButton accessibilityLabel="新增协议" onPress={handleAdd} />
   );
 
   return (

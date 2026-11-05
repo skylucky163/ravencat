@@ -27,7 +27,9 @@ export const DEFAULT_IMAGE_GROUNDING_PROMPT = '仅描述图片中能够确认的
 
 export const DEFAULT_PARAGRAPH_BREAKS_PROMPT = '按语义自然分段，段落之间空一行；同一段内不要逐句换行，简短回复无需强行分段。';
 
-/** 只约束普通聊天正文，不进入口语、摘要或内部决策任务。 */
+export const DEFAULT_ACTION_DESCRIPTION_PROMPT = '回复中适当加入动作或神态描写，写在（）内。';
+
+/** 换行与动作描写等正文风格规则共用；不进入口语、摘要或内部决策任务。 */
 export const PARAGRAPH_BREAK_SCENARIOS = [
   'chat.private_reply', 'chat.group_member_reply', 'ledger.reply', 'raven_cat.ai_schedule_trigger',
 ] as const;

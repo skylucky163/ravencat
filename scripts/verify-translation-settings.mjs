@@ -116,7 +116,6 @@ const persistence = { databaseCoordinator: { openTaskExecutor: () => ({ ...raw, 
 // 由独立专项验证，这里按空实现装配，避免槽未装配抛错掩盖翻译链路断言。
 const auxiliaryModelInitialization = { getAuxiliaryModelInitialization: () => ({
   initializeModelSelections: async () => { throw new Error('翻译资产不应重放首次选择初始化'); },
-  initializeAssistantSelections: async () => {},
   invalidateModelReferencesInTransaction: async () => {},
   modelSelectionsInitialized() {},
 }) };
@@ -269,7 +268,7 @@ try {
   native.StyleSheet = { create: (styles) => styles };
   native.Alert = { alert() {} };
   native.AppState = native.BackHandler = { addEventListener: () => ({ remove() {} }) };
-  const shared = Object.fromEntries(['Button', 'InputField', 'DropdownField', 'ToggleField', 'ModelPickerModal', 'NavigationHeader', 'EmptyState', 'ListItem', 'KeyboardAvoidingContainer'].map((name) => [name, name]));
+  const shared = Object.fromEntries(['Button', 'InputField', 'DropdownField', 'ToggleField', 'ModelPickerModal', 'NavigationHeader', 'EmptyState', 'ListItem', 'KeyboardAvoidingContainer', 'HeaderAddButton'].map((name) => [name, name]));
   shared.NavigationHeader = function NavigationHeader({ rightButton, ...props }) { return React.createElement('Header', props, rightButton); };
   shared.showAppDialog = () => {};
   const uiTheme = { ThemedSurface: 'Surface', useTheme: () => theme, useThemedStyles: () => ({}) };
@@ -355,7 +354,7 @@ try {
   const capability = load('src/features/assistants/domain/AuxiliaryModel.ts');
   const Pool = load('src/features/assistants/presentation/auxiliaryModels/AuxiliaryModelPoolScreen.tsx', {
     'react-native': native, 'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
-    'lucide-react-native': { Plus: 'Plus' }, '@shared/theme': uiTheme, '@shared/ui': shared, './styles': { createStyles() {} },
+    '@shared/theme': uiTheme, '@shared/ui': shared, './styles': { createStyles() {} },
   }).default;
   const navigator = load('src/features/assistants/presentation/auxiliaryModels/AuxiliaryModelNavigator.tsx', {
     'react-native': native, '@shared/ui': shared,

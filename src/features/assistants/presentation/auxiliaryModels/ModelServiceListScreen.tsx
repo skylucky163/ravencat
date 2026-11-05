@@ -1,10 +1,9 @@
 /** 服务列表是管理入口，模型选择弹窗不承载管理跳转。 */
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, TouchableOpacity, View } from 'react-native';
-import { Plus } from 'lucide-react-native';
+import { ActivityIndicator, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedSurface, useTheme } from '@shared/theme';
-import { Button, EmptyState, ListItem, NavigationHeader, ToggleField, showAppDialog } from '@shared/ui';
+import { Button, EmptyState, HeaderAddButton, ListItem, NavigationHeader, ToggleField, showAppDialog } from '@shared/ui';
 import { getAutoSaveServiceConfigs, listModelServiceConfigs, setAutoSaveServiceConfigs, type ModelServiceConfig } from '../../ModelServices';
 
 export default function ModelServiceListScreen({ onBack, onEdit, refreshRevision }: {
@@ -31,10 +30,7 @@ export default function ModelServiceListScreen({ onBack, onEdit, refreshRevision
   };
   return <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background.app }} edges={['top', 'left', 'right']}>
     <NavigationHeader title="服务配置" onGoBack={onBack}
-      rightButton={<TouchableOpacity accessibilityLabel="新增服务配置" onPress={() => onEdit()}
-        style={{ padding: theme.spacing.sm, marginRight: -theme.spacing.sm }}>
-        <Plus size={24} color={theme.colors.brand.primary} />
-      </TouchableOpacity>} />
+      rightButton={<HeaderAddButton accessibilityLabel="新增服务配置" onPress={() => onEdit()} />} />
     <ScrollView contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg }}>
       <ThemedSurface variant="card" style={{ borderRadius: theme.radius.lg, paddingHorizontal: theme.spacing.md }}>
         <ToggleField label="自动保存服务配置" hint="模型配置保存时自动收录新连接，相同连接直接复用。" value={autoSave} disabled={loading || saving} onValueChange={value => { void toggle(value); }} />

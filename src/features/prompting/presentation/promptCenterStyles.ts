@@ -23,6 +23,8 @@ export const createPromptCenterStyles = (theme: PresentationTheme) => StyleSheet
   subtitle: { color: theme.colors.text.tertiary, fontSize: 12, lineHeight: 18 },
   muted: { opacity: 0.55 },
   card: { padding: 18, gap: 12, borderRadius: theme.radius.lg, backgroundColor: theme.colors.surface.default, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.light },
+  // 行自带内边距，卡片只负责圆角与裁切；材质由 ThemedSurface 决定。
+  ruleCard: { borderRadius: theme.radius.lg, overflow: 'hidden' },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   collapsibleHeader: { minHeight: 44 },
   actionButton: { minHeight: 44, paddingHorizontal: 8, justifyContent: 'center' },

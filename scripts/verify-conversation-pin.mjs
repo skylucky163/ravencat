@@ -58,11 +58,9 @@ const mediaStubUrl = transpileToModuleUrl(
    }
    export const collectAssistantMediaAssetCandidatesInTransaction = undefined;`,
 );
-// 此 verifier 只读取角色投影，不执行壁纸删除或创建时的模型初始化。
+// 此 verifier 只读取角色投影，不执行壁纸删除或服务绑定。
 const assistantLifecycleStubUrl = transpileToModuleUrl(`
   export const removeConversationWallpaperInTransaction = undefined;
-  export const initializeAssistantAuxiliaryModelsInTransaction = undefined;
-  export const auxiliaryModelRepository = undefined;
   export const bindModelService = undefined, readModelService = undefined;
   export const bindModelServiceInTransaction = undefined, readModelServiceConnection = undefined, getModelServiceConnection = undefined;
 `);
@@ -108,8 +106,6 @@ const assistantRepositoryModule = await loadRepository(
   [
     [`from '../domain/AIProfile'`, `from '${aiProfileUrl}'`],
     [`from '../domain/HostRepository'`, `from '${hostRepositoryUrl}'`],
-    [`from './SQLiteAuxiliaryModelDefaults'`, `from '${assistantLifecycleStubUrl}'`],
-    [`from './SQLiteAuxiliaryModelRepository'`, `from '${assistantLifecycleStubUrl}'`],
   ],
 );
 const { migrateConversationPinTimestamps } = await import(

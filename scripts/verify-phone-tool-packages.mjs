@@ -298,12 +298,16 @@ let currentTheme;
 const themeMock = { useTheme: () => currentTheme, useThemedStyles: factory => factory(currentTheme), ThemedSurface: 'ThemedSurface' };
 const Toggle = loadComponent('src/shared/ui/Toggle.tsx', { 'react-native': native, '@shared/theme': themeMock }).default;
 const ToggleField = loadComponent('src/shared/ui/ToggleField.tsx', { 'react-native': native, '@shared/theme': themeMock, './Toggle': { default: Toggle, __esModule: true } }).default;
+const ToggleDetailRow = loadComponent('src/shared/ui/ToggleDetailRow.tsx', {
+  'react-native': native, '@shared/theme': themeMock, '@expo/vector-icons': { Ionicons: 'Ionicons' },
+  './ToggleField': { default: ToggleField, __esModule: true },
+}).default;
 const uiActions = [];
 const screenSettings = { isEnabled: () => false, statusLabel: () => '已关闭', toggleTool: async () => {},
   isPackageEnabled: () => false, togglePackage: async (...args) => { uiActions.push(['toggle', ...args]); },
   disabled: false, packageDisabled: false, hostName: '主理', notice: null };
 const Screen = loadComponent('src/features/miniPrograms/presentation/phoneTools/PhoneToolsScreen.tsx', {
-  'react-native': native, '@shared/theme': themeMock, '@shared/ui': { ToggleField },
+  'react-native': native, '@shared/theme': themeMock, '@shared/ui': { ToggleField, ToggleDetailRow },
   'lucide-react-native': Object.fromEntries(['ClipboardPaste', 'MapPin', 'Music2', 'NotebookPen'].map(name => [name, name])),
   'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
   '@expo/vector-icons': { Ionicons: 'Ionicons' },

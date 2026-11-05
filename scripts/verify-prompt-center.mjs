@@ -218,6 +218,44 @@ assert.equal(await resolveVisionOCRPrompt('ai-1'), '这位 AI 的图片识别正
 visionOverrides = [{ assistantId: 'ai-1', definitionId: 'internal.vision_ocr', locale: 'en-US', content: 'legacy english' }];
 assert.equal(await resolveVisionOCRPrompt('ai-1'), '全局图片识别正文', '历史英文覆盖不参与注入');
 
+// 群摘要只读自己的全局正文：不读取任何 AI 覆盖，单聊定义也不参与。
+let summaryOverrides = [];
+const summaryOverrideReads = [];
+let summaryDefaults = {};
+const { resolveChatSummaryPromptOverride } = loadTypeScriptModule(
+  'src/features/prompting/application/ManageAssistantPrompts.ts',
+  {
+    './PromptingRuntimeDependencies': {
+      getPromptingRuntimeDependencies: () => ({
+        defaults: {
+          read: async () => ({
+            overrides: summaryDefaults, userPrompts: [], toolPermissions: {},
+            appToolPackages: {}, agentRegistryExcludedAssistantIds: [],
+          }),
+        },
+        assistantPrompts: {
+          listDefinitionOverrides: async (assistantId) => { summaryOverrideReads.push(assistantId); return summaryOverrides; },
+          listDefinitionStates: async () => [],
+          listAssistantUserPrompts: async () => [],
+        },
+      }),
+    },
+  },
+);
+assert.equal(await resolveChatSummaryPromptOverride('ai-1', 'primary', 'group'), undefined);
+assert.equal(await resolveChatSummaryPromptOverride('ai-1', 'secondary', 'group'), undefined);
+summaryDefaults = { 'internal.chat_summary': '全局一级正文', 'internal.group_chat_secondary_summary': '全局群二级正文' };
+assert.equal(await resolveChatSummaryPromptOverride(null, 'primary', 'group'), undefined, '群一级不读单聊的全局正文');
+assert.equal(await resolveChatSummaryPromptOverride(null, 'secondary', 'group'), '全局群二级正文');
+summaryOverrides = [
+  { assistantId: 'ai-1', definitionId: 'internal.chat_summary', locale: 'zh-CN', content: '专属一级正文' },
+  { assistantId: 'ai-1', definitionId: 'internal.group_chat_summary', locale: 'zh-CN', content: '不该生效的群正文' },
+];
+assert.equal(await resolveChatSummaryPromptOverride('ai-1', 'primary'), '专属一级正文');
+const readsBeforeGroup = summaryOverrideReads.length;
+assert.equal(await resolveChatSummaryPromptOverride('ai-1', 'primary', 'group'), undefined, '群摘要不得借用某个 AI 的覆盖');
+assert.equal(summaryOverrideReads.length, readsBeforeGroup, '群摘要不读取任何 AI 覆盖');
+
 // 默认页与 AI 详情复用同一份 defaults；未传快照的独立调用仍自行读取。
 let defaultsReads = 0;
 const sharedDefaults = {

@@ -15,6 +15,7 @@ import { getPromptingRuntimeDependencies } from './PromptingRuntimeDependencies'
 export interface AssistantPromptEditorDetails {
   directToolNames: string[];
   paragraphBreaksEnabled: boolean;
+  actionDescriptionEnabled: boolean;
   imageGroundingEnabled: boolean;
   timeEnabled: boolean;
   messageTimestampsEnabled: boolean;
@@ -40,6 +41,7 @@ export interface AssistantPromptEditorDetails {
 export interface ResolvedAssistantPromptConfiguration {
   agentRegistryExcludedAssistantIds: string[];
   paragraphBreaksEnabled: boolean;
+  actionDescriptionEnabled: boolean;
   timeEnabled: boolean;
   messageTimestampsEnabled: boolean;
   batteryEnabled: boolean;
@@ -82,6 +84,7 @@ export async function getAssistantPromptEditorDetails(
     directToolNames,
     settings,
     paragraphBreaksEnabled: states.find((state) => state.definitionId === 'output.paragraph_breaks')?.enabled ?? false,
+    actionDescriptionEnabled: states.find((state) => state.definitionId === 'output.action_description')?.enabled ?? false,
     imageGroundingEnabled: states.find((state) => state.definitionId === 'input.image_grounding')?.enabled ?? true,
     timeEnabled: states.find((state) => state.definitionId === 'context.time_awareness')?.enabled ?? true,
     messageTimestampsEnabled: states.find((state) => state.definitionId === 'context.message_timestamps')?.enabled ?? false,
@@ -126,6 +129,7 @@ export async function resolveAssistantPromptConfiguration(params: {
   ]);
   return {
     paragraphBreaksEnabled: states.find((state) => state.definitionId === 'output.paragraph_breaks')?.enabled ?? false,
+    actionDescriptionEnabled: states.find((state) => state.definitionId === 'output.action_description')?.enabled ?? false,
     timeEnabled: states.find((state) => state.definitionId === 'context.time_awareness')?.enabled ?? true,
     messageTimestampsEnabled: states.find((state) => state.definitionId === 'context.message_timestamps')?.enabled ?? false,
     batteryEnabled: states.find((state) => state.definitionId === 'context.device_battery')?.enabled ?? true,
@@ -175,12 +179,19 @@ export async function resolveVisionOCRPrompt(assistantId: string): Promise<strin
     ?? dependencies.catalog.getById('internal.vision_ocr')!.defaultContent!;
 }
 
-/** 群摘要没有所属 AI，只读全局正文；未覆盖时由 Chat 选择对应来源的代码默认值。 */
-export async function resolveChatSummaryPromptOverride(assistantId: string | null, level: 'primary' | 'secondary'): Promise<string | undefined> {
+/** 群摘要没有所属 AI，只读全局正文；单聊仍按来源 AI 覆盖优先。 */
+export async function resolveChatSummaryPromptOverride(
+  assistantId: string | null,
+  level: 'primary' | 'secondary',
+  kind: 'private' | 'group' = 'private'
+): Promise<string | undefined> {
   const dependencies = getPromptingRuntimeDependencies();
-  const definitionId = level === 'primary' ? 'internal.chat_summary' : 'internal.chat_secondary_summary';
+  const definitionId = kind === 'group'
+    ? level === 'primary' ? 'internal.group_chat_summary' : 'internal.group_chat_secondary_summary'
+    : level === 'primary' ? 'internal.chat_summary' : 'internal.chat_secondary_summary';
+  const scopedAssistantId = kind === 'group' ? null : assistantId;
   const [overrides, defaults] = await Promise.all([
-    assistantId === null ? [] : dependencies.assistantPrompts.listDefinitionOverrides(assistantId),
+    scopedAssistantId === null ? [] : dependencies.assistantPrompts.listDefinitionOverrides(scopedAssistantId),
     dependencies.defaults.read(),
   ]);
   return overrides.find((override) => override.definitionId === definitionId && override.locale === RESOLVED_PROMPT_LOCALE)?.content
@@ -228,6 +239,7 @@ export function saveAssistantDefinitionOverride(params: {
 }): Promise<AssistantPromptDefinitionOverride> {
   const definition = getPromptingRuntimeDependencies().catalog.getById(params.definitionId);
   if (!definition?.defaultContent) throw new Error('该内置提示词不支持正文覆盖');
+  if (definition.editScope === 'global') throw new Error('这一项没有所属 AI，只能修改全局正文');
   if (params.definitionId !== 'foundation.default_core' && !params.content.trim()) throw new Error('提示词正文不能为空');
   return getPromptingRuntimeDependencies().assistantPrompts.saveDefinitionOverride({
     ...params,
@@ -243,6 +255,7 @@ export async function applyAssistantDefinitionGlobally(params: {
   const dependencies = getPromptingRuntimeDependencies();
   const definition = dependencies.catalog.getById(params.definitionId);
   if (!definition?.defaultContent) throw new Error('该内置提示词不支持正文覆盖');
+  if (definition.editScope === 'global') throw new Error('这一项没有所属 AI，只能修改全局正文');
   if (params.definitionId !== 'foundation.default_core' && !params.content.trim()) throw new Error('提示词正文不能为空');
   const assistants = await dependencies.assistants.listOptions();
   await dependencies.assistantPrompts.applyDefinitionOverrideSnapshot(assistants.map((assistant) => assistant.id), {

@@ -32,4 +32,3 @@ export type {
 export { configureAssistantVoiceModels, getAssistantVoiceModelId, notifyAssistantVoiceModelsChanged } from './application/AssistantVoiceModels';
 export { assistantVoiceSettingsRepository } from './infrastructure/SQLiteAssistantVoiceSettingsRepository';
 export { configureAuxiliaryModelInitialization } from './application/AuxiliaryModelInitialization';
-export { initializeAssistantVoiceModelInTransaction } from './infrastructure/SQLiteAssistantVoiceSettingsRepository';

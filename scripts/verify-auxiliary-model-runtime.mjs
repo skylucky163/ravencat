@@ -173,7 +173,7 @@ function initialModelRuntime(db) {
   db.close();
 }
 
-// 角色先于模型、模型先于角色，两种入口都固化选择；取消与手动改选不被其他资产覆盖。
+// 角色先于模型、模型先于角色，两种入口均不自动绑定；已有选择与取消仍独立保留。
 {
   const db = await createDatabase(); await runMigrations(executor(db));
   const runtime = initialModelRuntime(db);
@@ -181,7 +181,11 @@ function initialModelRuntime(db) {
   assert.deepEqual(voices(db), []);
   const vision = await runtime.create('ocr');
   const voice = await runtime.create('tts');
+  // 旧版本留下的首次 TTS 记录仍可存在，但不能再影响新角色。
+  db.prepare("INSERT INTO auxiliary_model_initial_defaults (capability_kind, model_config_id, initialized) VALUES ('tts', ?, 1)").run(voice.id);
   await runtime.createAssistant('after');
+  const { chatImageSettingsRepository: imageSettings } = loadCommonJS('src/features/chat/reply/infrastructure/SQLiteChatImageSettingsRepository.ts', runtime.mocks);
+  const { assistantVoiceSettingsRepository: voiceSettings } = loadCommonJS('src/features/assistants/infrastructure/SQLiteAssistantVoiceSettingsRepository.ts', runtime.mocks);
   const limits={privateContextPrimaryLimit:20,privateContextSecondaryLimit:0,groupContextPrimaryLimit:30,groupContextSecondaryLimit:100};
   await runtime.assistants.applyContextLimits(['before','after'],limits);
   for(const id of ['before','after']) {
@@ -197,11 +201,13 @@ function initialModelRuntime(db) {
   await assert.rejects(runtime.assistants.applyContextLimits(['before','missing'],{...limits,privateContextPrimaryLimit:77}),/已删除/);
   assert.deepEqual(db.prepare("SELECT * FROM ai_assistants WHERE id='before'").get(),beforeMissing,'所选AI消失时整批回滚');
   for (const id of ['before', 'after']) {
-    assert.equal(db.prepare('SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = ?').get(id).id, vision.id);
-    assert.equal(db.prepare('SELECT model_config_id AS id FROM assistant_voice_settings WHERE assistant_id = ?').get(id).id, voice.id);
+    assert.equal(await imageSettings.getRecognitionModelId(id), null, '新增角色或 OCR 模型都不自动绑定');
+    assert.equal(await voiceSettings.getModelId(id), null, '新增角色或 TTS 模型都不自动绑定');
   }
-  db.prepare("UPDATE chat_assistant_image_settings SET recognition_model_config_id = NULL WHERE assistant_id = 'before'").run();
-  db.prepare("UPDATE assistant_voice_settings SET model_config_id = NULL WHERE assistant_id = 'before'").run();
+  await imageSettings.setRecognitionModelId('before', null);
+  await voiceSettings.setModelId('before', null);
+  await imageSettings.setRecognitionModelId('after', vision.id);
+  await voiceSettings.setModelId('after', voice.id);
   const secondVision = await runtime.create('ocr');
   const secondVoice = await runtime.create('tts');
   db.prepare("UPDATE assistant_voice_settings SET model_config_id = ? WHERE assistant_id = 'after'").run(secondVoice.id);
@@ -212,8 +218,8 @@ function initialModelRuntime(db) {
   assert.equal(db.prepare("SELECT model_config_id AS id FROM assistant_voice_settings WHERE assistant_id = 'before'").get().id, null);
   assert.equal(db.prepare("SELECT model_config_id AS id FROM assistant_voice_settings WHERE assistant_id = 'after'").get().id, secondVoice.id);
   await runtime.createAssistant('new-default');
-  assert.equal(db.prepare("SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = 'new-default'").get().id, vision.id);
-  assert.equal(db.prepare("SELECT model_config_id AS id FROM assistant_voice_settings WHERE assistant_id = 'new-default'").get().id, voice.id);
+  assert.equal(await imageSettings.getRecognitionModelId('new-default'), null);
+  assert.equal(await voiceSettings.getModelId('new-default'), null);
   await runtime.commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { apiKey: null } });
   await runtime.commands.deleteAuxiliaryModelConfig({ id: voice.id });
   await runtime.createAssistant('unavailable-default');
@@ -235,7 +241,8 @@ function initialModelRuntime(db) {
   await runtime.create('ocr');
   assert.equal(db.prepare('SELECT count(*) AS count FROM chat_assistant_image_settings').get().count, 0);
   await runtime.commands.updateAuxiliaryModelConfig({ id: vision.id, settings: { apiKey: 'complete' } });
-  assert.equal(db.prepare("SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = 'waiting'").get().id, vision.id);
+  assert.equal(db.prepare('SELECT count(*) AS count FROM chat_assistant_image_settings').get().count, 0, '补全 OCR 配置也不自动绑定角色');
+  assert.equal(db.prepare("SELECT image_analysis_model_config_id AS id FROM moment_settings WHERE id = 'global'").get().id, vision.id);
   assert.deepEqual(runtime.notifications, ['ocr']);
   for (const kind of ['embedding', 'translation', 'stt']) {
     const model = await runtime.create(kind, kind === 'translation' ? {
@@ -252,7 +259,7 @@ function initialModelRuntime(db) {
   db.close();
 }
 
-// 创建失败回滚资产、默认 marker 与所有 owner；创建角色失败也不能留下半套选择。
+// 创建失败回滚资产、默认 marker 与相关 owner；角色创建不再触发辅助模型写入。
 {
   const db = await createDatabase(); await runMigrations(executor(db));
   const runtime = initialModelRuntime(db);
@@ -266,14 +273,14 @@ function initialModelRuntime(db) {
   db.exec('DROP TRIGGER reject_initial_moment');
   const [first, second] = await Promise.all([runtime.create('ocr'), runtime.create('ocr')]);
   assert.equal(db.prepare("SELECT model_config_id AS id FROM auxiliary_model_initial_defaults WHERE capability_kind = 'ocr'").get().id, first.id);
-  assert.equal(db.prepare("SELECT recognition_model_config_id AS id FROM chat_assistant_image_settings WHERE assistant_id = 'existing'").get().id, first.id);
+  assert.equal(db.prepare("SELECT image_analysis_model_config_id AS id FROM moment_settings WHERE id = 'global'").get().id, first.id);
+  assert.equal(db.prepare('SELECT count(*) AS count FROM chat_assistant_image_settings').get().count, 0);
   assert.notEqual(first.id, second.id);
-  const voice = await runtime.create('tts');
-  db.exec("CREATE TRIGGER reject_initial_voice BEFORE INSERT ON assistant_voice_settings WHEN NEW.assistant_id = 'failed' BEGIN SELECT RAISE(ABORT, '模拟角色初始化失败'); END");
-  await assert.rejects(runtime.createAssistant('failed'), /角色初始化失败/);
-  assert.equal(db.prepare("SELECT id FROM ai_assistants WHERE id = 'failed'").get(), undefined);
-  assert.equal(db.prepare("SELECT assistant_id FROM chat_assistant_image_settings WHERE assistant_id = 'failed'").get(), undefined);
-  assert.equal(db.prepare("SELECT model_config_id AS id FROM assistant_voice_settings WHERE assistant_id = 'existing'").get().id, voice.id);
+  await runtime.create('tts');
+  await runtime.createAssistant('unbound');
+  assert.equal(db.prepare("SELECT id FROM ai_assistants WHERE id = 'unbound'").get().id, 'unbound');
+  assert.equal(db.prepare('SELECT count(*) AS count FROM assistant_voice_settings').get().count, 0);
+  assert.equal(db.prepare('SELECT count(*) AS count FROM chat_assistant_image_settings').get().count, 0);
   db.close();
 }
 
@@ -359,8 +366,8 @@ function initialModelRuntime(db) {
   const vision = await create('ocr', 'vision');
   const stt = await create('stt', 'stt');
   const voice = await create('tts', 'voice');
-  assert.deepEqual(selectionIds(db), [null, vision.id, stt.id], '创建向量模型不自动开启记忆向量化');
-  assert.deepEqual(voices(db), ['broken', 'disabled', 'explicit', 'inherited'].map((id) => [id, voice.id]));
+  assert.deepEqual(selectionIds(db), [null, null, stt.id], '创建模型不自动开启记忆向量化或绑定角色 OCR');
+  assert.deepEqual(voices(db), [], '创建 TTS 模型不自动绑定角色');
   assert.equal(db.prepare("SELECT image_analysis_model_config_id AS id FROM moment_settings WHERE id = 'global'").get().id, vision.id);
   const stickerModels = db.prepare("SELECT recognition_model_config_id, embedding_model_config_id FROM sticker_system_config WHERE id = 'global'").get();
   assert.equal(stickerModels.recognition_model_config_id, vision.id);
@@ -498,6 +505,7 @@ function loadImageRuntime(dependencies, aiClientOverrides = {}) {
     {
       '@shared/runtime/abortSignal': loadCommonJS('src/shared/runtime/abortSignal.ts', {}),
       '@platform/ai': {
+        getErrorDisplayInfo: loadCommonJS('src/platform/ai/errorMapping.ts').getErrorDisplayInfo,
         createAIClient: (config) => {
           const client = {
             chat: async () => ({ success: true, text: '图中有一只黑猫坐在窗台上。' }),
@@ -609,10 +617,12 @@ for (const temperature of [null, 0]) {
 }
 
 // 网络失败、空转述与异常都不能把预处理失败改成向主模型传图。
-for (const chat of [
-  async () => ({ success: false, text: '', error: '识别服务不可用' }),
-  async () => ({ success: true, text: '   ' }),
-  async () => { throw new Error('识别请求中断'); },
+for (const [chat, timedOut] of [
+  [async () => ({ success: false, text: '', error: '识别服务不可用' }), false],
+  [async () => ({ success: true, text: '   ' }), false],
+  [async () => { throw new Error('识别请求中断'); }, false],
+  [async () => { throw new Error('Network request timed out'); }, true],
+  [async () => ({ success: false, text: '', error: null, httpStatus: 504 }), true],
 ]) {
   const { module } = loadImageRuntime(baseDeps({
     resolveOCRModel: async () => ({ status: 'active', model: { modelConfigId: 'ocr-a', baseURL: 'https://x', apiKey: 'k', model: 'm', temperature: 0, topP: null, maxTokens: null, metadataJson: null, modelConfigName: 'ocr' } }),
@@ -623,7 +633,7 @@ for (const chat of [
   assert.equal(result.route, 'ocr');
   assert.equal(result.ocrSucceeded, false);
   assert.ok(result.parts.every((part) => part.type === 'text'));
-  assert.ok(result.parts.some((part) => part.text.includes('OCR 失败，未向主模型提供原图')));
+  assert.ok(result.parts.some((part) => part.text.includes(`OCR ${timedOut ? '超时' : '失败'}，未向主模型提供原图`)));
 }
 
 // 模型资产与两个向量消费者的发布资格共享一次提交，不依赖事件是否已送达。
@@ -642,4 +652,4 @@ for (const chat of [
   assert.equal(db.prepare('SELECT revision FROM memory_embedding_index_control').get().revision, 5, '后一个消费者撤销失败时，前一个消费者和模型资产一起回滚');
   db.close();
 }
-console.log('辅助模型：首次配置、新角色初始化、手动选择保留、并发、回滚与升级恢复验证通过');
+console.log('辅助模型：角色不自动绑定、手动选择保留、全局首次配置、并发、回滚与升级恢复验证通过');

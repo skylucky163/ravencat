@@ -1,10 +1,10 @@
 /** 二级集中展示，一级列表只显示尚未归纳的记录；已归纳来源留在二级编辑页。 */
 import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
-import { ChevronRight, Plus, Settings } from 'lucide-react-native';
+import { ChevronRight, Settings } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
-import { NavigationHeader, showAppDialog } from '@shared/ui';
+import { HeaderAddButton, NavigationHeader, showAppDialog } from '@shared/ui';
 import { createChatSummaryStyles } from './chatSummaryStyles';
 import { clearChatSummary } from '../application/ChatSummary';
 import { useChatSummarySnapshot } from './useChatSummarySnapshot';
@@ -44,7 +44,7 @@ export default function ChatSummaryScreen({ conversationId, onBack, onCreateSumm
   </Pressable>;
   return <SafeAreaView style={styles.screen}>
     <NavigationHeader title="聊天摘要" onGoBack={onBack} rightButton={<View style={styles.headerActions}>
-      <Pressable style={styles.headerAction} accessibilityLabel="新增摘要" disabled={clearing} onPress={onCreateSummary}><Plus size={24} color={theme.colors.brand.primary} /></Pressable>
+      <HeaderAddButton variant="inline" style={styles.headerAction} accessibilityLabel="新增摘要" disabled={clearing} onPress={onCreateSummary} />
       <Pressable style={styles.headerAction} accessibilityLabel="摘要设置" onPress={onSettings}><Settings size={24} color={theme.colors.brand.primary} /></Pressable>
     </View>} />
     <ScrollView contentContainerStyle={styles.content}>

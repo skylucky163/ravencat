@@ -29,6 +29,8 @@ export { default as ModalSheet } from './ModalSheet';
 export { default as ModelPickerModal } from './ModelPickerModal';
 export { default as ToggleField } from './ToggleField';
 export type { ToggleFieldProps } from './ToggleField';
+export { default as ToggleDetailRow } from './ToggleDetailRow';
+export type { ToggleDetailRowProps } from './ToggleDetailRow';
 export { default as Toggle } from './Toggle';
 export type { ToggleProps } from './Toggle';
 export { default as Slider } from './Slider';
@@ -43,6 +45,7 @@ export {
 } from './floatingTabBarMetrics';
 export { useFloatingTabBarScrollPadding } from './useFloatingTabBarScrollPadding';
 export { default as NavigationHeader } from './NavigationHeader';
+export { default as HeaderAddButton } from './HeaderAddButton';
 
 export { default as ConfiguredModelPicker } from './ConfiguredModelPicker';
 export { default as useBusyBackHandler } from './useBusyBackHandler';

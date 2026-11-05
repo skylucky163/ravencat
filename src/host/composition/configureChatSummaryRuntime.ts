@@ -73,7 +73,7 @@ async function generateSummary(input: ChatSummaryModelInput | SecondaryChatSumma
   try {
     const secondary = 'segments' in input;
     const kind = group ? 'group' : 'private';
-    const override = await resolveChatSummaryPromptOverride(assistant?.id ?? null, secondary ? 'secondary' : 'primary');
+    const override = await resolveChatSummaryPromptOverride(assistant?.id ?? null, secondary ? 'secondary' : 'primary', kind);
     const task = secondary ? createSecondaryChatSummaryPromptBlock(kind, override) : createChatSummaryPromptBlock(kind, override);
     const currentInput = secondary ? JSON.stringify({
       summaries: input.segments.map((segment) => ({ content: segment.content,

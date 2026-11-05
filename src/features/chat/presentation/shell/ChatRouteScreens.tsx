@@ -377,8 +377,9 @@ export function ChatConversationRouteScreen({
   );
 }
 
-export function ChatMenuRouteScreen({ aiId, onOpenModelSettings, onOpenConversationSettings, onOpenSummary }: {
+export function ChatMenuRouteScreen({ aiId, onOpenAssistantProfile, onOpenModelSettings, onOpenConversationSettings, onOpenSummary }: {
   aiId: string;
+  onOpenAssistantProfile: () => void;
   onOpenModelSettings: () => void;
   onOpenConversationSettings: () => void;
   onOpenSummary: () => void;
@@ -408,6 +409,7 @@ export function ChatMenuRouteScreen({ aiId, onOpenModelSettings, onOpenConversat
         state.handleCloseMenu();
         router.returnToConversation(aiId);
       }}
+      onOpenProfile={onOpenAssistantProfile}
       onModelSettings={onOpenModelSettings}
       onChatSettings={onOpenConversationSettings}
       onChatSummary={onOpenSummary}

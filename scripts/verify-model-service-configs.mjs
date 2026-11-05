@@ -54,7 +54,7 @@ function runtime(db) {
   const { SQLiteChatSummaryRepository } = load('src/features/chat/summary/infrastructure/SQLiteChatSummaryRepository.ts', dependencies);
   const summary = new SQLiteChatSummaryRepository(async () => []);
   dependencies['../application/AuxiliaryModelInitialization'] = { getAuxiliaryModelInitialization: () => ({
-    initializeModelSelections: async () => {}, initializeAssistantSelections: async () => {}, modelSelectionsInitialized() {},
+    initializeModelSelections: async () => {}, modelSelectionsInitialized() {},
     invalidateModelReferencesInTransaction: (tx, id) => summary.invalidateModelReferencesInTransaction(tx, id),
     invalidateServiceReferencesInTransaction: (tx, id) => summary.invalidateServiceReferencesInTransaction(tx, id),
   }) };

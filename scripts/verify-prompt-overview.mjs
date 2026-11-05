@@ -273,7 +273,8 @@ const scopedManagement = load('src/features/prompting/application/ManageAssistan
         'INSERT OR REPLACE INTO assistant_tool_permissions (assistant_id, tool_name, enabled, updated_at) VALUES (?, ?, ?, ?)', [id, name, Number(enabled), 'now']
       ),
     },
-    catalog: { getById: () => ({ protection: 'overridable', defaultContent: '默认规则' }) },
+    catalog: { getById: (id) => ({ protection: 'overridable', defaultContent: '默认规则',
+      ...(id === 'internal.group_chat_summary' || id === 'internal.group_chat_secondary_summary' ? { editScope: 'global' } : {}) }) },
   }) },
 });
 // 使用真实 SQLite 验证可选提示词的默认状态、覆盖继承与 AI 隔离。
@@ -319,6 +320,17 @@ for (const [level, definitionId] of [['primary', 'internal.chat_summary'], ['sec
   assert.equal(await scopedManagement.resolveChatSummaryPromptOverride('ai-1', level), undefined);
   assert.throws(() => scopedManagement.saveAssistantDefinitionOverride({ assistantId: 'ai-1', definitionId, locale: 'zh-CN', content: ' ' }), /不能为空/u);
 }
+// 群摘要使用自己的两个定义：只读全局正文，AI 覆盖与全局应用都不作用于它。
+for (const [level, definitionId] of [['primary', 'internal.group_chat_summary'], ['secondary', 'internal.group_chat_secondary_summary']]) {
+  assert.equal(await scopedManagement.resolveChatSummaryPromptOverride('ai-1', level, 'group'), undefined);
+  await coreDefaultManagement.saveDefaultDefinition(definitionId, `全局群${level}正文`);
+  assert.equal(await scopedManagement.resolveChatSummaryPromptOverride(null, level, 'group'), `全局群${level}正文`);
+  assert.throws(() => scopedManagement.saveAssistantDefinitionOverride({ assistantId: 'ai-1', definitionId, locale: 'zh-CN', content: `群专属${level}正文` }), /只能修改全局正文/u);
+  await assert.rejects(scopedManagement.applyAssistantDefinitionGlobally({ definitionId, content: `群专属${level}正文` }), /只能修改全局正文/u);
+  await coreDefaultManagement.resetDefaultDefinition(definitionId);
+  assert.equal(await scopedManagement.resolveChatSummaryPromptOverride(null, level, 'group'), undefined, '没有全局正文时交给 Chat 使用群默认正文');
+}
+assert.equal(await scopedManagement.resolveChatSummaryPromptOverride('ai-1', 'primary'), undefined, '单聊定义不读取群聊正文');
 await scopedManagement.saveAssistantDefinitionState({ assistantId: 'ai-1', definitionId: 'output.paragraph_breaks', enabled: true });
 assert.equal((await scopedManagement.resolveAssistantPromptConfiguration({ assistantId: 'ai-1', scenarioId: 'chat.private_reply' })).paragraphBreaksEnabled, true);
 assert.equal((await scopedManagement.resolveAssistantPromptConfiguration({ assistantId: 'ai-2', scenarioId: 'chat.private_reply' })).paragraphBreaksEnabled, false);
@@ -457,9 +469,17 @@ const editorTheme = {
     background: { app: '#fff', screen: '#f5f5f5' },
   },
 };
-const editorThemePorts = { GlassSurface: 'GlassSurface', ThemedSurface: 'View', useTheme: () => editorTheme, useThemedStyles: (factory) => factory(editorTheme) };
+const editorThemePorts = { GlassSurface: 'GlassSurface',
+  // 跟随真实 ThemedSurface：玻璃主题下卡片由原生玻璃承载，否则退回普通容器。
+  ThemedSurface: ({ children, nativeGlass, cornerRadius, variant, ...rest }) => React.createElement(
+    glassEnabled && nativeGlass !== false ? 'GlassSurface' : 'View', rest, children),
+  useTheme: () => editorTheme, useThemedStyles: (factory) => factory(editorTheme) };
 const ToggleField = load('src/shared/ui/ToggleField.tsx', {
   'react-native': native, '@shared/theme': editorThemePorts, './Toggle': { default: 'Switch', __esModule: true },
+}).default;
+const ToggleDetailRow = load('src/shared/ui/ToggleDetailRow.tsx', {
+  'react-native': native, '@shared/theme': editorThemePorts, '@expo/vector-icons': { Ionicons: 'Ionicons' },
+  './ToggleField': { default: ToggleField, __esModule: true },
 }).default;
 const customRows = load('src/features/prompting/presentation/CustomPromptRow.tsx', {
   'react-native': native, '@shared/ui': { ToggleField }, '@shared/theme': { ThemedSurface: 'View' },
@@ -468,10 +488,20 @@ const nativeEditor = load('src/shared/ui/AppTextInput.tsx', { 'react-native': na
 const editorField = load('src/shared/ui/InputField.tsx', { 'react-native': native, '@shared/theme': editorThemePorts, './AppTextInput': nativeEditor }).default;
 const editorStyles = load('src/features/prompting/presentation/promptCenterStyles.ts', { 'react-native': native });
 let definitionSaveGate;
+let failPersonaSave = false;
+const personaUpdates = [];
 const Screen = load('src/features/prompting/presentation/PromptCenterScreen.tsx', {
   '@shared/prompt': { CHAT_PROMPT_READING_FLOW },
-  '@features/assistants': { getAssistantDisplayName: (assistant) => assistant.nickname ?? assistant.name },
-  '@shared/ui': { InputField: editorField, KeyboardAvoidingContainer: 'View', ToggleField, showAppDialog: ({ title, message, buttons }) => alerts.push([title, message, buttons]) },
+  '@features/assistants': {
+    getAssistantDisplayName: (assistant) => assistant.nickname ?? assistant.name,
+    updateAIAssistantSettings: async (id, patch) => {
+      if (failPersonaSave) throw new Error('人设保存失败');
+      personaUpdates.push({ id, patch });
+      (id === ai.id ? ai : otherAI).persona = patch.systemPrompt;
+      return true;
+    },
+  },
+  '@shared/ui': { InputField: editorField, KeyboardAvoidingContainer: 'View', ToggleField, ToggleDetailRow, HeaderAddButton: ({ accessibilityLabel, onPress }) => React.createElement('HeaderAddButton', { accessibilityLabel, onPress }), showAppDialog: ({ title, message, buttons }) => alerts.push([title, message, buttons]) },
   'react-native': native, 'lucide-react-native': { ChevronDown: 'ChevronDown', ChevronRight: 'ChevronRight', Square: 'Square', SquareCheck: 'SquareCheck', Star: 'Star' },
   'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
   '@shared/theme': editorThemePorts,
@@ -481,8 +511,11 @@ const Screen = load('src/features/prompting/presentation/PromptCenterScreen.tsx'
     { id: 'foundation.default_core', defaultContent: '代码默认规则' },
     { id: 'input.image_grounding', defaultContent: '图片默认提醒' },
     { id: 'output.paragraph_breaks', defaultContent: '默认分段规则' },
+    { id: 'output.action_description', defaultContent: '默认动作描写规则' },
     { id: 'internal.chat_summary', defaultContent: '默认一级摘要规则' },
     { id: 'internal.chat_secondary_summary', defaultContent: '默认二级摘要规则' },
+    { id: 'internal.group_chat_summary', defaultContent: '默认群聊一级摘要规则', editScope: 'global' },
+    { id: 'internal.group_chat_secondary_summary', defaultContent: '默认群聊二级摘要规则', editScope: 'global' },
     { id: 'internal.vision_ocr', defaultContent: '默认图片识别规则' },
   ] }) },
   '../application/ManagePromptDefaults': {
@@ -518,7 +551,7 @@ const Screen = load('src/features/prompting/presentation/PromptCenterScreen.tsx'
     },
     getAssistantPromptEditorDetails: async (id) => { aiReads.push(['details', id]); return { ...detailsFor(id) }; },
     saveAssistantDefinitionState: async ({ assistantId, definitionId, enabled }) => {
-      detailsFor(assistantId)[{ 'context.device_battery': 'batteryEnabled', 'context.time_awareness': 'timeEnabled', 'context.message_timestamps': 'messageTimestampsEnabled', 'context.user_state': 'userStateEnabled', 'context.social': 'socialEnabled', 'output.paragraph_breaks': 'paragraphBreaksEnabled', 'input.image_grounding': 'imageGroundingEnabled' }[definitionId]] = enabled;
+      detailsFor(assistantId)[{ 'context.device_battery': 'batteryEnabled', 'context.time_awareness': 'timeEnabled', 'context.message_timestamps': 'messageTimestampsEnabled', 'context.user_state': 'userStateEnabled', 'context.social': 'socialEnabled', 'output.paragraph_breaks': 'paragraphBreaksEnabled', 'output.action_description': 'actionDescriptionEnabled', 'input.image_grounding': 'imageGroundingEnabled' }[definitionId]] = enabled;
     },
     saveAssistantDefinitionOverride: async (override) => { detailsFor(override.assistantId).overrides = [override]; },
     resetAssistantDefinitionOverride: async ({ assistantId }) => { detailsFor(assistantId).overrides = []; },
@@ -587,6 +620,8 @@ await renderer.act(async () => expo.useRouter().push('/prompt-center'));
 function activeScreen() { return screen.root.findAllByType('RouteSlot').find((node) => node.props.active); }
 function text(node) { return typeof node === 'string' ? node : node.children.map(text).join(''); }
 function button(label) { return activeScreen().findAllByType('TouchableOpacity').find((node) => node.findAllByType('Text').some((child) => text(child) === label)); }
+// 自定义提示词的添加入口是导航栏右上角加号，不再有文字按钮。
+function headerAddButton() { return activeScreen().findByProps({ accessibilityLabel: '添加自定义提示词' }); }
 function currentTitle() { return activeScreen().findByType('Header').props.title; }
 async function systemBack() { await renderer.act(async () => dispatch(CommonActions.goBack())); }
 assert.ok(!JSON.stringify(screen.toJSON()).includes('私密正文'));
@@ -605,7 +640,7 @@ await renderer.act(async () => button('用户人设').props.onPress());
 assert.equal(stackState.routes.at(-1).name, 'profile');
 await systemBack();
 assert.equal(currentTitle(), '提示词中心');
-const overviewLabels = ['系统基础规则', '换行规则', '人设', '协议空间常驻提示词', 'AI 身份池', '群聊身份背景', '自定义提示词', '工具调用', 'MCP',
+const overviewLabels = ['系统基础规则', '其他规则', '人设', '协议空间常驻提示词', 'AI 身份池', '群聊身份背景', '自定义提示词', '工具调用', 'MCP',
   '历史聊天', '工具运行上下文', '用户状态与一起听', '时刻社交信息', '环境信息', 'AI 当前身份状态', '被动记忆', '手机电量', '当前时间', '消息时间戳', '本轮回应要求', '当前聊天'];
 const overviewText = text(activeScreen());
 assert.ok(overviewText.includes('增加输入 Token') && overviewText.includes('模仿时间格式'), '开关旁明确说明开销和模仿风险');
@@ -662,7 +697,7 @@ await systemBack();
 assert.equal(currentTitle(), '提示词中心');
 await renderer.act(async () => button('自定义提示词').props.onPress());
 for (const [name, content] of [['第一条', '第一条正文'], ['第二条', '第二条正文']]) {
-  await renderer.act(async () => button('添加').props.onPress());
+  await renderer.act(async () => headerAddButton().props.onPress());
   await renderer.act(async () => {
     activeScreen().findAllByType('TextInput')[0].props.onChangeText(name);
     activeScreen().findAllByType('TextInput')[1].props.onChangeText(content);
@@ -710,7 +745,7 @@ assert.equal(currentTitle(), '提示词中心', '系统返回已退出的编辑�
 await systemBack();
 assert.equal(stackState.routes.at(-1).name, 'settings');
 assert.deepEqual(aiReads, [], '全局概览与工具、自定义提示词只读取全局配置');
-// AI 身份贯穿详情路由，人设只读取数据库最新值，协议空间保持对应角色。
+// AI 身份贯穿详情路由，人设编辑与资料共用正文，协议空间保持对应角色。
 assistantOptions = [otherAI, ai];
 await renderer.act(async () => expo.useRouter().push('/prompt-center'));
 assert.equal(stackState.routes.at(-1).params.assistantId, ai.id, '已有 AI 时应选主理，而不是列表首位');
@@ -719,8 +754,8 @@ assert.equal(stackState.routes.at(-1).name, 'prompt-center/conditional');
 assert.equal(stackState.routes.at(-1).params.assistantId, ai.id);
 assert.ok(text(activeScreen()).includes('图片'));
 assert.ok(activeScreen().findByType('Header').props.help.sections.some((section) => section.body.includes('OCR')));
-assert.equal(activeScreen().findAllByType('Switch').length, 0, '条件列表只提供正文页入口');
-await renderer.act(async () => button('图片防幻觉提醒').props.onPress());
+assert.equal(activeScreen().findAllByType('Switch').length, 1, '条件列表逐条提供注入开关');
+await renderer.act(async () => activeScreen().findByProps({ accessibilityLabel: '查看图片防幻觉提醒详情' }).props.onPress());
 assert.equal(currentTitle(), '图片防幻觉提醒');
 assert.equal(activeScreen().findByType('Switch').props.value, true);
 await renderer.act(async () => activeScreen().findByType('Switch').props.onValueChange(false));
@@ -728,7 +763,7 @@ assert.equal(activeScreen().findByType('Switch').props.value, false);
 await renderer.act(async () => activeScreen().findByType('TextInput').props.onChangeText('可编辑图片提醒'));
 await renderer.act(async () => button('保存').props.onPress());
 assert.equal(currentTitle(), '条件提示词');
-await renderer.act(async () => button('图片防幻觉提醒').props.onPress());
+await renderer.act(async () => activeScreen().findByProps({ accessibilityLabel: '查看图片防幻觉提醒详情' }).props.onPress());
 assert.equal(activeScreen().findByType('TextInput').props.value, '可编辑图片提醒');
 await renderer.act(async () => button('恢复默认').props.onPress());
 await renderer.act(async () => alerts.at(-1)[2].find((item) => item.text === '恢复').onPress());
@@ -736,17 +771,32 @@ assert.equal(activeScreen().findByType('TextInput').props.value, '图片默认�
 assert.equal(activeScreen().findByType('Switch').props.value, false);
 await systemBack();
 await systemBack();
-await renderer.act(async () => button('换行规则').props.onPress());
+await renderer.act(async () => button('其他规则').props.onPress());
+assert.equal(currentTitle(), '其他规则');
+assert.equal(activeScreen().findAllByType('Switch').length, 2, '其他规则逐条提供注入开关');
+assert.equal(activeScreen().findAllByType('TextInput').length, 0, '列表只提供正文页入口');
+const ruleSwitch = (label) => activeScreen().findAllByType('Switch').find((node) => node.props.accessibilityLabel === label);
+assert.equal(ruleSwitch('注入换行规则').props.value, false);
+assert.equal(ruleSwitch('注入动作描写规则').props.value, false);
+await renderer.act(async () => ruleSwitch('注入换行规则').props.onValueChange(true));
+assert.equal(aiDetails.paragraphBreaksEnabled, true, '换行规则开关按当前 AI 保存');
+await renderer.act(async () => ruleSwitch('注入动作描写规则').props.onValueChange(true));
+assert.equal(aiDetails.actionDescriptionEnabled, true, '动作描写规则开关按当前 AI 保存');
+await renderer.act(async () => activeScreen().findByProps({ accessibilityLabel: '查看换行规则详情' }).props.onPress());
 assert.equal(currentTitle(), '换行规则');
-assert.equal(activeScreen().findByType('Switch').props.value, false);
-await renderer.act(async () => activeScreen().findByType('Switch').props.onValueChange(true));
+assert.equal(activeScreen().findByType('Switch').props.value, true);
 await renderer.act(async () => activeScreen().findByType('TextInput').props.onChangeText('自定义分段规则'));
 await renderer.act(async () => button('保存').props.onPress());
-assert.equal(currentTitle(), '提示词中心');
-assert.equal(activeScreen().findAllByProps({ accessibilityLabel: '注入换行规则' }).length, 0, '概览不重复提供编辑页开关');
-await renderer.act(async () => button('换行规则').props.onPress());
-assert.equal(activeScreen().findByType('Switch').props.value, true);
+assert.equal(currentTitle(), '其他规则', '保存正文后回到规则列表');
+assert.equal(activeScreen().findAllByType('Switch').length, 2, '开关留在规则列表');
+await renderer.act(async () => activeScreen().findByProps({ accessibilityLabel: '查看换行规则详情' }).props.onPress());
 assert.equal(activeScreen().findByType('TextInput').props.value, '自定义分段规则');
+await systemBack();
+await renderer.act(async () => activeScreen().findByProps({ accessibilityLabel: '查看动作描写规则详情' }).props.onPress());
+assert.equal(currentTitle(), '动作描写规则');
+assert.equal(activeScreen().findByType('TextInput').props.value, '默认动作描写规则');
+assert.equal(activeScreen().findByType('Switch').props.value, true);
+await systemBack();
 await systemBack();
 registryAssistants = [{ ...ai, model: 'model-one' }, { ...otherAI, model: 'model-two' }];
 await renderer.act(async () => button('AI 身份池').props.onPress());
@@ -765,15 +815,35 @@ await renderer.act(async () => registryCheckboxes()[0].props.onPress());
 await systemBack();
 await renderer.act(async () => button('AI 人设').props.onPress());
 assert.equal(stackState.routes.at(-1).params.assistantId, ai.id);
-assert.ok(text(activeScreen()).includes('原始人设'));
-assert.equal(activeScreen().findAllByType('TextInput').length, 0, '人设编辑入口归 AI 个人主页');
-assert.equal(button('保存'), undefined);
+assert.equal(activeScreen().findByType('TextInput').props.value, '原始人设');
+const personaDraft = '身份、关系与表达方式\n'.repeat(2000);
+await renderer.act(async () => activeScreen().findByType('TextInput').props.onChangeText(personaDraft));
+assert.equal(ai.persona, '原始人设', '点击保存前不改写资料');
 await renderer.act(async () => {
-  ai.persona = '个人主页保存后的人设';
   expo.useRouter().push('/mcp-tools');
 });
 await systemBack();
-assert.ok(text(activeScreen()).includes('个人主页保存后的人设'), '保留的人设页重新获得焦点后读取数据库最新正文');
+assert.equal(activeScreen().findByType('TextInput').props.value, personaDraft, '返回焦点不覆盖未保存的人设草稿');
+failPersonaSave = true;
+await renderer.act(async () => button('保存').props.onPress());
+assert.equal(currentTitle(), 'AI 人设', '保存失败留在编辑页');
+assert.equal(activeScreen().findByType('TextInput').props.value, personaDraft);
+assert.equal(ai.persona, '原始人设');
+assert.equal(alerts.at(-1)[0], '保存失败');
+failPersonaSave = false;
+await renderer.act(async () => button('保存').props.onPress());
+assert.equal(currentTitle(), '提示词中心');
+assert.deepEqual(personaUpdates.at(-1), { id: ai.id, patch: { systemPrompt: personaDraft } });
+assert.equal(ai.persona, personaDraft, '长人设完整保存到助手资料');
+assert.equal(otherAI.persona, '另一份人设', '保存只影响当前 AI');
+await renderer.act(async () => button('AI 人设').props.onPress());
+assert.equal(activeScreen().findByType('TextInput').props.value, personaDraft, '再次进入读取已保存正文');
+await renderer.act(async () => activeScreen().findByType('TextInput').props.onChangeText(''));
+await renderer.act(async () => button('保存').props.onPress());
+assert.equal(ai.persona, '', '允许清空人设');
+ai.persona = '个人主页保存后的人设';
+await renderer.act(async () => button('AI 人设').props.onPress());
+assert.equal(activeScreen().findByType('TextInput').props.value, ai.persona, '新打开的人设页读取个人主页修改后的正文');
 await systemBack();
 assert.equal(currentTitle(), '提示词中心');
 await renderer.act(async () => button('协议空间常驻提示词').props.onPress());
@@ -825,7 +895,7 @@ assert.deepEqual(aiDetails.overrides, firstAIOverridesBefore);
 assert.equal(JSON.stringify(fixture), globalBefore);
 await renderer.act(async () => button('自定义提示词').props.onPress());
 assert.equal(stackState.routes.at(-1).params.assistantId, otherAI.id);
-await renderer.act(async () => button('添加').props.onPress());
+await renderer.act(async () => headerAddButton().props.onPress());
 await renderer.act(async () => {
   activeScreen().findAllByType('TextInput')[0].props.onChangeText('另一位的规则');
   activeScreen().findAllByType('TextInput')[1].props.onChangeText('只注入另一位');
@@ -940,21 +1010,31 @@ await systemBack();
 await systemBack();
 // 当前草稿可直接全局应用，操作后保留编辑页；内置正文与两级摘要共用同一行为。
 await renderer.act(async () => expo.useRouter().push({ pathname: '/prompt-center', params: { assistantId: ai.id } }));
-const switchStates = (details) => [details.paragraphBreaksEnabled, details.imageGroundingEnabled, details.timeEnabled, details.batteryEnabled];
+const switchStates = (details) => [details.paragraphBreaksEnabled, details.actionDescriptionEnabled, details.imageGroundingEnabled, details.timeEnabled, details.batteryEnabled];
 const uiSwitchStatesBefore = [switchStates(aiDetails), switchStates(otherDetails)];
 const globalDefaultBeforeApply = structuredClone(fixture);
-for (const [definitionId, label] of [['foundation.default_core', '系统基础规则'], ['output.paragraph_breaks', '换行规则'], ['input.image_grounding', '图片防幻觉提醒'], ['internal.chat_summary', '一级摘要提示词'], ['internal.chat_secondary_summary', '二级摘要提示词']]) {
+for (const [definitionId, label] of [['foundation.default_core', '系统基础规则'], ['output.paragraph_breaks', '换行规则'], ['output.action_description', '动作描写规则'], ['input.image_grounding', '图片防幻觉提醒'], ['internal.chat_summary', '一级摘要提示词'], ['internal.chat_secondary_summary', '二级摘要提示词']]) {
   if (definitionId === 'input.image_grounding') await renderer.act(async () => button('条件提示词').props.onPress());
   const summaryRule = definitionId.startsWith('internal.chat_');
+  const rulesEntry = definitionId === 'output.paragraph_breaks' || definitionId === 'output.action_description';
   if (summaryRule) {
     await renderer.act(async () => button('其他提示词').props.onPress());
     assert.equal(currentTitle(), '其他提示词');
     assert.equal(activeScreen().findAllByType('TextInput').length, 0);
   }
-  await renderer.act(async () => button(label).props.onPress());
+  if (rulesEntry) {
+    await renderer.act(async () => button('其他规则').props.onPress());
+    assert.equal(currentTitle(), '其他规则');
+  }
+  if (rulesEntry || definitionId === 'input.image_grounding') {
+    await renderer.act(async () => activeScreen().findByProps({ accessibilityLabel: `查看${label}详情` }).props.onPress());
+  } else {
+    await renderer.act(async () => button(label).props.onPress());
+  }
   if (summaryRule) {
     assert.equal(activeScreen().findAllByType('Switch').length, 0, '摘要提示词不拥有独立开关');
-    assert.ok(text(activeScreen()).includes('已开启'));
+    assert.equal(activeScreen().findAllByType('TextInput').length, 1, '摘要编辑页只保留正文');
+    assert.equal(text(activeScreen()).includes('启用状态'), false, '摘要编辑页不再显示启用状态框');
   }
   const draft = `当前未保存草稿：${label}`;
   await renderer.act(async () => activeScreen().findByType('TextInput').props.onChangeText(draft));
@@ -967,7 +1047,7 @@ for (const [definitionId, label] of [['foundation.default_core', '系统基础�
   for (const details of [aiDetails, otherDetails]) assert.equal(details.overrides.find((item) => item.definitionId === definitionId && item.locale === 'zh-CN').content, draft);
   assert.deepEqual([switchStates(aiDetails), switchStates(otherDetails)], uiSwitchStatesBefore);
   await systemBack();
-  if (definitionId === 'input.image_grounding' || summaryRule) await systemBack();
+  if (definitionId === 'input.image_grounding' || summaryRule || rulesEntry) await systemBack();
 }
 assert.deepEqual(fixture, globalDefaultBeforeApply);
 // 「其他提示词」同时承载视觉识别正文；编辑器按内置默认回落，并共用覆盖与全局应用。
@@ -984,17 +1064,36 @@ await renderer.act(async () => alerts.at(-1)[2].find((item) => item.text === '�
 assert.equal(activeScreen().findByType('TextInput').props.value, '默认图片识别规则');
 await systemBack();
 await systemBack();
-// 关闭期间仍可编辑；从摘要设置回来时刷新状态，但不覆盖编辑草稿。
+// 群聊摘要没有所属 AI：入口只改全局正文，不写任何 AI 覆盖。
+await renderer.act(async () => button('其他提示词').props.onPress());
+assert.ok(button('群聊二级摘要提示词'), '群聊二级摘要提示词入口存在');
+await renderer.act(async () => button('群聊一级摘要提示词').props.onPress());
+assert.equal(currentTitle(), '群聊一级摘要提示词');
+assert.equal(activeScreen().findByType('TextInput').props.value, '默认群聊一级摘要规则');
+assert.equal(activeScreen().findAllByType('Switch').length, 0, '群聊摘要提示词没有独立开关');
+assert.ok(!activeScreen().findAllByType('TouchableOpacity')
+  .some((node) => node.findAllByType('Text').some((child) => text(child) === '全局应用')), '群聊摘要没有所属 AI，不提供全局应用');
+const scopedOverridesBefore = aiDetails.overrides.length + otherDetails.overrides.length;
+await renderer.act(async () => activeScreen().findByType('TextInput').props.onChangeText('群聊自定义正文'));
+await renderer.act(async () => button('保存').props.onPress());
+assert.equal(fixture.overrides['internal.group_chat_summary'], '群聊自定义正文', '群聊摘要保存全局正文');
+assert.equal(aiDetails.overrides.length + otherDetails.overrides.length, scopedOverridesBefore, '群聊摘要不写 AI 覆盖');
+assert.equal(currentTitle(), '其他提示词');
+await systemBack();
+// 关闭期间仍可编辑；启用状态只在列表显示，编辑页只保留正文。
 summaryGenerationState = { primaryEnabled: true, secondaryEnabled: false };
 await renderer.act(async () => button('其他提示词').props.onPress());
+assert.ok(text(activeScreen()).includes('已关闭'), '列表显示当前摘要启用状态');
 await renderer.act(async () => button('二级摘要提示词').props.onPress());
-assert.ok(text(activeScreen()).includes('已关闭'));
+assert.equal(text(activeScreen()).includes('已关闭'), false, '编辑页不再显示启用状态');
 await renderer.act(async () => activeScreen().findByType('TextInput').props.onChangeText('关闭期间保存的摘要规则'));
 await renderer.act(async () => button('保存').props.onPress());
 assert.equal(currentTitle(), '其他提示词');
 summaryGenerationState = { primaryEnabled: true, secondaryEnabled: true };
+await systemBack();
+await renderer.act(async () => button('其他提示词').props.onPress());
+assert.ok(text(activeScreen()).includes('已开启'), '重新进入列表后状态按最新设置刷新');
 await renderer.act(async () => button('二级摘要提示词').props.onPress());
-assert.ok(text(activeScreen()).includes('已开启'));
 assert.equal(activeScreen().findByType('TextInput').props.value, '关闭期间保存的摘要规则');
 await renderer.act(async () => button('恢复默认').props.onPress());
 await renderer.act(async () => alerts.at(-1)[2].find((item) => item.text === '恢复').onPress());

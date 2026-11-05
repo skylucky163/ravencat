@@ -41,6 +41,7 @@ const { AIAssistantRepository } = load('src/features/assistants/infrastructure/S
   '@platform/persistence': { databaseCoordinator: { openTaskExecutor: () => database, transaction: (_, task) => database.withExclusiveTransactionAsync(task) } },
   '@features/profile': {}, '@features/media': { resolveMediaAssetReferenceUri: () => null },
   './SQLiteAuxiliaryModelDefaults': {}, './SQLiteAuxiliaryModelRepository': {},
+  '../application/AuxiliaryModelInitialization': {},
   '../domain/AIProfile': { createAIProfile: (data) => data },
 });
 const repository = new AIAssistantRepository();
@@ -90,7 +91,7 @@ await update('self', { nickname: 'daddy' });
 assert.equal(db.prepare("SELECT COUNT(*) n FROM messages WHERE session_id=? AND sender_type='system'").get(session.id).n, 1);
 await say('换回去！', false);
 const current = await nickname.getAssistantNicknamePromptContext('self');
-assert.match(current.content, /当前昵称备注是"daddy"/);
+assert.match(current.content, /daddy/);
 assert.doesNotMatch(current.content, /别人的私密备注|修改为|变化历史/);
 assert.equal(notifications, 2, '两个 AI 的真实改名分别只通知一次');
 assert.equal(db.prepare('SELECT COUNT(*) n FROM messages WHERE session_id=?').get(otherSession.id).n, 1);
@@ -110,7 +111,7 @@ const { PromptHistoryBuilder } = load('src/host/prompt/PromptHistoryBuilder.ts',
 // 摘要消费应用事件，但事件不计入对话条数。
 await executor.runAsync('INSERT INTO conversation_turn_state(session_id,reply_cursor,revision,updated_at) VALUES (?,?,0,?)',
   [session.id, 999999, new Date().toISOString()]);
-const claim = await summary.claim(session.id, 3, 'nickname-summary', '2090-01-01', '2091-01-01', 'Asia/Shanghai');
+const claim = await summary.claim(session.id, 3, 'nickname-summary', '2090-01-01', '2091-01-01', 'Asia/Shanghai', 0);
 assert.ok(claim.messages.some(item => item.kind === 'app_event' && item.content.includes('assistant_nickname_changed')));
 assert.equal(claim.messages.filter(item => item.kind === 'dialogue').length, 3);
 await summary.releaseClaim(claim);
@@ -202,6 +203,16 @@ const legacy = new DatabaseSync(':memory:');
 legacy.exec('PRAGMA foreign_keys=ON');
 const legacyExecutor = createSqliteExecutor(legacy);
 await bootstrapSqlite(legacyExecutor);
+// 还原 134 的结构，避免将当前 schema 仅改版本号后重复执行新增列迁移。
+for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) {
+  legacy.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id`);
+}
+legacy.exec(`DROP TABLE model_service_configs; DROP TABLE model_service_settings;
+ ALTER TABLE chat_summary_request_settings DROP COLUMN primary_limit;
+ ALTER TABLE ai_assistants DROP COLUMN show_action_steps;
+ ALTER TABLE ai_assistants DROP COLUMN streaming_reply;
+ ALTER TABLE group_chat_members DROP COLUMN muted;
+ ALTER TABLE group_chat_members DROP COLUMN joined_during_plan_id;`);
 legacy.exec(`INSERT INTO ai_assistants(id,agent_id,name,model,created_at,updated_at) VALUES ('legacy','legacy-agent','AI','test','2026-01-01','2026-01-01');
  INSERT INTO chat_conversations(id,kind) VALUES ('legacy-chat','direct');
  INSERT INTO sessions(id,ai_assistant_id,name,created_at,updated_at,visible_after_at)

@@ -1,6 +1,6 @@
 /** 按角色的图片识别选择决定直接传图或先由视觉模型转述。 */
 
-import { createAIClient } from '@platform/ai';
+import { createAIClient, getErrorDisplayInfo } from '@platform/ai';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import {
   getChatReplyRuntimeDependencies,
@@ -63,12 +63,16 @@ function buildOCRContext(params: {
   ].join('\n');
 }
 
-function buildOCRFailureContext(contextText: string): string {
+type OCRFailureKind = 'timeout' | 'failed';
+
+function buildOCRFailureContext(contextText: string, kind: OCRFailureKind): string {
   return [
     contextText,
     '',
-    '[视觉输入状态：OCR 失败，未向主模型提供原图]',
-    '本轮视觉能力暂时失效：已绑定的 OCR 模型没有返回可靠的图片转述。',
+    kind === 'timeout' ? '[视觉输入状态：OCR 超时，未向主模型提供原图]'
+      : '[视觉输入状态：OCR 失败，未向主模型提供原图]',
+    kind === 'timeout' ? '本轮图片识别请求超时，没有获得可靠的图片转述。请向用户说明图片识别超时。'
+      : '本轮视觉能力暂时失效：已绑定的 OCR 模型没有返回可靠的图片转述。',
     '你没有收到图片内容或可靠的 OCR 转述。请简短说明暂时看不到这张图片；不得描述、推断或假装看见。',
   ].join('\n');
 }
@@ -91,11 +95,13 @@ export async function resolveChatImageModelInput(
     ? { kind: 'media_asset', assetId: params.mediaAssetId }
     : { kind: 'legacy_uri', uri: params.imageUri };
   const image = await getChatReplyRuntimeDependencies().media.readVisionImage(mediaInput);
+  throwIfAbortSignalAborted(params.signal);
   const imagePart: ChatImageModelInputPart = {
     type: 'image_url',
     image_url: { url: toDataUrl(image.base64, image.mimeType) },
   };
   const selection = await getChatReplyRuntimeDependencies().vision.resolveOCRModel(params.assistantId);
+  throwIfAbortSignalAborted(params.signal);
 
   if (selection.status === 'unconfigured') {
     console.info('[ChatImageInput] direct vision route selected', {
@@ -124,14 +130,19 @@ export async function resolveChatImageModelInput(
 
   const ocrModel = selection.model;
   const ocrTaskInput = '读取本轮提供的图片，只输出可靠的 OCR 与必要视觉转述。';
+  console.info('[ChatImageInput] preparing OCR prompt', {
+    assistantId: params.assistantId,
+    modelConfigId: ocrModel.modelConfigId,
+  });
+  const ocrPrompt = await getChatReplyRuntimeDependencies().prompt.resolveVisionOCRPrompt(params.assistantId);
+  throwIfAbortSignalAborted(params.signal);
   const promptPack = await getChatReplyRuntimeDependencies().prompt.assembleStandalone({
     scenarioId: 'vision.ocr',
     assistantId: params.assistantId,
-    blocks: buildVisionOCRPromptBlocks(
-      await getChatReplyRuntimeDependencies().prompt.resolveVisionOCRPrompt(params.assistantId),
-    ),
+    blocks: buildVisionOCRPromptBlocks(ocrPrompt),
     currentInput: ocrTaskInput,
   });
+  throwIfAbortSignalAborted(params.signal);
   const client = createAIClient({
     baseURL: ocrModel.baseURL,
     apiKey: ocrModel.apiKey,
@@ -143,6 +154,10 @@ export async function resolveChatImageModelInput(
   });
 
   try {
+    console.info('[ChatImageInput] OCR request started', {
+      assistantId: params.assistantId,
+      modelConfigId: ocrModel.modelConfigId,
+    });
     const response = await client.chat(
       [
         {
@@ -158,18 +173,22 @@ export async function resolveChatImageModelInput(
       ],
       { allowImageContentFallback: false, allowReasoningLengthRetry: false, signal: params.signal },
     );
+    // 网络层可能把取消转为失败响应，也可能迟到返回成功；均不得继续当作本轮图片结果。
+    throwIfAbortSignalAborted(params.signal);
     const ocrText = response.text.trim();
     if (!response.success || !ocrText) {
       const error = response.error?.trim() || 'OCR 模型没有返回可靠文本';
+      const failureKind: OCRFailureKind = getErrorDisplayInfo(error, { httpStatus: response.httpStatus }).type === 'timeout' ? 'timeout' : 'failed';
       console.warn('[ChatImageInput] OCR failed', {
         assistantId: params.assistantId,
         modelConfigId: ocrModel.modelConfigId,
+        failureKind,
         error,
       });
       return {
         route: 'ocr',
         ocrSucceeded: false,
-        parts: [{ type: 'text', text: buildOCRFailureContext(params.contextText) }],
+        parts: [{ type: 'text', text: buildOCRFailureContext(params.contextText, failureKind) }],
       };
     }
 
@@ -185,15 +204,17 @@ export async function resolveChatImageModelInput(
   } catch (error) {
     throwIfAbortSignalAborted(params.signal);
     const message = error instanceof Error ? error.message : 'OCR 请求发生未知错误';
+    const failureKind: OCRFailureKind = getErrorDisplayInfo(message).type === 'timeout' ? 'timeout' : 'failed';
     console.warn('[ChatImageInput] OCR request failed', {
       assistantId: params.assistantId,
       modelConfigId: ocrModel.modelConfigId,
+      failureKind,
       error: message,
     });
     return {
       route: 'ocr',
       ocrSucceeded: false,
-      parts: [{ type: 'text', text: buildOCRFailureContext(params.contextText) }],
+      parts: [{ type: 'text', text: buildOCRFailureContext(params.contextText, failureKind) }],
     };
   }
 }

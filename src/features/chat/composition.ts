@@ -273,7 +273,6 @@ export { conversationTurnRepository } from './reply/infrastructure/SQLiteConvers
 
 export { configureChatImageModels, resolveChatRecognitionModel, notifyChatImageModelsChanged } from './reply/application/ChatImageModels';
 export { chatImageSettingsRepository } from './reply/infrastructure/SQLiteChatImageSettingsRepository';
-export { initializeChatImageModelInTransaction } from './reply/infrastructure/SQLiteChatImageSettingsRepository';
 
 export { recordAssistantNicknameChangeInTransaction } from './messages/application/RecordAssistantNicknameChange';
 export { createSharedMomentSendIntent } from './reply/agent/SharedMomentSendIntent';

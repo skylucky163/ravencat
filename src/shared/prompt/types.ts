@@ -33,6 +33,7 @@ export type PromptBlockKey =
   | 'foundation_default_core'
   | 'persona'
   | 'paragraph_breaks'
+  | 'action_description'
   | 'protocol_space'
   | 'tool_context_explanation'
   | 'agent_registry_summary'

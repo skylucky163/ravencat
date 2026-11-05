@@ -13,8 +13,6 @@ import {
   resolveMediaAssetReferenceUri,
 } from '@features/media';
 import { createAIProfile, type AIProfile } from '../domain/AIProfile';
-import { initializeAssistantAuxiliaryModelsInTransaction } from './SQLiteAuxiliaryModelDefaults';
-import { auxiliaryModelRepository } from './SQLiteAuxiliaryModelRepository';
 import type {
   AIAssistantDeletionResult,
   AIAssistantSettingsUpdate,
@@ -400,8 +398,6 @@ export class AIAssistantRepository implements IAIAssistantRepository {
 
       const serviceId = await bindModelService(transaction, getModelServiceConnection(ai.apiBaseUrl ?? '', ai.apiKey), ai.serviceConfigId);
       if (serviceId) await transaction.runAsync('UPDATE ai_assistants SET service_config_id = ?, api_base_url = NULL, api_key = NULL WHERE id = ?', [serviceId, ai.id]);
-      await initializeAssistantAuxiliaryModelsInTransaction(transaction, ai.id,
-        (id) => auxiliaryModelRepository.getModelConfigByIdInTransaction(transaction, id));
       const service = serviceId ? await readModelService(transaction, serviceId) : null;
       return { serviceConfigId: serviceId, apiBaseUrl: service ? service.baseUrl : ai.apiBaseUrl, apiKey: service ? service.apiKey : ai.apiKey };
     });

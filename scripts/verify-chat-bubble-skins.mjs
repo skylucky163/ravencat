@@ -79,6 +79,7 @@ const inspectedImages = load('src/platform/device/InspectLocalImage.ts', {
       if (this.uri === 'file:///broken.png') throw new Error('PNG 解码失败');
       if (corruptedPngHeader) return Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
       if (pickedImage.mimeType === 'image/jpeg') return Uint8Array.from([255, 216, 255]);
+      if (pickedImage.mimeType === 'image/webp') return Uint8Array.from([82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80]);
       const header = new Uint8Array(pickedImage.byteSize);
       header.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
       const view = new DataView(header.buffer);
@@ -86,7 +87,9 @@ const inspectedImages = load('src/platform/device/InspectLocalImage.ts', {
       return header;
     }
   } },
-  'react-native': { Image: { getSize: async () => ({ width: Math.floor(pickedImage.width / 2), height: Math.floor(pickedImage.height / 2) }) } },
+  'react-native': { Image: { getSize: async () => pickedImage.mimeType === 'image/png'
+    ? { width: Math.floor(pickedImage.width / 2), height: Math.floor(pickedImage.height / 2) }
+    : { width: pickedImage.width, height: pickedImage.height } } },
   './ImageAnimation': { detectImageAnimation: () => animatedImage },
 });
 assert.deepEqual(await inspectedImages.inspectLocalImage('file:///original.png'), { ...pickedImage, isAnimated: false },
@@ -146,8 +149,19 @@ pickedImage = { ...pickedImage, byteSize: 9 * 1024 * 1024 };
 const oversizedFile = await normalization.prepareBubbleSkinImport('file:///metadata-heavy.png');
 assert.equal(temporaryImages.get(oversizedFile.uri).width, 320, '大文件重编码时不放大小图');
 await oversizedFile.dispose();
-pickedImage = { ...pickedImage, mimeType: 'image/jpeg' };
-await assert.rejects(normalization.prepareBubbleSkinImport('file:///wrong-format.png'), /PNG/);
+// 选择器已接受的文件即使容器与 PNG 标记不同，也应生成真实 PNG，而非拒绝或只改后缀。
+for (const mimeType of ['image/jpeg', 'image/webp']) {
+  pickedImage = { width: 128, height: 256, mimeType, byteSize: 1024 };
+  for (const kind of ['background', 'decoration']) {
+    const imported = await normalization.prepareBubbleDraftImage('file:///provider-image.png', kind);
+    assert.deepEqual({ width: imported.width, height: imported.height }, { width: 128, height: 256 });
+    assert.equal(temporaryImages.get(imported.uri).format, 'png', '实际编码为 PNG，保持绘制与媒体存储契约');
+    await imported.dispose();
+    assert.equal(temporaryImages.size, 0, '格式转换中间图和草稿副本均被释放');
+  }
+}
+await assert.rejects(normalization.prepareBubbleDraftImage('file:///broken.png', 'background'), /无法读取或已损坏/,
+  '读取失败继续报告真实文件错误，不伪装成格式不符');
 pickedImage = { width: 3500, height: 2500, mimeType: 'image/png', byteSize: 2 * 1024 * 1024 };
 const editingImage = await normalization.prepareBubbleDraftImage('file:///picker.png', 'background');
 assert.equal(editingImage.width, 1024);

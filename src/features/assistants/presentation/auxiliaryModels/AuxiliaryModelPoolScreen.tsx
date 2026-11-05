@@ -1,10 +1,9 @@
 /** 资产列表可承载业务系统的选择控件，选择所有权仍归对应系统。 */
 import React from 'react';
-import { ActivityIndicator, ScrollView, TouchableOpacity, View } from 'react-native';
-import { Plus } from 'lucide-react-native';
+import { ActivityIndicator, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme, useThemedStyles } from '@shared/theme';
-import { EmptyState, ListItem, NavigationHeader } from '@shared/ui';
+import { EmptyState, HeaderAddButton, ListItem, NavigationHeader } from '@shared/ui';
 import type { AuxiliaryModelConfigItem } from './types';
 import { createStyles } from './styles';
 
@@ -25,7 +24,7 @@ export default function AuxiliaryModelPoolScreen({ label, description, models, l
     <NavigationHeader title={label} onGoBack={onBack} help={{ sections: [
       { title: '用途', body: description },
       { title: '选择规则', body: '实际使用的模型由对应功能选择；后续新增配置不会覆盖已有选择。' },
-    ] }} rightButton={<TouchableOpacity accessibilityLabel="新增模型配置" onPress={onAddModel} style={styles.headerIconBtn}><Plus size={24} color={theme.colors.brand.primary} /></TouchableOpacity>} />
+    ] }} rightButton={<HeaderAddButton accessibilityLabel="新增模型配置" onPress={onAddModel} />} />
     {loading ? <View style={styles.stateCard}><ActivityIndicator color={theme.colors.brand.primary} /></View> : <ScrollView style={styles.scrollView}>
       {selection && <View style={[styles.sectionBlock, styles.selectionBlock]}>{selection}</View>}
       <View style={styles.sectionBlock}>{models.length === 0 ? <EmptyState title={`暂无${label}`} description="点击右上角 + 创建模型配置。" /> : <View style={styles.card}>

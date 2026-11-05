@@ -4,6 +4,7 @@ import type { PromptDefinitionDescriptor, PromptScenarioId } from '@shared/promp
 import {
   DEFAULT_CORE_SYSTEM_PROMPTS,
   GROUP_MEMBER_REPLY_CONFIDENTIALITY_RULES,
+  DEFAULT_ACTION_DESCRIPTION_PROMPT,
   DEFAULT_IMAGE_GROUNDING_PROMPT,
   DEFAULT_PARAGRAPH_BREAKS_PROMPT,
   PARAGRAPH_BREAK_SCENARIOS,
@@ -67,6 +68,13 @@ export const HOST_PROMPT_DEFINITIONS: PromptDefinitionDescriptor[] = [
     category: 'style', supportedScenarios: [...PARAGRAPH_BREAK_SCENARIOS], defaultSlot: 'foundation', placement: 'system',
     protection: 'overridable', contentKind: 'static', defaultContent: DEFAULT_PARAGRAPH_BREAKS_PROMPT,
     contentDescription: '开启后紧随系统基础规则注入稳定前缀；关闭时完全省略。', sourcePath: FACTORY_SOURCE,
+  }),
+  define({
+    id: 'output.action_description', name: '动作描写规则', owner: 'host',
+    description: '普通聊天正文的动作与神态描写要求，按 AI 控制，默认关闭。',
+    category: 'style', supportedScenarios: [...PARAGRAPH_BREAK_SCENARIOS], defaultSlot: 'foundation', placement: 'system',
+    protection: 'overridable', contentKind: 'static', defaultContent: DEFAULT_ACTION_DESCRIPTION_PROMPT,
+    contentDescription: '开启后紧随换行规则注入稳定前缀；关闭时完全省略。', sourcePath: FACTORY_SOURCE,
   }),
   define({
     id: 'context.protocol_space', name: '协议空间常驻提示词', owner: 'host',

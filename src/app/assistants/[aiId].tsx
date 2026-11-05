@@ -8,6 +8,7 @@ export default function AssistantProfileRoute() {
   const router = useRouter();
   return aiId ? <AssistantProfileScreen key={aiId} aiId={aiId} onBack={() => router.back()}
     onEdit={() => router.push(`/assistants/${encodeURIComponent(aiId)}/edit` as Href)}
+    onSendMessage={() => router.dismissTo(`/chat/${encodeURIComponent(aiId)}` as Href)}
     onOpenMoments={() => router.push(`/assistants/${encodeURIComponent(aiId)}/moments` as Href)}
     onOpenModelSettings={() => router.push(`/assistants/${encodeURIComponent(aiId)}/model-settings` as Href)}
     onOpenContextSettings={() => router.push(`/assistants/${encodeURIComponent(aiId)}/context-settings` as Href)}

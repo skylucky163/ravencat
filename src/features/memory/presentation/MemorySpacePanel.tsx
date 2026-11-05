@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, Text, View } from 'react-native';
 import { Check, ChevronRight, Plus, Search, X } from 'lucide-react-native';
-import { AppTextInput, ModalSheet, ToggleField } from '@shared/ui';
+import { AppTextInput, HeaderAddButton, ModalSheet, ToggleField } from '@shared/ui';
 import { useTheme, useThemedStyles } from '@shared/theme';
 import { normalizeMemoryText, memorySearchText } from '../domain/Memory';
 import { addMemoryTrigger } from '../application/MemoryCommands';
@@ -41,7 +41,7 @@ export default function MemorySpacePanel({ visible, snapshot, error, busy, refre
             <Text style={styles.sheetName}>{selected ? selected.assistantName : '记忆空间'}</Text>
             {snapshot && <Text style={styles.sheetMeta}>{snapshot.entries.length} 段记忆 · {snapshot.triggers.length} 个关联组{selected?.isHost ? ' · 主理' : ''}</Text>}
           </View>
-          {selected && tab === 'entries' && <Pressable accessibilityRole="button" accessibilityLabel="新建记忆" style={styles.sheetButton} disabled={busy} onPress={() => onCreateMemory(selected.assistantId)}><Plus size={24} color={theme.colors.brand.primary} /></Pressable>}
+          {selected && tab === 'entries' && <HeaderAddButton variant="inline" style={styles.sheetButton} accessibilityLabel="新建记忆" disabled={busy} onPress={() => onCreateMemory(selected.assistantId)} />}
           <Pressable accessibilityRole="button" accessibilityLabel="收起记忆面板" style={styles.sheetButton} onPress={onClose}><X size={20} color={secondaryColor} /></Pressable>
         </View>
         {error && <><Text style={styles.error}>{error}</Text><Pressable accessibilityRole="button" accessibilityLabel="重新读取记忆" onPress={refresh}><Text style={[styles.activeTabText, { textAlign: 'center' }]}>重新读取</Text></Pressable></>}

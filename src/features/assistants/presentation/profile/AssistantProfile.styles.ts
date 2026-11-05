@@ -20,6 +20,12 @@ export const createAssistantProfileStyles = (theme: PresentationTheme) => StyleS
   name: { flexShrink: 1, color: theme.colors.text.primary, fontSize: 26, fontWeight: '600', textAlign: 'center' },
   nickname: { color: theme.colors.text.secondary, fontSize: 18, fontWeight: '400' },
   editProfile: { minWidth: 32, minHeight: 32, alignItems: 'center', justifyContent: 'center' },
+  footer: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border.light,
+  },
   persona: { marginTop: theme.spacing.sm, color: theme.colors.text.secondary, fontSize: 14, lineHeight: 22, textAlign: 'center' },
   profileSections: { gap: theme.spacing.md, ...(theme.effects.glass.enabled ? { paddingHorizontal: theme.spacing.lg } : {}) },
   momentsCard: {
@@ -30,7 +36,5 @@ export const createAssistantProfileStyles = (theme: PresentationTheme) => StyleS
   entryTitle: { flex: 1, color: theme.colors.text.primary, fontSize: 16 },
   empty: { color: theme.colors.text.tertiary, fontSize: 14, lineHeight: 24, textAlign: 'center' },
   lastField: { marginBottom: 0 },
-  action: { minHeight: 44, justifyContent: 'center', paddingHorizontal: theme.spacing.sm },
-  actionText: { color: theme.colors.brand.primary, fontSize: 15, fontWeight: '600' },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: theme.spacing.lg },
 });

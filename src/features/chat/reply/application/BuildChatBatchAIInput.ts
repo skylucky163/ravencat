@@ -70,6 +70,7 @@ async function appendAttachmentParts(
   attachment: ChatAttachment,
   messageText: string,
   assistantId: string,
+  signal?: AbortSignal,
   authorLabel = '用户',
 ): Promise<void> {
   if (attachment.type === 'image') {
@@ -82,6 +83,7 @@ async function appendAttachmentParts(
       const commonInput = {
         assistantId,
         contextText,
+        signal,
       };
       const imageInput = await resolveChatImageModelInput(
         typeof attachment.mediaAssetId === 'string'
@@ -181,6 +183,7 @@ export async function buildChatUserMessageModelInput(
   message: ChatMessage,
   assistantId: string,
   currentAgentId?: string,
+  signal?: AbortSignal,
 ): Promise<ChatUserMessageModelInput> {
   const moment = getMessageSharedMoment(message);
   if (moment) {
@@ -194,7 +197,7 @@ export async function buildChatUserMessageModelInput(
     for (const [index, entry] of record.entries.entries()) {
       for (const attachment of entry.attachments) {
         // 文件正文已经随作者写入上方记录；图片沿用现有视觉处理，并带上原作者。
-        if (attachment.type === 'image') await appendAttachmentParts(parts, attachment, '', assistantId, `分享记录第 ${index + 1} 项中${sharedRecordAuthorLabel(entry, currentAgentId)}`);
+        if (attachment.type === 'image') await appendAttachmentParts(parts, attachment, '', assistantId, signal, `分享记录第 ${index + 1} 项中${sharedRecordAuthorLabel(entry, currentAgentId)}`);
       }
     }
     return { displayText, modelInput: parts.some((part) => part.type === 'image_url') ? parts : joinTextParts(parts) };
@@ -229,7 +232,7 @@ export async function buildChatUserMessageModelInput(
     }
   } else {
     for (const attachment of attachments) {
-      await appendAttachmentParts(parts, attachment, text, assistantId);
+      await appendAttachmentParts(parts, attachment, text, assistantId, signal);
     }
   }
 
@@ -251,12 +254,13 @@ export async function buildChatUserMessageModelInput(
 export async function buildChatBatchAIInput(params: {
   messages: ChatMessage[];
   assistantId: string;
+  signal?: AbortSignal;
 }): Promise<BuildChatBatchAIInputResult> {
   const messages = Array.isArray(params.messages) ? params.messages : [];
 
   const perMessage: ChatUserMessageModelInput[] = [];
   for (const message of messages) {
-    perMessage.push(await buildChatUserMessageModelInput(message, params.assistantId));
+    perMessage.push(await buildChatUserMessageModelInput(message, params.assistantId, undefined, params.signal));
   }
 
   const displayText = perMessage

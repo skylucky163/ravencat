@@ -66,6 +66,7 @@ export async function executeUserReplyTurn(
       assistantId: aiConfig.id,
       agentId: aiConfig.agentId,
       isRegeneration: run.kind === 'regenerate',
+      signal: params.signal,
     });
 
     const lastUserMessage = input.userMessages[input.userMessages.length - 1];

@@ -48,10 +48,6 @@ export function createStyles(theme: PresentationTheme) {
     selectionBlock: {
       marginHorizontal: theme.spacing.lg,
     },
-    headerIconBtn: {
-      padding: theme.spacing.sm,
-      marginRight: -theme.spacing.sm,
-    },
     editContentContainer: {
       paddingBottom: theme.spacing.xl,
     },

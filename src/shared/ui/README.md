@@ -23,6 +23,7 @@
 | `CheckIcon` | 勾选图标 |
 | `EmptyState` | 空状态占位 |
 | `DropdownField` | 通用下拉字段（提供方、模型与参数选择） |
+| `HeaderAddButton` | 导航头右上角新增入口：统一品牌色加号 |
 | `InputField` | 通用输入框（带 label / hint） |
 | `AppTextInput` | 不带字段外壳的输入基础控件，供聊天、通话等输入区复用 |
 | `KeyboardAvoidingContainer` | 当前原生窗口内的统一键盘避让容器 |
@@ -32,11 +33,16 @@
 | `NavigationHeader` | 通用页面导航头，可在标题后显示主题主色问号并打开锚定悬浮说明 |
 | `Toggle` | 统一的二元开关，包含读屏状态及原生动画 |
 | `ToggleField` | 带标题和说明的开关字段，支持页面注入布局、字体、编号和自定义内容，内部使用 `Toggle` |
+| `ToggleDetailRow` | 卡片内的开关行：标题行带可选图标与开关，描述行显示灰色说明并进入详情 |
 | `Slider` | 原生手势数值滑杆，支持范围、步长、实时变化及松手通知 |
 | `SliderField` | 带标题、数值输入、范围和错误提示的滑杆字段 |
 | `UserAvatar` | 用户头像 |
 
+`HeaderAddButton` 默认自带导航头右侧的点击区内边距；与设置等其他头部按钮并排、由页面提供按钮容器时传 `variant="inline"`，并用 `style` 给出尺寸。
+
 开关设置项统一使用 `ToggleField`：`layout="stacked"` 将说明放在行下方，`layout="inline"` 将说明放在开关左侧。页面通过 `rowStyle` 提供完整行布局时，组件直接使用该布局；未提供时保留默认表单容器。`contentStyle`、`labelStyle`、`hintStyle` 可替换各部分的默认样式，`style` 和 `toggleStyle` 分别补充外层与开关样式。编号或图标通过 `leading` 传入，状态标签和操作按钮等复杂内容可作为 `children` 保留原有结构。卡片材质与分组由页面负责，组件不保存业务状态；已有列表插槽中的独立开关仍使用 `Toggle`。
+
+卡片内的「开关 + 说明跳转」行使用 `ToggleDetailRow`：标题与开关在第一行，灰色描述与箭头在第二行；`icon` 可选，不传时不保留图标列宽度；`divider` 由最后一项以外的列表成员开启。需要多行元信息时用 `detail` 替换描述区内容，箭头仍只由 `onOpenDetail` 决定。卡片材质与分组仍由页面负责，组件只接收当前值并回传变更。
 
 页面只通过 `help.sections` 提供自己拥有的小标题和正文。导航头内部的 `NavigationHeaderHelp` 负责测量问号位置、打开带尖角的悬浮气泡，以及点击外部、系统返回和页面失焦时关闭；页面无需维护提示状态或监听根容器触摸。气泡以透明原生 `Modal` 显示，不占据页面布局，外部点击只关闭气泡，正文内部可滚动阅读。
 

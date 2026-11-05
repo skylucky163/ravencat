@@ -1,6 +1,6 @@
-/** MCP Server 配置页：编辑元数据、连接测试、启停与工具授权。 */
+/** MCP Server 配置页：编辑元数据、连接测试与工具授权；服务启停由工具列表管理。 */
 
-import { ToggleField, showAppDialog } from '@shared/ui';
+import { ToggleDetailRow, showAppDialog } from '@shared/ui';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,9 +21,6 @@ import {
 import {
   deleteMcpServer,
 } from '../application/DeleteMcpServer';
-import {
-  setMcpServerEnabled,
-} from '../application/SetMcpServerEnabled';
 import {
   testMcpServerConnection,
   type McpConnectionTestResult,
@@ -143,6 +140,19 @@ const createStyles = (theme: PresentationTheme) =>
       color: theme.colors.text.primary,
       marginBottom: 4,
     },
+    // 工具行自带左右内边距，卡片只负责圆角与裁切。
+    toolCard: {
+      borderRadius: theme.radius.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.colors.border.light,
+      backgroundColor: theme.colors.surface.default,
+      marginTop: 12,
+      overflow: 'hidden',
+    },
+    toolCardHeader: {
+      padding: 12,
+      paddingBottom: 0,
+    },
     discoveryMeta: {
       fontSize: 12,
       color: theme.colors.text.secondary,
@@ -166,12 +176,6 @@ const createStyles = (theme: PresentationTheme) =>
     toolDescription: {
       fontSize: 12,
       color: theme.colors.text.secondary,
-      marginTop: 2,
-    },
-    toolSwitchRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
       marginTop: 2,
     },
     staleText: {
@@ -309,19 +313,6 @@ export default function McpServerConfigScreen({
     }
   }, [serverId, initialServerId, name, url, description, assistantIds, enabled, authMode, bearerToken, onBack]);
 
-  const handleToggleEnabled = useCallback(async (next: boolean) => {
-    setSaving(true);
-    setError(null);
-    try {
-      const updated = await setMcpServerEnabled(initialServerId!, next);
-      setEnabled(updated.enabled);
-    } catch (toggleError) {
-      setError(getErrorMessage(toggleError));
-    } finally {
-      setSaving(false);
-    }
-  }, [initialServerId]);
-
   const handleTestConnection = useCallback(async (protocolEra: McpProtocolEra) => {
     setTesting(true);
     setError(null);
@@ -454,17 +445,6 @@ export default function McpServerConfigScreen({
           <Text style={styles.infoValue}>Streamable HTTP</Text>
         </View>
 
-        {initialServerId !== null && <ToggleField layout="inline" rowStyle={styles.infoRow}
-          label="启用 Server"
-          value={enabled}
-          onValueChange={(next) => {
-            void handleToggleEnabled(next);
-          }}
-          disabled={saving || testing}
-        >
-          <Text style={styles.infoLabel}>启用 Server</Text>
-        </ToggleField>}
-
         {savedConnection !== null && savedConnection.connectionStatus === 'available' && (
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>已验证链路</Text>
@@ -526,38 +506,31 @@ export default function McpServerConfigScreen({
         ) : null}
 
         {toolGrants && toolGrants.length > 0 ? (
-          <ThemedSurface variant="card" cornerRadius={theme.radius.md} style={styles.discoveryCard}>
-            <Text style={styles.discoveryTitle}>工具授权</Text>
-            <Text style={styles.discoveryMeta}>
-              首次发现和新增工具默认允许 AI 请求，可按需关闭
-            </Text>
-            {toolGrants.map((grant) => (
-              <View key={grant.localToolName} style={styles.toolRow}>
-                <Text style={styles.toolName}>{grant.remoteToolName}</Text>
-                <Text style={styles.toolLocalName}>{grant.localToolName}</Text>
-                {grant.description ? (
-                  <Text style={styles.toolDescription} numberOfLines={2}>
-                    {grant.description}
-                  </Text>
-                ) : null}
-                {grant.stale ? (
-                  <Text style={styles.staleText}>
+          <ThemedSurface variant="card" cornerRadius={theme.radius.md} style={styles.toolCard}>
+            <View style={styles.toolCardHeader}>
+              <Text style={styles.discoveryTitle}>工具授权</Text>
+              <Text style={styles.discoveryMeta}>
+                首次发现和新增工具默认允许 AI 请求，可按需关闭
+              </Text>
+            </View>
+            {toolGrants.map((grant, index) => (
+              <ToggleDetailRow key={grant.localToolName} title={grant.remoteToolName}
+                detail={<>
+                  <Text style={styles.toolLocalName}>{grant.localToolName}</Text>
+                  {grant.description ? <Text style={styles.toolDescription} numberOfLines={2}>{grant.description}</Text> : null}
+                  {grant.stale ? <Text style={styles.staleText}>
                     {grant.canAuthorize
                       ? 'schema 已变化，请确认后重新授权'
                       : '工具已从最近一次发现快照中消失'}
-                  </Text>
-                ) : null}
-                <ToggleField layout="inline" rowStyle={styles.toolSwitchRow} label="允许 AI 请求"
-                  accessibilityLabel={`允许 AI 请求：${grant.remoteToolName}`}
-                  value={grant.enabled}
-                  onValueChange={(next) => {
-                    void handleToggleToolGrant(grant.remoteToolName, next);
-                  }}
-                  disabled={!grant.canAuthorize || testing}
-                >
-                  <Text style={styles.toolDescription}>允许 AI 请求</Text>
-                </ToggleField>
-              </View>
+                  </Text> : null}
+                </>}
+                value={grant.enabled}
+                toggleAccessibilityLabel={`允许 AI 请求：${grant.remoteToolName}`}
+                onValueChange={(next) => {
+                  void handleToggleToolGrant(grant.remoteToolName, next);
+                }}
+                disabled={!grant.canAuthorize || testing}
+                divider={index < toolGrants.length - 1} />
             ))}
           </ThemedSurface>
         ) : null}

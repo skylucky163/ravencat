@@ -39,8 +39,10 @@ internal object BubbleBitmapCache {
     require(file.isFile && file.length() in 1..8L * 1024 * 1024) { "PNG 不存在或超过 8 MiB" }
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(file.path, bounds)
-    require(bounds.outMimeType == "image/png" && bounds.outWidth in 3..2048 && bounds.outHeight in 3..2048) {
-      "请选择边长 3–2048 像素的 PNG 图片"
+    require(bounds.outWidth > 0 && bounds.outHeight > 0) { "气泡图片无法解码，文件可能已损坏" }
+    // 导入层拥有 PNG 输出契约；绘制层只检查本次解码的有效性与像素预算。
+    require(bounds.outWidth in 3..2048 && bounds.outHeight in 3..2048) {
+      "气泡图片边长需为 3–2048 像素"
     }
     val options = BitmapFactory.Options().apply {
       inPreferredConfig = Bitmap.Config.ARGB_8888

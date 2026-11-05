@@ -76,7 +76,7 @@ commands.retryMemoryEmbedding = async (...args) => { vectorRequests.push(args); 
 const ToggleField = load('src/shared/ui/ToggleField.tsx', {
   'react-native': native, '@shared/theme': themed, './Toggle': { default: 'Toggle' },
 }).default;
-const ui = { ModalSheet, ToggleField, AppTextInput: 'AppTextInput', showAppDialog: () => {} };
+const ui = { ModalSheet, ToggleField, AppTextInput: 'AppTextInput', HeaderAddButton: 'HeaderAddButton', showAppDialog: () => {} };
 const Panel = load('src/features/memory/presentation/MemorySpacePanel.tsx', {
   'react-native': native, 'lucide-react-native': icons, '@shared/ui': ui, '@shared/theme': themed,
   '../domain/Memory': { normalizeMemoryText: text => text.trim(), memorySearchText: entry => entry.content },

@@ -12,7 +12,7 @@ Beyond text chat, it includes configurable voice and video calls, floating-windo
 
 RavenCat is maintained by one person and is still in active development. Some background behavior and cross-device restoration need more testing on real devices; reliability across all phones has not been established.
 
-Download public APKs from [GitHub Releases](https://github.com/skylucky163/ravencat/releases); each release page shows its release status. See the release notes for [v2.2.0](docs/releases/v2.2.0.md).
+Download public APKs from [GitHub Releases](https://github.com/skylucky163/ravencat/releases); each release page shows its release status. See the release notes for [v2.2.1](docs/releases/v2.2.1.md).
 
 Pinning a message as the context starting point includes all original message text from the pinned message through the latest message in the context, and pauses automatic summary generation. As the conversation grows, this can increase token usage and exceed the model's context limit. After unpinning, automatic summary generation must be re-enabled manually.
 

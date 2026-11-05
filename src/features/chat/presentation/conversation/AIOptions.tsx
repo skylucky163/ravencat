@@ -3,7 +3,7 @@ import { getAssistantDisplayName } from '@features/assistants';
 
 import React from 'react';
 import { Search } from 'lucide-react-native';
-import { StyleSheet, ScrollView, View } from 'react-native';
+import { Pressable, StyleSheet, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
@@ -28,6 +28,7 @@ interface AIOptionsProps {
   onProtocolSpace?: () => void;
   onClearHistory?: () => void | Promise<void>;
   onModelSettings?: () => void;
+  onOpenProfile: () => void;
   onChatSettings?: () => void;
   onChatSummary?: () => void;
   onSearchMessages?: () => void;
@@ -100,6 +101,7 @@ export default function AIOptions({
   onProtocolSpace,
   onClearHistory,
   onModelSettings,
+  onOpenProfile,
   onChatSettings,
   onChatSummary,
   onSearchMessages,
@@ -209,11 +211,14 @@ export default function AIOptions({
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <ThemedSurface variant="card" style={styles.aiInfoCard}>
-          <AIInfoCard
-            name={aiAssistant?.name || 'AI助手'}
-            model={aiAssistant?.model || '默认模型'}
-            avatarUrl={aiAssistant?.avatar}
-          />
+          <Pressable accessibilityRole="button" accessibilityLabel="打开 AI 个人主页"
+            accessibilityHint="进入主页后可编辑资料与人设" onPress={onOpenProfile}>
+            <AIInfoCard
+              name={aiAssistant?.name || 'AI助手'}
+              model={aiAssistant?.model || '默认模型'}
+              avatarUrl={aiAssistant?.avatar}
+            />
+          </Pressable>
         </ThemedSurface>
         <MenuSection items={settingsMenuItems} styles={styles} />
         <MenuSection items={primaryMenuItems} styles={styles} />

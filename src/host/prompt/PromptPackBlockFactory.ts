@@ -17,6 +17,7 @@ import type {
   PromptPackScenario,
 } from '@shared/prompt';
 import {
+  DEFAULT_ACTION_DESCRIPTION_PROMPT,
   DEFAULT_CORE_SYSTEM_PROMPTS,
   GROUP_MEMBER_REPLY_CONFIDENTIALITY_RULES,
   resolveBuiltInPromptContent,
@@ -194,6 +195,20 @@ export class PromptPackBlockFactory {
       required: false,
       status: 'ready',
       source: 'PromptPackBlockFactory.paragraphBreaks',
+      truncatable: false,
+      scenario: 'shared',
+      placement: 'system',
+    };
+  }
+
+  createActionDescriptionBlock(aiConfig: PromptPackAIConfig): PromptPackBlock {
+    return {
+      key: 'action_description',
+      title: '动作描写规则',
+      content: resolveBuiltInContent(aiConfig, 'output.action_description', DEFAULT_ACTION_DESCRIPTION_PROMPT),
+      required: false,
+      status: 'ready',
+      source: 'PromptPackBlockFactory.actionDescription',
       truncatable: false,
       scenario: 'shared',
       placement: 'system',

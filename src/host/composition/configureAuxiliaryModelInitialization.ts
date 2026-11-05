@@ -1,6 +1,6 @@
 /** 跨 Feature 初始选择只在 Host 装配；SQL 与用户选择保护留在各 owner。 */
-import { configureAuxiliaryModelInitialization, initializeAssistantVoiceModelInTransaction } from '@features/assistants/composition';
-import { initializeChatImageModelInTransaction, invalidateChatSummaryModelReferencesInTransaction, invalidateChatSummaryServiceReferencesInTransaction } from '@features/chat/composition';
+import { configureAuxiliaryModelInitialization } from '@features/assistants/composition';
+import { invalidateChatSummaryModelReferencesInTransaction, invalidateChatSummaryServiceReferencesInTransaction } from '@features/chat/composition';
 import { initializeSpeechRecognitionModelInTransaction } from '@features/speech/composition';
 import { initializeTranslationModelInTransaction } from '@features/integrations/composition';
 import { momentRepository } from '@features/moments/composition';
@@ -18,12 +18,8 @@ export function configureAuxiliaryModelInitializationRuntime(): void {
     async initializeModelSelections(transaction, model) {
       switch (model.capabilityKind) {
         case 'ocr':
-          await initializeChatImageModelInTransaction(transaction, model.id);
           await momentRepository.initializeImageAnalysisModelInTransaction(transaction, model.id, model.updatedAt);
           await stickerRepository.initializeSystemModelInTransaction(transaction, 'ocr', model.id, model.updatedAt);
-          break;
-        case 'tts':
-          await initializeAssistantVoiceModelInTransaction(transaction, model.id);
           break;
         case 'stt':
           await initializeSpeechRecognitionModelInTransaction(transaction, model.id);
@@ -35,12 +31,6 @@ export function configureAuxiliaryModelInitializationRuntime(): void {
         case 'translation':
           await initializeTranslationModelInTransaction(transaction, model.id);
           break;
-      }
-    },
-    async initializeAssistantSelections(transaction, assistantId, models) {
-      for (const model of models) {
-        if (model.capabilityKind === 'ocr') await initializeChatImageModelInTransaction(transaction, model.id, assistantId);
-        if (model.capabilityKind === 'tts') await initializeAssistantVoiceModelInTransaction(transaction, model.id, assistantId);
       }
     },
     modelSelectionsInitialized(model) {

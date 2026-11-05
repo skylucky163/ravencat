@@ -7,8 +7,8 @@ export function getAssistantDisplayName(assistant: { name: string; nickname?: st
 
 export function formatAssistantNicknameContext(context: { nickname: string | null }): { content: string } {
   return { content: context.nickname === null ? '' : [
-    '【用户给你的昵称备注】',
-    `用户给你的当前昵称备注是${JSON.stringify(context.nickname)}。`,
+    '【昵称】',
+    `用户当前给你的昵称备注为${JSON.stringify(context.nickname)}。`,
   ].join('\n') };
 }
 

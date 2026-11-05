@@ -4,7 +4,7 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SquarePen } from 'lucide-react-native';
 import { AVATAR_SHAPE } from '@shared/avatar/avatarConstants';
 import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
-import { AIAvatar } from '@shared/ui';
+import { AIAvatar, Button } from '@shared/ui';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import AssistantProfilePage from './AssistantProfilePage';
 import AssistantSettingsEntries from './AssistantSettingsEntries';
@@ -15,13 +15,14 @@ interface Props {
   aiId: string;
   onBack(): void;
   onEdit(): void;
+  onSendMessage(): void;
   onOpenMoments(): void;
   onOpenModelSettings(): void;
   onOpenContextSettings(): void;
   onOpenSummary(): void;
 }
 
-export default function AssistantProfileScreen({ aiId, onBack, onEdit, onOpenMoments,
+export default function AssistantProfileScreen({ aiId, onBack, onEdit, onSendMessage, onOpenMoments,
   onOpenModelSettings, onOpenContextSettings, onOpenSummary }: Props) {
   const styles = useThemedStyles(createAssistantProfileStyles);
   const theme = useTheme();
@@ -58,6 +59,10 @@ export default function AssistantProfileScreen({ aiId, onBack, onEdit, onOpenMom
             onOpenContextSettings={onOpenContextSettings} onOpenSummary={onOpenSummary} />
         </View>
       </ScrollView>
+
+      <ThemedSurface variant="inputBar" cornerRadius={0} style={styles.footer}>
+        <Button title="发消息" onPress={onSendMessage} />
+      </ThemedSurface>
     </>}
   </AssistantProfilePage>;
 }

@@ -17,6 +17,9 @@ function load(file, dependencies = {}) {
   return module.exports;
 }
 const mapping = load('src/platform/ai/errorMapping.ts');
+for (const httpStatus of [408, 504]) {
+  assert.equal(mapping.getErrorDisplayInfo('', { httpStatus }).type, 'timeout', '无正文的超时状态也须保留分类');
+}
 const baseUrl = load('src/platform/ai/baseUrl.ts');
 const { BaseAIClient } = load('src/platform/ai/BaseAIClient.ts', {
   './errorMapping': mapping, './baseUrl': baseUrl,
@@ -70,6 +73,46 @@ try {
   assert.equal(network.errorInfo.type, 'network');
   assert.ok(network.errorInfo.message.includes('rejected [REDACTED]'));
   assertSafe(network.errorInfo.message);
+
+  // 真实传输边界返回的超时交给 Chat 图片解析，主模型只收到分类后的说明。
+  const { resolveChatImageModelInput } = load('src/features/chat/reply/application/ResolveChatImageModelInput.ts', {
+    '@platform/ai': platform,
+    '@shared/runtime/abortSignal': load('src/shared/runtime/abortSignal.ts'),
+    './ReplyTaskPromptBlocks': { buildVisionOCRPromptBlocks: () => [] },
+    './ChatReplyRuntimeDependencies': { getChatReplyRuntimeDependencies: () => ({
+      media: { readVisionImage: async () => ({ base64: 'IMAGE', mimeType: 'image/png' }) },
+      vision: { resolveOCRModel: async () => ({ status: 'active', model: {
+        modelConfigId: 'vision', baseURL: config.apiBaseUrl, apiKey, model: 'vision',
+      } }) },
+      prompt: { resolveVisionOCRPrompt: async () => '读取图片', assembleStandalone: async () => ({ systemPrompt: '读取图片' }) },
+    }) },
+  });
+  for (const failure of [
+    { status: 408, body: '', timedOut: true },
+    { status: 504, body: 'Gateway Timeout', timedOut: true },
+    { status: 504, body: 'service unavailable', timedOut: true },
+    { status: 400, body: 'image_url request timed out', timedOut: true },
+    { status: 500, body: `图片识别超时，凭据 ${apiKey}`, timedOut: true },
+    { error: new Error('Network request timed out'), timedOut: true },
+    { status: 500, body: 'upstream service failed', timedOut: false },
+    { status: 401, body: 'Unauthorized', timedOut: false },
+  ]) {
+    const before = requests;
+    globalThis.fetch = async () => {
+      requests++;
+      if (failure.error) throw failure.error;
+      return new Response(failure.body, { status: failure.status });
+    };
+    const result = await resolveChatImageModelInput({ assistantId: 'ai', mediaAssetId: 'image', contextText: '用户发送图片' });
+    const modelText = result.parts.map(part => part.text).join('\n');
+    assert.equal(result.ocrSucceeded, false);
+    assert.ok(result.parts.every(part => part.type === 'text'), '识别失败不得改为向主模型传原图');
+    assert.ok(modelText.includes(failure.timedOut ? 'OCR 超时' : 'OCR 失败'));
+    assert.ok(modelText.includes('你没有收到图片内容'));
+    assertSafe(modelText);
+    assert.equal(modelText.includes('image_url request timed out'), false, '原始服务商报错不进入模型输入');
+    assert.equal(requests, before + 1, '识别失败只分类，不额外重试');
+  }
 
   status = 400; body = JSON.stringify({ error: { message: 'temperature must be 1; provider-specific detail' } });
   globalThis.fetch = async () => new Response(body, { status });

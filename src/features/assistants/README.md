@@ -14,7 +14,7 @@ AI 个人空间封面由 Assistants 持有，个人主页与该 AI 的朋友圈�
 
 路由为 `/auxiliary-models/services`、`/auxiliary-models/services/[serviceId]`，以及已有的 `/auxiliary-models/capabilities/[kind]`、`/auxiliary-models/models/[modelId]`，均注册在 Expo Router。导航由 App／Host 适配，Feature 不持有路径。所有模型选择弹窗共用 `ModelPickerModal`，问号紧邻标题、取消选择在列表底部，统一移除弹窗内的管理跳转；已保存模型的业务选择由 `ConfiguredModelPicker` 展示。
 
-用途资产不再提供启停开关，按配置完整性与类型决定可用性。除摘要与 Memory 外，各能力首个可用资产按既有契约初始化；后续新增不覆盖已有选择。验证见 `verify:auxiliary-model-runtime` 与 `scripts/verify-model-service-configs.mjs`。
+用途资产不再提供启停开关，按配置完整性与类型决定可用性。角色 OCR、TTS 只手动选择；全局业务的首次资产初始化按各 owner 契约执行，摘要与 Memory 不参与。后续新增不覆盖已有选择。验证见 `verify:auxiliary-model-runtime` 与 `scripts/verify-model-service-configs.mjs`。
 
 角色模型设置与已有辅助模型编辑自动保存：文字失焦时提交，停输不保存；开关与选择立即提交自己的字段。
 角色模型、视觉辅助模型和群聊管理员的 Temperature / Top P 使用公共 `SliderField`；连续拖动本地预览，松手提交最终值，保留手动输入和字段错误提示。
@@ -24,9 +24,9 @@ AI 个人空间封面由 Assistants 持有，个人主页与该 AI 的朋友圈�
 用户输入在表单边界转换为增量命令，保存确认不回填正在编辑的草稿。
 校验与写入错误在页面内展示；返回先提交，未保存错误可修正或恢复已保存值。新建辅助模型仍需明确点击「创建」。
 输入、提交及页面生命周期契约见 [模型设置自动保存](../../../docs/architecture/model-settings-autosave.md)，行为验证为 `verify:model-settings-autosave`。
-AI 个人主页由 Assistants presentation 拥有，路由为 `/assistants/[aiId]`，可从单聊、群聊消息及朋友圈作者的 AI 头像进入；名称和正文不承担主页导航。顶部栏显示「AI 名称的主页」，主页使用该 AI 的个人空间封面作为全宽封面，圆形头像叠在封面下缘，下方居中展示「公开名称（专属昵称）」与最多两行的人设简介，没有昵称时只显示名称。名称／昵称后的编辑图标跳转到 `/assistants/[aiId]/edit`，名称、昵称、人设仍分开编辑并按字段自动保存，「完成」等待保存后返回主页。App 负责 Expo Router 跳转与编辑页返回拦截，Feature 只表达导航意图；主页、编辑页和朋友圈通过同一资料查询订阅读取助手，不切换聊天会话，资料提交事实继续刷新聊天头像与名称。
+AI 个人主页由 Assistants presentation 拥有，路由为 `/assistants/[aiId]`，可从聊天更多顶部的 AI 名片、单聊／群聊消息及朋友圈作者的 AI 头像进入；消息名称和正文不承担主页导航。顶部栏显示「AI 名称的主页」，主页使用该 AI 的个人空间封面作为全宽封面，圆形头像叠在封面下缘，下方居中展示「公开名称（专属昵称）」与最多两行的人设简介，没有昵称时只显示名称。页面底部固定「发消息」操作栏（inputBar 材质），回到该 AI 的聊天页；聊天页已在栈中时直接回退，否则用它替换当前页。名称／昵称后的编辑图标跳转到 `/assistants/[aiId]/edit`，名称、昵称、人设仍分开编辑并按字段自动保存，页面不设完成按钮，返回时由 App 的保存边界提交后离开。App 负责 Expo Router 跳转与编辑页返回拦截，Feature 只表达导航意图；主页、编辑页和朋友圈通过同一资料查询订阅读取助手，不切换聊天会话，资料提交事实继续刷新聊天头像与名称。
 主页「朋友圈」进入 `/assistants/[aiId]/moments`，由 Moments 复用时间线、分页和用户互动，按助手不可变 `agentId` 在 SQL 分页前筛选作者。顶部显示该 AI 的当前展示名和头像，封面与该 AI 的个人主页共用同一份个人空间封面；不读取用户封面、不提供替 AI 发布或设置封面的入口。空列表仍可下拉刷新。主页以朋友圈为主要入口，模型设置、上下文设置、聊天摘要归入下方的 AI 管理区域。上下文入口为 `/assistants/[aiId]/context-settings`，摘要与更多共用 `/chat/[aiId]/summary`。模型页按助手 ID 独立读取，不准备聊天；视觉模型选择由 Host 装入既有插槽。对话、上下文与摘要由 Chat 共用只读目标会话边界。
-聊天更多保留现有名片与菜单，不再重复提供个人主页入口，模型设置、对话设置和聊天摘要入口继续可用；旧 `/chat/[aiId]/model-settings` 与 `/chat/[aiId]/chat-settings` 只重定向到正式地址，不再挂载旧 Shell 设置页。普通返回回到实际来源，选择固定消息起点才显式进入目标聊天。全局服务配置和辅助模型资产管理保留应用设置入口。
+聊天更多顶部的整张 AI 名片可点击进入个人主页，不另加主页菜单项，模型设置、对话设置和聊天摘要入口继续可用；旧 `/chat/[aiId]/model-settings` 与 `/chat/[aiId]/chat-settings` 只重定向到正式地址，不再挂载旧 Shell 设置页。普通返回回到实际来源，选择固定消息起点才显式进入目标聊天。全局服务配置和辅助模型资产管理保留应用设置入口。
 独立上下文页维护条数、固定消息起点和历史群聊注入；对话设置用一行入口跳转同一页，并保留回复方式、多气泡回复与行动步骤／Token 用量显隐。流式与多气泡本轮不改变入口或行为；模型页只编辑调用配置，重置不影响对话上下文。个人主页和对话设置均沿用助手已有字段与命令；头像命令只更新头像。通用草稿确认复用 shared/ui，契约见 [个人主页与对话设置自动保存](../../../docs/architecture/conversation-settings-autosave.md)。
 
 `npm run verify:assistant-settings` 验证主页入口、独立模型页面、正式与旧设置路由、目标会话与背景键、Host 插槽和提交事实到聊天的同步。
@@ -43,12 +43,12 @@ Host 在模型运行准备时仅向该 AI 暴露已授权的解除工具；提�
 
 `node --no-warnings scripts/verify-assistant-nickname.mjs` 验证昵称保存、清空、原位历史、窗口与摘要、并发前值、历史失败整笔回滚，以及群聊和朋友圈的名称隐私。
 
-角色模型设置可弹窗选择角色 TTS，选择持久化于 `assistant_voice_settings`，用于该角色的语音消息和通话。新增角色在创建事务中初始化当前可用的首次 OCR 与 TTS 配置，之后独立更换或取消；任务解析不继承默认。
+角色模型设置可弹窗选择角色 TTS，选择持久化于 `assistant_voice_settings`，用于该角色的语音消息和通话。新增角色默认不绑定 OCR、TTS，创建或补全辅助模型也不自动回填；已有选择保留，用户可独立更换或取消，任务解析不继承默认。
 
 Memory、Chat、Speech、Integrations、Sticker 和 Moments 各自保存实际模型选择，只引用资产 ID，不复制连接信息与密钥。STT 列表直接嵌入 Speech 的语音识别模型选择控件；翻译列表嵌入 Integrations 的聊天翻译模型选择控件，AI 与腾讯云配置共用列表和选择。两者都在列表内选后立即保存，无单独设置页。
 公开资产解析 `resolveAuxiliaryModel` 与选择投影 `getAuxiliaryModelSelection` 共用可用性规则，没有全局默认分支。
 Host-only 的角色语音设置装配通过 composition 出口连接；UI 不直接访问 Repository。
 
-首次资产 ID 与完成标记保存于 `auxiliary_model_initial_defaults`，由 Assistants 持有，删除资产不清空 marker。未完成的首次配置暂不初始化，后续可用时只生效一次。升级保留已有业务选择，只为以后新角色记录最早创建的旧模型。
+全局业务的首次资产 ID 与完成标记保存于 `auxiliary_model_initial_defaults`，由 Assistants 持有，删除资产不清空 marker。未完成的首次配置暂不初始化，后续可用时只生效一次。升级保留已有业务选择，角色创建不消费首次资产记录。
 
 当前不变量、旧配置升级和备份恢复见 [模型选择架构](../../../docs/architecture/auxiliary-model-selection.md)。

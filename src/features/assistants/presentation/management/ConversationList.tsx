@@ -11,7 +11,7 @@ import type { PresentationTheme } from '@shared/theme';
 import EmptyState from '@shared/ui/EmptyState';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import { formatChatTime } from '@shared/utils/timeFormat';
-import { AIAvatar, GroupAvatar, useFloatingTabBarScrollPadding, showAppDialog } from '@shared/ui';
+import { AIAvatar, GroupAvatar, HeaderAddButton, useFloatingTabBarScrollPadding, showAppDialog } from '@shared/ui';
 import {
   buildConversationListItems,
   type ConversationListItem,
@@ -444,13 +444,11 @@ export default function ConversationList({
   }, [handleItemLongPress, onSelectAI, onSelectGroup, styles, theme, unreadMessages, textDrafts]);
 
   const rightButton = (
-    <TouchableOpacity
+    <HeaderAddButton
+      accessibilityLabel="新建 AI 助手或群聊"
       onPress={openHeaderMenu}
-      activeOpacity={0.7}
       disabled={!onAddAI}
-    >
-      <Ionicons name="add" size={28} color={theme.colors.brand.primary} />
-    </TouchableOpacity>
+    />
   );
 
   const renderMenuItem = (item: MenuItem) => (

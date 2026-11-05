@@ -97,8 +97,9 @@ let params = { aiId: 'ai' };
 let removal;
 const dispatched = [];
 const pushed = [];
+const dismissed = [];
 let backCount = 0;
-const router = { back: () => backCount++, push: target => pushed.push(target) };
+const router = { back: () => backCount++, push: target => pushed.push(target), dismissTo: target => dismissed.push(target) };
 const expo = { useLocalSearchParams: () => params, useNavigation: () => ({ dispatch: action => dispatched.push(action) }),
   useRouter: () => router, Redirect: 'Redirect', useFocusEffect() {} };
 const { default: Route } = load('src/app/assistants/[aiId].tsx', {
@@ -113,7 +114,6 @@ const { default: EditRoute } = load('src/app/assistants/[aiId]/edit.tsx', {
 let renderer;
 const fields = () => renderer.root.findAllByType('InputField');
 const field = label => fields().find(item => item.props.label === label);
-const action = () => renderer.root.findByType('NavigationHeader').props.rightButton;
 const rerender = async () => { await act(async () => { renderer.update(React.createElement(Route)); }); };
 const enterEdit = async () => {
   await act(async () => { renderer.root.findAllByType('Pressable').find(node => node.props.accessibilityLabel === '编辑资料').props.onPress(); });
@@ -131,6 +131,8 @@ try {
   assert.equal(renderer.root.findByType('MediaAssetImage').props.mediaAssetId, 'own-cover', '工具提交事实刷新已挂载的主页封面');
   assert.equal(renderer.root.findAllByType('Image').length, 0);
   assert.ok(renderer.root.findAllByType('Text').some(node => readText(node) === '公开名称（我的昵称）'));
+  await act(async () => { renderer.root.findAllByType('Button').find(node => node.props.title === '发消息').props.onPress(); });
+  assert.equal(dismissed.at(-1), '/chat/ai', '发消息回到当前 AI 的聊天页');
   await act(async () => { renderer.root.findAllByType('Pressable').find(node => node.props.accessibilityLabel === '查看 AI 的朋友圈').props.onPress(); });
   assert.equal(pushed.at(-1), '/assistants/ai/moments', '朋友圈打开当前 AI');
   await act(async () => { renderer.root.findByType('AssistantSettingsEntries').props.onOpenModelSettings(); });
@@ -150,30 +152,33 @@ try {
   assert.deepEqual(fields().map(item => item.props.label), ['AI 名称', '专属昵称', 'AI 人设']);
   assert.equal(typeof renderer.root.findByType('AIInfoCard').props.onAvatarPress, 'function');
   await act(async () => { field('AI 人设').props.onChangeText('新的人设\n排版不变'); });
-  assert.equal(writes.length, 0, '输入等待失焦或完成');
+  assert.equal(writes.length, 0, '输入等待失焦或返回');
   assert.equal(removal.enabled, true, '编辑草稿使系统返回进入保存边界');
+  assert.equal(renderer.root.findByType('NavigationHeader').props.rightButton, undefined, '编辑页只保留返回，不提供完成按钮');
   await act(async () => { field('AI 人设').props.onBlur(); });
   assert.deepEqual(writes, [{ systemPrompt: '新的人设\n排版不变' }]);
-  await act(async () => { action().props.onPress(); });
-  assert.equal(backCount, 1, '完成编辑返回个人主页');
+  await act(async () => { renderer.root.findByType('NavigationHeader').props.onGoBack(); });
+  assert.equal(backCount, 1, '返回箭头离开编辑页');
+  await act(async () => { removal.callback({ data: { action: { type: 'POP' } } }); });
+  assert.deepEqual(dispatched, [{ type: 'POP' }], '返回边界保存后重放导航动作');
   await rerender();
   assert.equal(fields().length, 0);
   assert.ok(renderer.root.findAllByType('Text').some(item => readText(item) === profile.systemPrompt));
 
   await enterEdit();
   await act(async () => { field('AI 名称').props.onChangeText(''); });
-  await act(async () => { action().props.onPress(); });
-  assert.equal(backCount, 1, '无效名称阻止退出编辑并保留草稿');
+  await act(async () => { removal.callback({ data: { action: { type: 'POP' } } }); });
+  assert.equal(dispatched.length, 1, '无效名称阻止退出编辑并保留草稿');
   assert.ok(field('AI 名称').props.error);
   await act(async () => { field('AI 名称').props.onChangeText('新名称'); });
   failSave = true;
   await act(async () => { removal.callback({ data: { action: { type: 'POP' } } }); });
-  assert.equal(dispatched.length, 0, '系统返回保存失败时留在原页');
+  assert.equal(dispatched.length, 1, '系统返回保存失败时留在原页');
   assert.equal(field('AI 名称').props.value, '新名称');
   assert.ok(renderer.root.findAllByType('AutoSaveErrors').some(item => item.props.error));
   failSave = false;
   await act(async () => { removal.callback({ data: { action: { type: 'POP' } } }); });
-  assert.deepEqual(dispatched, [{ type: 'POP' }], '保存后重放原生导航动作');
+  assert.deepEqual(dispatched.at(-1), { type: 'POP' }, '保存后重放原生导航动作');
   assert.equal(profile.name, '新名称');
   await act(async () => { renderer.unmount(); });
   assert.equal(listeners.size, 0);
@@ -259,6 +264,8 @@ const { default: MenuRoute } = load('src/app/chat/[aiId]/menu.tsx', {
   'expo-router': expo, '@features/chat': { ChatMenuRouteScreen: 'ChatMenuRouteScreen' },
 });
 await act(async () => { renderer = create(React.createElement(MenuRoute)); });
+renderer.root.findByType('ChatMenuRouteScreen').props.onOpenAssistantProfile();
+assert.equal(pushed.at(-1), '/assistants/primary', '更多提供当前 AI 的主页入口');
 renderer.root.findByType('ChatMenuRouteScreen').props.onOpenModelSettings();
 assert.equal(pushed.at(-1), '/assistants/primary/model-settings', '旧快捷入口直接进入正式设置地址');
 renderer.root.findByType('ChatMenuRouteScreen').props.onOpenConversationSettings();

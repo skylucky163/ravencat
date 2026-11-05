@@ -1,8 +1,8 @@
 /** 手机工具小程序：Phone Tools 产品能力目录。 */
 
-import { ToggleField } from '@shared/ui';
+import { ToggleDetailRow, ToggleField } from '@shared/ui';
 import React from 'react';
-import { StyleSheet, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, ScrollView, Text, View } from 'react-native';
 import { ClipboardPaste, MapPin, Music2, NotebookPen } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -126,24 +126,6 @@ const createStyles = (theme: PresentationTheme) =>
     statusPlanned: {
       color: theme.colors.text.tertiary,
     },
-    packageHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingTop: theme.spacing.sm,
-      paddingHorizontal: theme.spacing.lg,
-    },
-    packageDetails: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingLeft: theme.spacing.lg + 40,
-      paddingRight: theme.spacing.lg,
-      paddingBottom: 14,
-      minHeight: 36,
-    },
-    packageChevron: {
-      width: 48,
-      alignItems: 'center',
-    },
   });
 
 export default function PhoneToolsScreen({
@@ -227,26 +209,15 @@ export default function PhoneToolsScreen({
           <ThemedSurface nativeGlass variant="card" style={styles.card}>
             {PHONE_TOOL_PACKAGE_CATALOG.map((toolPackage, index) => {
               const Icon = PACKAGE_ICONS[toolPackage.icon];
-              return <View key={toolPackage.id} style={index < PHONE_TOOL_PACKAGE_CATALOG.length - 1 && styles.itemDivider}>
-                <ToggleField layout="inline" rowStyle={styles.packageHeader} label={toolPackage.title}
-                  accessibilityLabel={`启用${toolPackage.title}`}
-                  value={settings.isPackageEnabled(toolPackage.id)}
-                  disabled={settings.packageDisabled || toolPackage.implementationStatus !== 'available'}
-                  onValueChange={(enabled) => { void settings.togglePackage(toolPackage.id, enabled); }}
-                  leading={<View style={styles.iconContainer}><Icon size={20} color={theme.colors.brand.primary} /></View>}
-                >
-                  <Text style={[styles.textContainer, styles.itemName]}>{toolPackage.title}</Text>
-                </ToggleField>
-                <TouchableOpacity style={styles.packageDetails} activeOpacity={0.7}
-                  onPress={() => onOpenToolPackage(toolPackage.id)} accessibilityRole="button"
-                  accessibilityLabel={`查看${toolPackage.title}详情`}
-                >
-                  <Text style={[styles.textContainer, styles.itemDescription]}>{toolPackage.description}</Text>
-                  <View style={styles.packageChevron}>
-                    <Ionicons name="chevron-forward-outline" size={16} color={theme.colors.text.tertiary} />
-                  </View>
-                </TouchableOpacity>
-              </View>;
+              return <ToggleDetailRow key={toolPackage.id} title={toolPackage.title}
+                description={toolPackage.description}
+                icon={<Icon size={20} color={theme.colors.brand.primary} />}
+                value={settings.isPackageEnabled(toolPackage.id)}
+                disabled={settings.packageDisabled || toolPackage.implementationStatus !== 'available'}
+                onValueChange={(enabled) => { void settings.togglePackage(toolPackage.id, enabled); }}
+                onOpenDetail={() => onOpenToolPackage(toolPackage.id)}
+                divider={index < PHONE_TOOL_PACKAGE_CATALOG.length - 1}
+              />;
             })}
           </ThemedSurface>
         </View>

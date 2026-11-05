@@ -2320,12 +2320,14 @@ uiScreenMocks['@shared/ui'].ToggleField = loadTypeScriptModule('src/shared/ui/To
   react: { ...React, default: React }, 'react-native': uiScreenMocks['react-native'],
   '@shared/theme': uiScreenMocks['@shared/theme'], './Toggle': { default: 'Toggle' },
 }).default;
+uiScreenMocks['@shared/ui'].ToggleDetailRow = loadTypeScriptModule('src/shared/ui/ToggleDetailRow.tsx', {
+  react: { ...React, default: React }, 'react-native': uiScreenMocks['react-native'],
+  '@shared/theme': uiScreenMocks['@shared/theme'], '@expo/vector-icons': { Ionicons: 'Ionicons' },
+  './ToggleField': { default: uiScreenMocks['@shared/ui'].ToggleField },
+}).default;
 const uiScreenModule = loadTypeScriptModule('src/features/mcpTools/presentation/McpServerConfigScreen.tsx', uiScreenMocks);
 let ui;
-const serverToggles = () => ui.root.findAllByType('Toggle')
-  .filter((node) => node.props.accessibilityLabel === '启用 Server');
 await act(async () => { ui = create(React.createElement(uiScreenModule.default, { serverId: null, onBack: () => undefined })); });
-assert.equal(serverToggles().length, 0, '新增页不提供服务启用开关');
 await act(async () => { ui.root.findByType('McpConnectionFields').props.onImport({ name: '官方服务', url: 'https://ui.example/mcp', authMode: 'bearer_token', bearerToken: 'ui-token' }); });
 const pressTest = async (label = '传统握手测试') => {
   const button = ui.root.findAllByType('TouchableOpacity').find((node) => node.findAllByType('Text').some((text) => text.props.children === label));
@@ -2340,7 +2342,6 @@ assert.equal(legacyTestButton.props.disabled, true, '传统握手同样需要先
 await act(async () => { ui.root.findByType('McpAssistantSelection').props.onToggle('assistant-1', true); });
 await pressTest();
 await pressTest();
-assert.equal(serverToggles().length, 0, '连接测试自动保存后，新增页仍不提供启用开关');
 assert.equal(uiSaves[0].enabled, true, '新增页测试保存时默认启用服务');
 assert.deepEqual(uiSaves[0].assistantIds, ['assistant-1']);
 assert.deepEqual(uiSaves[1].assistantIds, ['assistant-1']);
@@ -2359,6 +2360,10 @@ assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.
 assert.equal(uiAlerts.at(-1).title, 'MCP 操作失败');
 assert.equal(uiAlerts.at(-1).message, '新版 HTTP 500', '测试失败直接弹出原因，不依赖页面滚动位置');
 assert.ok(ui.root.findAllByType('Text').some((node) => node.props.children === 'ui_tool'), '失败后保留已有工具授权列表');
+const toolGrantToggle = () => ui.root.findAllByType('Toggle')
+  .find((node) => node.props.accessibilityLabel === '允许 AI 请求：ui_tool');
+assert.ok(toolGrantToggle(), '工具授权行把开关放在工具名右侧');
+assert.equal(toolGrantToggle().props.value, true);
 await act(async () => { uiAlerts.at(-1).buttons[0].onPress(); });
 const alertsBeforeRetry = uiAlerts.length;
 await pressTest('新版协议测试');
@@ -2380,7 +2385,10 @@ assert.equal(uiSaves.at(-1).enabled, true, '新增页直接保存默认启用');
 assert.equal(uiSaveBacks, 1, '保存后返回服务列表');
 await act(async () => { ui.unmount(); });
 
+uiSavedServer = { ...uiSavedServer, enabled: false };
 await act(async () => { ui = create(React.createElement(uiScreenModule.default, { serverId: 'ui-server', onBack: () => undefined })); });
+assert.equal(ui.root.findAllByType('Toggle')
+  .filter((node) => node.props.accessibilityLabel === '启用 Server').length, 0, '服务启停开关只在工具列表，不在配置页');
 assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.children)
   && node.props.children.join('') === '传统握手 · 2025-06-18'), '重开页面仍显示保存的成功链路');
 uiTestFailure = null;
@@ -2390,18 +2398,12 @@ assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.
 assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.children)
   && node.props.children.join('') === '协议版本：2026-07-28'), '成功结果显示实际协议版本');
 assert.deepEqual(ui.root.findByType('McpAssistantSelection').props.selectedIds, ['assistant-1'], '编辑页恢复已保存的选择');
-assert.equal(serverToggles().length, 1, '编辑页提供服务启用开关');
-const enabledToggle = serverToggles()[0];
-assert.equal(enabledToggle.props.value, true, '编辑页展示已启用状态');
-await act(async () => { enabledToggle.props.onValueChange(false); });
-assert.deepEqual(uiToggleWrites, [{ id: 'ui-server', enabled: false }], '仅编辑页可关闭服务');
-assert.equal(serverToggles()[0].props.value, false);
 await act(async () => { ui.root.findByType('McpAssistantSelection').props.onToggle('assistant-1', false); });
 const saveButton = ui.root.findAllByType('TouchableOpacity').find((node) => node.findAllByType('Text').some((label) => label.props.children === '保存'));
 assert.equal(saveButton.props.disabled, false, '已有服务允许清空生效对象');
 await act(async () => { saveButton.props.onPress(); });
 assert.deepEqual(uiSaves.at(-1).assistantIds, []);
-assert.equal(uiSaves.at(-1).enabled, false, '编辑保存不会重新启用已关闭服务');
+assert.equal(uiSaves.at(-1).enabled, true, '配置页保存沿用当前启停状态；服务开关只在工具列表');
 await act(async () => { ui.unmount(); });
 
 let centerServer = { ...uiSavedServer, enabled: false, enabledToolCount: 2 };
@@ -2411,9 +2413,15 @@ const { canCommitPresentationLoad } = loadTypeScriptModule('src/shared/utils/pre
 const centerModule = loadTypeScriptModule('src/features/mcpTools/presentation/McpToolsCenterScreen.tsx', {
   ...uiScreenMocks,
   '@expo/vector-icons': { Ionicons: 'Ionicons' },
-  '@shared/ui': { EmptyState: 'EmptyState' },
+  '@shared/ui': { EmptyState: 'EmptyState', HeaderAddButton: 'HeaderAddButton',
+    ToggleDetailRow: uiScreenMocks['@shared/ui'].ToggleDetailRow },
   '@shared/utils/presentationLoadRevision': { canCommitPresentationLoad },
   '../application/ListMcpServers': { listMcpServersWithEnabledToolCounts: async () => [centerServer] },
+  '../application/SetMcpServerEnabled': { setMcpServerEnabled: async (id, enabled) => {
+    uiToggleWrites.push({ id, enabled });
+    centerServer = { ...centerServer, enabled };
+    return centerServer;
+  } },
   '../application/SetMcpServerAssistantEnabled': { setMcpServerAssistantEnabled: async (id, assistantId, enabled) => {
     selectionWrites.push({ id, assistantId, enabled });
     centerServer = { ...centerServer, assistantIds: enabled ? [assistantId] : [] };
@@ -2429,8 +2437,16 @@ assert.deepEqual(selectionWrites, [{ id: 'ui-server', assistantId: 'assistant-1'
 assert.deepEqual(ui.root.findByType('McpAssistantSelection').props.selectedIds, [], '列表勾选即时保存并更新展示');
 assert.equal(centerNavigations, 0, '勾选对象不能触发进入服务配置');
 assert.equal(centerServer.enabled, false, '对象修改不应修改连接或服务开关');
+const centerToggle = () => ui.root.findAllByType('Toggle')
+  .find((node) => node.props.accessibilityLabel === '启用测试服务');
+assert.ok(centerToggle(), '服务列表逐项提供启停开关');
+assert.equal(centerToggle().props.value, false);
+await act(async () => { centerToggle().props.onValueChange(true); });
+assert.deepEqual(uiToggleWrites.at(-1), { id: 'ui-server', enabled: true }, '服务开关在列表页即时保存');
+assert.equal(centerToggle().props.value, true, '列表开关保存后更新展示');
 await act(async () => { ui.update(React.createElement(centerModule.default, { ...centerProps, refreshRevision: 1 })); });
 assert.deepEqual(ui.root.findByType('McpAssistantSelection').props.selectedIds, [], '列表重新读取保留修改');
+assert.equal(centerToggle().props.value, true, '列表重读保留服务开关');
 await act(async () => { ui.unmount(); });
 // 收起只控制展示：展开后仍可多选，保存后的摘要随授权更新。
 const selectionModule = loadTypeScriptModule('src/features/mcpTools/presentation/McpAssistantSelection.tsx', {

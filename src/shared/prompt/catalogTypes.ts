@@ -54,6 +54,8 @@ export interface PromptDefinitionDescriptor {
   placement: 'system' | 'history' | 'input';
   protection: PromptDefinitionProtection;
   protectionReason?: string;
+  /** 正文只有全局版本（如群摘要没有所属 AI）时声明；默认按当前 AI 保存覆盖。 */
+  editScope?: 'global';
   contentKind: PromptDefinitionContentKind;
   providerId?: string;
   content?: string;

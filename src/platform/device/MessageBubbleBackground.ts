@@ -19,10 +19,10 @@ const DECORATION_MAX_EDGE = 512;
 export async function prepareBubbleSkinImport(sourceUri: string, kind: BubbleImageKind = 'background') {
   const decoration = kind === 'decoration';
   const image = await inspectLocalImage(sourceUri, decoration ? { maxByteSize: DECORATION_MAX_BYTES } : undefined);
-  if (image.mimeType !== 'image/png') throw new ImageFileReadError('气泡装饰需要 PNG 图片，请重新选择');
   if (decoration && image.isAnimated) throw new ImageFileReadError('气泡装饰仅支持静态 PNG，请选择静态图片');
   const maxEdge = decoration ? DECORATION_MAX_EDGE : 2048;
-  if (image.width <= maxEdge && image.height <= maxEdge && (decoration || image.byteSize <= 8 * 1024 * 1024)) {
+  // 选择器负责 PNG 筛选；文件提供方的类型标记与容器可能不同，导入层只负责产出绘制所需的 PNG。
+  if (image.mimeType === 'image/png' && image.width <= maxEdge && image.height <= maxEdge && (decoration || image.byteSize <= 8 * 1024 * 1024)) {
     return { uri: sourceUri, dispose: async () => {} };
   }
   const { ImageManipulator, SaveFormat } = await import('expo-image-manipulator');

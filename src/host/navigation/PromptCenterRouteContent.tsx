@@ -28,6 +28,7 @@ export default function PromptCenterRouteContent({ page }: { page: PromptCenterP
     switch (target.kind) {
       case 'overview': router.push({ pathname: '/prompt-center', params }); break;
       case 'conditional': router.push({ pathname: '/prompt-center/conditional', params }); break;
+      case 'otherRules': router.push({ pathname: '/prompt-center/other-rules', params }); break;
       case 'other': router.push({ pathname: '/prompt-center/other', params }); break;
       case 'registry': router.push('/prompt-center/registry' as Href); break;
       case 'editor': router.push({ pathname: '/prompt-center/rules/[definitionId]', params: { ...params, definitionId: target.definitionId } }); break;

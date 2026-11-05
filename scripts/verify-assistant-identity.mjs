@@ -283,10 +283,6 @@ const { migrateAssistantIdentityContract } = migrationModule;
       },
       '@platform/persistence': { databaseCoordinator: createCoordinator(db) },
       '../application/AuxiliaryModelInitialization': {},
-      './SQLiteAuxiliaryModelDefaults': { initializeAssistantAuxiliaryModelsInTransaction: async (transaction, assistantId) => {
-        assert.equal((await transaction.getFirstAsync('SELECT id FROM ai_assistants WHERE id = ?', [assistantId])).id, assistantId);
-      } },
-      './SQLiteAuxiliaryModelRepository': { auxiliaryModelRepository: {} },
       '../domain/AIProfile': { createAIProfile: (value) => aiProfileModule.createAIProfile(value) },
       '../domain/HostRepository': {
         createHostAIAppointmentCooldown: () => ({}),

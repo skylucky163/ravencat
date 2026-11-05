@@ -119,17 +119,22 @@ assert.equal(walletRequest.triggerSource, 'ledger');
 assert.equal(walletRequest.sessionId, 'wallet-chat');
 assert.match(walletRequest.currentInput, /午饭[\s\S]*20/);
 assert.doesNotMatch(walletRequest.currentInput, /你正在接收|回复控制|保持你自己|不是用户/);
-// 换行规则只影响普通聊天正文，开关、覆盖正文与窄任务隔离由真实组装器验证。
+// 换行与动作描写只影响普通聊天正文，开关、覆盖正文与窄任务隔离由真实组装器验证。
 let paragraphBreaksEnabled = false;
+let actionDescriptionEnabled = false;
 let coreOverride;
 const paragraphOverride = '本轮自定义分段规则';
+const actionOverride = '本轮自定义动作描写规则';
 const resolvedAssembler = load('src/host/prompt/ResolvedPromptPackAssembler.ts', {
   '@features/prompting': {
     listPromptCustomBlocks: async () => [],
     resolveLegacyPromptPreset: async ({ scenarioId }) => ({ preset: presets.getSystemPromptPreset(scenarioId) }),
     resolveAssistantPromptConfiguration: async () => ({
-      paragraphBreaksEnabled, timeEnabled: true, batteryEnabled: false, userStateEnabled: true, socialEnabled: true,
-      disabledDefinitionIds: [], overrides: { 'output.paragraph_breaks': paragraphOverride, ...(coreOverride === undefined ? {} : { 'foundation.default_core': coreOverride }) }, userPrompts: [],
+      paragraphBreaksEnabled, actionDescriptionEnabled, timeEnabled: true, batteryEnabled: false, userStateEnabled: true, socialEnabled: true,
+      disabledDefinitionIds: [], overrides: {
+        'output.paragraph_breaks': paragraphOverride, 'output.action_description': actionOverride,
+        ...(coreOverride === undefined ? {} : { 'foundation.default_core': coreOverride }),
+      }, userPrompts: [],
       agentRegistryExcludedAssistantIds: [], messageTimestampsEnabled: false,
     }),
   },
@@ -137,27 +142,37 @@ const resolvedAssembler = load('src/host/prompt/ResolvedPromptPackAssembler.ts',
   './PromptPackBlockFactory': { promptPackBlockFactory: factory },
   './DeviceBatteryPromptBlock': { createDeviceBatteryPromptBlocks: async () => [] },
 });
-assert.equal((await resolvedAssembler.assembleResolvedChatPromptPack(params)).blocks.some((block) => block.content.includes(paragraphOverride)), false);
+const closedPack = await resolvedAssembler.assembleResolvedChatPromptPack(params);
+assert.equal(closedPack.blocks.some((block) => block.content.includes(paragraphOverride)), false);
+assert.equal(closedPack.blocks.some((block) => block.content.includes(actionOverride)), false);
+actionDescriptionEnabled = true;
+const actionOnlyPack = await resolvedAssembler.assembleResolvedChatPromptPack(params);
+assert.ok(actionOnlyPack.stableSystemPrompt.includes(actionOverride), '动作描写规则独立注入稳定前缀');
+assert.equal(actionOnlyPack.stableSystemPrompt.includes(paragraphOverride), false, '两条规则的开关互不影响');
 paragraphBreaksEnabled = true;
 for (const input of [params, { ...params, runtimeContext: { groupChat: groupContext } },
   { ...params, runtimeContext: { triggerSource: 'ledger', inputSource: 'application' } },
   { ...params, currentInput: '', additionalBlocks: scheduleBlocks, runtimeContext: { triggerSource: 'raven_cat_ai_schedule', inputSource: 'application' } }]) {
   const result = await resolvedAssembler.assembleResolvedChatPromptPack(input);
   assert.ok(result.stableSystemPrompt.includes(paragraphOverride), `${result.scenario} 应在稳定前缀使用编辑后的换行规则`);
+  assert.ok(result.stableSystemPrompt.includes(actionOverride), `${result.scenario} 应在稳定前缀使用编辑后的动作描写规则`);
   assert.equal(result.outputRequirement.includes(paragraphOverride), false);
   const foundationEnd = result.stableSystemPrompt.indexOf(result.blocks.find((block) => block.definitionId === 'foundation.default_core').content);
   assert.ok(foundationEnd < result.stableSystemPrompt.indexOf(paragraphOverride));
-  assert.ok(result.stableSystemPrompt.indexOf(paragraphOverride) < result.stableSystemPrompt.indexOf('角色人设'), '换行规则位于系统基础规则与人设之间');
-  assert.equal(result.recentMessages.some((message) => message.content.includes(paragraphOverride)), false);
+  assert.ok(result.stableSystemPrompt.indexOf(paragraphOverride) < result.stableSystemPrompt.indexOf(actionOverride), '动作描写规则排在换行规则之后');
+  assert.ok(result.stableSystemPrompt.indexOf(actionOverride) < result.stableSystemPrompt.indexOf('角色人设'), '两条规则都位于系统基础规则与人设之间');
+  assert.equal(result.recentMessages.some((message) => message.content.includes(actionOverride)), false);
 }
 const callBlocks = load('src/features/calls/application/CallPromptBlocks.ts');
 const callPack = await resolvedAssembler.assembleResolvedChatPromptPack({ ...params,
   runtimeContext: { triggerSource: 'call' }, additionalBlocks: callBlocks.buildCallLivePromptBlocks() });
 assert.equal(callPack.blocks.some((block) => block.content.includes(paragraphOverride)), false, '通话口语不注入换行规则');
+assert.equal(callPack.blocks.some((block) => block.content.includes(actionOverride)), false, '通话口语不注入动作描写规则');
 const summaryTask = { key: 'chat_summary_task', definitionId: 'internal.chat_summary', slot: 'output_contract',
   protection: 'locked', title: '摘要任务', content: '只输出摘要 JSON', required: true, status: 'ready', placement: 'system' };
 const summaryPack = await resolvedAssembler.assembleResolvedSummaryPromptPack(params, summaryTask);
 assert.equal(summaryPack.blocks.some((block) => block.content.includes(paragraphOverride)), false, '摘要不继承聊天排版要求');
+assert.equal(summaryPack.blocks.some((block) => block.content.includes(actionOverride)), false, '摘要不继承动作描写要求');
 coreOverride = '';
 for (const result of [await resolvedAssembler.assembleResolvedChatPromptPack(params), await resolvedAssembler.assembleResolvedSummaryPromptPack(params, summaryTask)]) {
   const core = result.blocks.find((block) => block.definitionId === 'foundation.default_core');
@@ -166,4 +181,4 @@ for (const result of [await resolvedAssembler.assembleResolvedChatPromptPack(par
   assert.equal(result.systemPrompt.includes(factory.createFoundationBlock(params.aiConfig).content), false, '空基础规则不得回填代码默认正文');
   assert.ok(result.stableSystemPrompt.includes('角色人设'), '省略基础规则仍保留人设');
 }
-console.log('上下文装配：单聊、群聊身份、冷静期、账本和日程的角色、顺序及共同前缀，以及换行规则开关、正文覆盖与任务隔离验证通过。');
+console.log('上下文装配：单聊、群聊身份、冷静期、账本和日程的角色、顺序及共同前缀，以及换行与动作描写的开关、顺序、正文覆盖和任务隔离验证通过。');

@@ -542,18 +542,25 @@ assert.equal(history.length, 4, '模型适配不改变真实 Chat 历史');
 // 通用看图复用角色视觉选择，辅助模型获得同一取消信号，失败明确标记未看到原图。
 let selection = { status: 'unconfigured' }, visionOptions;
 let respond = async () => ({ success: true, text: '图中文字是晚安' });
+let readVisionImage = async () => ({ base64: 'AAA', mimeType: 'image/png' });
+let readOCRPrompt = async () => '图片任务说明';
+let assembleOCRPrompt = async () => ({ systemPrompt: '看图' });
+let visionRequests = 0;
 const resolver = load('src/features/chat/reply/application/ResolveChatImageModelInput.ts', {
-  '@platform/ai': { createAIClient: () => ({ chat: async (_, options) => { visionOptions = options; return respond(); } }) },
+  '@platform/ai': { getErrorDisplayInfo: load('src/platform/ai/errorMapping.ts').getErrorDisplayInfo,
+    createAIClient: () => ({ chat: async (_, options) => {
+    visionRequests++; visionOptions = options; return respond(options);
+  } }) },
   '@shared/runtime/abortSignal': abort,
   './ReplyTaskPromptBlocks': { buildVisionOCRPromptBlocks: () => [] },
   './ChatReplyRuntimeDependencies': { getChatReplyRuntimeDependencies: () => ({
-    media: { readVisionImage: async () => ({ base64: 'AAA', mimeType: 'image/png' }) }, vision: { resolveOCRModel: async () => selection },
-    prompt: { assembleStandalone: async () => ({ systemPrompt: '看图' }), resolveVisionOCRPrompt: async () => '图片任务说明' },
+    media: { readVisionImage: input => readVisionImage(input) }, vision: { resolveOCRModel: async () => selection },
+    prompt: { assembleStandalone: input => assembleOCRPrompt(input), resolveVisionOCRPrompt: input => readOCRPrompt(input) },
   }) },
 });
 const visionInput = { assistantId: 'ai-two', imageUri: 'file:///cat.png', mimeType: 'image/png', contextText: '查看图片' };
 assert.equal((await resolver.resolveChatImageModelInput(visionInput)).parts[1].type, 'image_url');
-selection = { status: 'configured', model: { modelConfigId: 'vision', model: 'vision', baseURL: 'https://example.invalid' } };
+selection = { status: 'active', model: { modelConfigId: 'vision', model: 'vision', baseURL: 'https://example.invalid' } };
 const visionController = new AbortController();
 const auxiliary = await resolver.resolveChatImageModelInput({ ...visionInput, signal: visionController.signal });
 assert.equal(auxiliary.route, 'ocr');
@@ -565,6 +572,30 @@ respond = async () => ({ success: false, text: '', error: '识图请求失败' }
 assert.equal((await resolver.resolveChatImageModelInput(visionInput)).ocrSucceeded, false);
 respond = async () => { visionController.abort(new Error('用户发来新消息')); throw new Error('模型取消'); };
 await assert.rejects(resolver.resolveChatImageModelInput({ ...visionInput, signal: visionController.signal }), /用户发来新消息/);
+
+// 文件与提示词读取不能原生取消；返回后必须停止，不能再发起下一阶段网络请求。
+const preparationStages = [
+  [() => readVisionImage, value => { readVisionImage = value; }],
+  [() => readOCRPrompt, value => { readOCRPrompt = value; }],
+  [() => assembleOCRPrompt, value => { assembleOCRPrompt = value; }],
+];
+for (const [getStage, setStage] of preparationStages) {
+  const original = getStage();
+  const controller = new AbortController();
+  const reason = new Error('图片预处理期间取消');
+  const before = visionRequests;
+  setStage(async (...args) => { controller.abort(reason); return original(...args); });
+  await assert.rejects(resolver.resolveChatImageModelInput({ ...visionInput, signal: controller.signal }), error => error === reason);
+  assert.equal(visionRequests, before, '预处理返回后观察取消，不发起 OCR 请求');
+  setStage(original);
+}
+for (const response of [{ success: true, text: '迟到的识别' }, { success: false, text: '', error: '请求取消' }]) {
+  const controller = new AbortController();
+  const reason = new Error('OCR 请求期间取消');
+  respond = async () => { controller.abort(reason); return response; };
+  await assert.rejects(resolver.resolveChatImageModelInput({ ...visionInput, signal: controller.signal }), error => error === reason,
+    '取消不能被成功结果或失败说明吞掉');
+}
 
 // 有其他有效向量时，识别失败的自己收藏也必须进入词面候选排名。
 const failedSticker = { ...userSticker, id: 'failed', ownerAssistantId: 'ai-two', annotationStatus: 'failed', name: '晚安' };
@@ -611,20 +642,22 @@ let imageReadFails = true;
 let attachmentRoute = 'direct_vision';
 let imageReminder = '自定义图片防幻觉提醒';
 let reminderReads = 0;
+let resolveAttachmentInput = async input => {
+  if (imageReadFails) throw new Error('图片已被删除');
+  return { route: attachmentRoute, parts: attachmentRoute === 'direct_vision'
+    ? [{ type: 'text', text: input.contextText }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } }]
+    : [{ type: 'text', text: attachmentRoute === 'ocr' ? 'OCR 结果或失败说明' : '视觉识别不可用' }] };
+};
 const { buildChatUserMessageModelInput } = load('src/features/chat/reply/application/BuildChatBatchAIInput.ts', {
-  '@features/media': { mediaImageFailure: error => ({ status: 'error', code: 'IMAGE_UNREADABLE', modelContent: error.message }) },
+  '@features/media': { mediaImageFailure: error => error.message === '图片已被删除'
+    ? { status: 'error', code: 'IMAGE_UNREADABLE', modelContent: error.message } : null },
   '@features/chat/messages/domain': chatMetadata, '../../messages/domain/ChatSticker': chatSticker,
   '../../messages/domain/SharedChatRecord': sharedRecord,
   '../../messages/domain/SharedMoment': sharedMoment,
   './ChatReplyRuntimeDependencies': { getChatReplyRuntimeDependencies: () => ({ prompt: {
     readImageGroundingReminder: async assistantId => { assert.equal(assistantId, 'ai-two'); reminderReads++; return imageReminder; },
   } }) },
-  './ResolveChatImageModelInput': { resolveChatImageModelInput: async input => {
-    if (imageReadFails) throw new Error('图片已被删除');
-    return { route: attachmentRoute, parts: attachmentRoute === 'direct_vision'
-      ? [{ type: 'text', text: input.contextText }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } }]
-      : [{ type: 'text', text: attachmentRoute === 'ocr' ? 'OCR 结果或失败说明' : '视觉识别不可用' }] };
-  } },
+  './ResolveChatImageModelInput': { resolveChatImageModelInput: input => resolveAttachmentInput(input) },
 });
 const unreadable = await buildChatUserMessageModelInput(historical, 'ai-two');
 assert.equal(typeof unreadable.modelInput, 'string');
@@ -652,6 +685,47 @@ for (const route of ['ocr', 'vision_unavailable']) {
   assert.equal(result.modelInput.includes(imageReminder), false);
 }
 assert.equal(reminderReads, readsBeforeOCR, '已配置 OCR 的成功、失败或不可用路线均不读取提醒');
+
+// 从真实回合入口经过附件组装到 OCR：宿主超时与新消息取消均须停止等待，不能进入主模型。
+resolveAttachmentInput = resolver.resolveChatImageModelInput;
+const turnInputBuilder = load('src/features/chat/reply/application/BuildChatTurnAIInput.ts', {
+  './BuildChatBatchAIInput': { buildChatUserMessageModelInput },
+  './ChatTurnPresentationRuntime': { getChatInterruptedTurnContext: async () => [] },
+});
+let mainModelRequests = 0, presentationFinishes = 0;
+const { executeUserReplyTurn } = load('src/features/chat/reply/application/ExecuteUserReplyTurn.ts', {
+  '../../messages/application/ChatMessageRuntime': {},
+  './BuildChatTurnAIInput': turnInputBuilder,
+  './ProcessAIReply': { processAIReply: async () => { mainModelRequests++; } },
+  './SingleTransactionTurnCommit': { createSingleTransactionTurnCommit: () => ({}) },
+  './ChatTurnPresentationRuntime': { ChatTurnPresentation: class {
+    async start() {}
+    async finish() { presentationFinishes++; }
+  } },
+});
+for (const text of ['', '看看这张图']) {
+  for (const reason of [new Error('用户发来新消息'), new Error('execution_host_timeout')]) {
+    const controller = new AbortController();
+    let requestStarted;
+    const started = new Promise(resolve => { requestStarted = resolve; });
+    respond = options => new Promise((_, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+      requestStarted();
+    });
+    const execution = executeUserReplyTurn({
+      run: { runId: 'image-turn', sessionId: 'image-session', replyCursorAtClaim: 0, inputHighWatermark: receivedMessage.id },
+      aiConfig: { id: 'ai-two' }, signal: controller.signal,
+      repository: { listUserMessagesInRange: async () => [{ ...receivedMessage, text }] },
+    });
+    const rejected = assert.rejects(execution, error => error === reason);
+    await Promise.race([started, execution]);
+    controller.abort(reason);
+    await rejected;
+    assert.equal(visionOptions.signal, controller.signal);
+  }
+}
+assert.equal(mainModelRequests, 0, '图片识别期间取消的回合不再请求主模型');
+assert.equal(presentationFinishes, 4, '取消和超时均经过回合展示收尾');
 
 // 上传前验证真实文件格式及长截图尺寸，拒绝超限图时不进行模型编码。
 let dimensions = { width: 1080, height: 20000 }, imageEncodings = 0;
@@ -742,7 +816,7 @@ console.log('AI 图片工具验证通过：迁移/收藏隔离、单次失败/�
 
 // 聊天展示稳定的中文说明；原始错误保留诊断价值，路径和请求 ID 不冒充 HTTP 状态。
 const { getErrorDisplayInfo } = load('src/platform/ai/errorMapping.ts');
-for (const code of [401, 402, 403, 404, 429, 2049]) {
+for (const code of [401, 402, 403, 404, 408, 429, 504, 2049]) {
   const raw = `.messages[${code}].image[0]: You have uploaded an unsupported image. (request_id: 123-${code}-abc)`;
   const error = new Error(raw);
   const display = getErrorDisplayInfo(error);

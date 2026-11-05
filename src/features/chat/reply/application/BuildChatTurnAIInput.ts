@@ -30,6 +30,7 @@ export async function buildChatTurnAIInput(params: {
   assistantId: string;
   agentId?: string;
   isRegeneration?: boolean;
+  signal?: AbortSignal;
 }): Promise<ChatTurnAIInput> {
   const userMessages = await params.repository.listUserMessagesInRange(
     params.sessionId,
@@ -48,7 +49,7 @@ export async function buildChatTurnAIInput(params: {
     contextByInput.set(run.inputHighWatermark, context);
   }
   for (const message of userMessages) {
-    const input = await buildChatUserMessageModelInput(message, params.assistantId, params.agentId);
+    const input = await buildChatUserMessageModelInput(message, params.assistantId, params.agentId, params.signal);
     if (input.displayText) {
       displayLines.push(input.displayText);
     }

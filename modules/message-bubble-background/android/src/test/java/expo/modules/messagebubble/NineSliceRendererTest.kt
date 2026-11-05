@@ -50,10 +50,23 @@ class NineSliceRendererTest {
       val invalid = File.createTempFile("bubble-invalid-", ".png")
       try {
         invalid.writeText("invalid")
-        assertThrows(java.util.concurrent.ExecutionException::class.java) {
+        val error = assertThrows(java.util.concurrent.ExecutionException::class.java) {
           BubbleBitmapCache.load(invalid.toURI().toString()).get(10, TimeUnit.SECONDS)
         }
+        assertEquals("气泡图片无法解码，文件可能已损坏", error.cause!!.message)
       } finally { invalid.delete() }
+    } finally { file.delete() }
+  }
+
+  @Test fun smallPngReportsDimensionError() {
+    val image = Bitmap.createBitmap(2, 12, Bitmap.Config.ARGB_8888)
+    val file = File.createTempFile("bubble-small-", ".png")
+    try {
+      file.outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+      val error = assertThrows(java.util.concurrent.ExecutionException::class.java) {
+        BubbleBitmapCache.load(file.toURI().toString()).get(10, TimeUnit.SECONDS)
+      }
+      assertEquals("气泡图片边长需为 3–2048 像素", error.cause!!.message)
     } finally { file.delete() }
   }
 }

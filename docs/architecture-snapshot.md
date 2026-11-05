@@ -109,6 +109,7 @@
                 └── new.tsx
             ├── custom.tsx
             ├── index.tsx
+            ├── other-rules.tsx
             ├── other.tsx
             ├── persona.tsx
             ├── registry.tsx
@@ -1147,8 +1148,6 @@
                 └── SQLiteProtocolRepository.ts
             └── presentation
                 ├── index.ts
-                ├── parts
-                    └── AddIcon.tsx
                 └── ProtocolView.tsx
         ├── screenCapture
             ├── aiTools
@@ -1698,6 +1697,7 @@
             ├── EmptyState.tsx
             ├── floatingTabBarMetrics.ts
             ├── GroupAvatar.tsx
+            ├── HeaderAddButton.tsx
             ├── index.ts
             ├── InputField.tsx
             ├── KeyboardAvoidingContainer.tsx
@@ -1717,6 +1717,7 @@
                 ├── ShootingStars.tsx
                 └── starField.ts
             ├── Toggle.tsx
+            ├── ToggleDetailRow.tsx
             ├── ToggleField.tsx
             ├── useAutoSaveDraft.ts
             ├── useAutoSaveFeedback.ts

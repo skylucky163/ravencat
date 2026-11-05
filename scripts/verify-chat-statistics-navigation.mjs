@@ -99,14 +99,21 @@ const appRoute = load('src/app/chat/[aiId]/statistics.tsx', {
 });
 let menuRenderer;
 let statisticsRenderer;
+let profileOpens = 0;
 try {
-  await act(async () => { menuRenderer = create(React.createElement(routes.ChatMenuRouteScreen, { aiId: 'ai-1' })); });
+  await act(async () => { menuRenderer = create(React.createElement(routes.ChatMenuRouteScreen, {
+    aiId: 'ai-1', onOpenAssistantProfile: () => profileOpens++,
+  })); });
   assert.equal(currentSubScreen, 'menu');
   assert.equal(queryCount, 0, '更多页面只展示入口，不读取统计或内嵌统计正文');
   const menuTitles = menuRenderer.root.findAllByType('TouchableOpacity').map((item) =>
     item.findAllByType('Text').map((text) => text.children.join('')).join(''));
   // 菜单顺序可随页面调整；导航契约要求入口完整，不冻结当前排列。
   assert.deepEqual(menuTitles.sort(), ['模型设置', '协议空间', '聊天摘要', '搜索聊天记录', '对话设置', '通话记录', '相遇痕迹', '清除聊天记录', '删除当前 AI'].sort());
+  const profileCard = menuRenderer.root.findByType('AIInfoCard').parent;
+  assert.equal(profileCard.props.accessibilityRole, 'button', '整张名片可点击进入主页');
+  await act(async () => { profileCard.props.onPress(); });
+  assert.equal(profileOpens, 1, '名片点击交付当前 AI 的主页导航意图');
   const searchEntry = menuRenderer.root.findAllByType('TouchableOpacity').find(item =>
     item.findAllByType('Text').some(text => text.children.join('') === '搜索聊天记录'));
   await act(async () => { searchEntry.props.onPress(); });
