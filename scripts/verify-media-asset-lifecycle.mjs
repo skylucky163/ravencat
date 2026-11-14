@@ -112,6 +112,7 @@ function createDatabase() {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(MEDIA_ASSET_SCHEMA);
   db.exec(SCHEMAS.assistantProfileCovers);
+  db.exec(SCHEMAS.aiGeneratedImages);
   db.exec(CHAT_BUBBLE_SKINS_SCHEMA);
   db.exec(CHAT_FAVORITES_SCHEMA);
   db.exec(CHAT_REPLY_VERSIONS_SCHEMA);

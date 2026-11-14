@@ -66,6 +66,23 @@ class BackupArchiveTest {
     assertThrows(IllegalArgumentException::class.java) { extract(artifact(contract = 2)) }
   }
 
+  @Test fun roundTripPreservesLargeDiagnosticsInStableSettings() {
+    val fullBody = "完整诊断📦".repeat(100_000)
+    val largeSettings = JSONObject().put("aiHttpDiagnostics", JSONObject()
+      .put("version", 1).put("enabled", false).put("records", JSONArray().put(JSONObject()
+        .put("requestBody", fullBody).put("responseBody", "data: [DONE]\n"))))
+      .toString().toByteArray(Charsets.UTF_8)
+    assertTrue(largeSettings.size > 1024 * 1024)
+    val payloads = listOf(database, largeSettings, media)
+    val staging = extract(artifact(
+      declaredSizes = payloads.map { it.size.toLong() },
+      sources = paths.zip(payloads).map { (path, bytes) ->
+        BackupArchiveSource(path, null, bytes, bytes.size.toLong())
+      },
+    ))
+    assertArrayEquals(largeSettings, File(staging, "settings/stable-settings.json").readBytes())
+  }
+
   @Test fun rejectsMissingExtraDuplicateAndEscapingPaths() {
     assertThrows(IllegalArgumentException::class.java) { extract(artifact(sources = emptyList())) }
     assertThrows(IllegalArgumentException::class.java) {

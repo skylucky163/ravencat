@@ -1,4 +1,5 @@
 /** 定义“本地伴随”正式设置及其严格数据边界。 */
+import { DEFAULT_FOLLOW_UP_MINUTES, isFollowUpInterval } from './AIScheduleTiming';
 
 export const COMPANION_SETTINGS_ID = 'default';
 export const DEFAULT_QUIET_HOURS_ENABLED = true;
@@ -11,6 +12,8 @@ export interface CompanionSettings {
   quietHoursStartMinutes: number;
   quietHoursEndMinutes: number;
   userScreenCaptureBlacklist: string[];
+  followUpEnabled: boolean;
+  followUpIntervalMinutes: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -21,6 +24,8 @@ export type UpdateCompanionSettingsInput = Partial<Pick<
   | 'quietHoursStartMinutes'
   | 'quietHoursEndMinutes'
   | 'userScreenCaptureBlacklist'
+  | 'followUpEnabled'
+  | 'followUpIntervalMinutes'
 >>;
 
 export interface CompanionSettingsRow {
@@ -29,6 +34,8 @@ export interface CompanionSettingsRow {
   quiet_hours_start_minutes: number;
   quiet_hours_end_minutes: number;
   user_screen_capture_blacklist_json: string;
+  follow_up_enabled: number;
+  follow_up_interval_minutes: number;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +55,8 @@ export function createCompanionSettings(
     userScreenCaptureBlacklist: normalizePackageList(
       data.userScreenCaptureBlacklist ?? []
     ),
+    followUpEnabled: data.followUpEnabled ?? false,
+    followUpIntervalMinutes: data.followUpIntervalMinutes ?? DEFAULT_FOLLOW_UP_MINUTES,
     createdAt: data.createdAt ?? now,
     updatedAt: data.updatedAt ?? now,
   };
@@ -62,6 +71,8 @@ export function createCompanionSettingsFromRow(
 
   return createCompanionSettings({
     id: row.id,
+    followUpEnabled: row.follow_up_enabled === 1,
+    followUpIntervalMinutes: row.follow_up_interval_minutes,
     quietHoursEnabled: row.quiet_hours_enabled === 1,
     quietHoursStartMinutes: row.quiet_hours_start_minutes,
     quietHoursEndMinutes: row.quiet_hours_end_minutes,
@@ -79,8 +90,10 @@ export function assertCompanionSettings(
     | 'quietHoursEnabled'
     | 'quietHoursStartMinutes'
     | 'quietHoursEndMinutes'
+    | 'followUpIntervalMinutes'
   >
 ): void {
+  if (!isFollowUpInterval(settings.followUpIntervalMinutes)) throw new Error('续轮间隔必须为 2 至 43200 分钟的整数');
   assertIntegerInRange(
     settings.quietHoursStartMinutes,
     0,

@@ -106,6 +106,7 @@ assert.match(snapshot.timeline[2].content, /assistant_nickname_changed/);
 assert.equal(snapshot.timeline[2].speaker, 'application');
 const { PromptHistoryBuilder } = load('src/host/prompt/PromptHistoryBuilder.ts', {
   '@features/chat': { getChatSummaryContext: (id, ids = []) => summary.readContext(id, ids),
+    ...load('src/features/chat/messages/domain/ChatCodeBlock.ts'),
     getChatInterruptedTurnContext: async () => [], ...load('src/features/chat/messages/domain/chatMessageMetadata.ts') },
 });
 // 摘要消费应用事件，但事件不计入对话条数。
@@ -207,12 +208,16 @@ await bootstrapSqlite(legacyExecutor);
 for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) {
   legacy.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id`);
 }
-legacy.exec(`DROP TABLE model_service_configs; DROP TABLE model_service_settings;
+legacy.exec(`DROP TABLE model_service_configs; DROP TABLE model_service_groups; DROP TABLE model_service_settings;
+ ALTER TABLE moments DROP COLUMN edited_at;
+ ALTER TABLE moments DROP COLUMN edit_revision;
  ALTER TABLE chat_summary_request_settings DROP COLUMN primary_limit;
  ALTER TABLE ai_assistants DROP COLUMN show_action_steps;
  ALTER TABLE ai_assistants DROP COLUMN streaming_reply;
  ALTER TABLE group_chat_members DROP COLUMN muted;
  ALTER TABLE group_chat_members DROP COLUMN joined_during_plan_id;`);
+// 170 新增的跟进设置不属于 134 旧库，不能提前留在迁移输入中。
+legacy.exec('ALTER TABLE raven_cat_contact_settings DROP COLUMN follow_up_enabled; ALTER TABLE raven_cat_contact_settings DROP COLUMN follow_up_interval_minutes;');
 legacy.exec(`INSERT INTO ai_assistants(id,agent_id,name,model,created_at,updated_at) VALUES ('legacy','legacy-agent','AI','test','2026-01-01','2026-01-01');
  INSERT INTO chat_conversations(id,kind) VALUES ('legacy-chat','direct');
  INSERT INTO sessions(id,ai_assistant_id,name,created_at,updated_at,visible_after_at)

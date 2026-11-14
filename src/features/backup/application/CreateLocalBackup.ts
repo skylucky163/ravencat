@@ -1,5 +1,5 @@
 import type { BackupArchiveBuilder } from '../domain/BackupArchiveBuilder';
-import type { BackupArtifactSummary, BackupTarget } from '../domain/BackupTarget';
+import type { BackupTarget } from '../domain/BackupTarget';
 
 export interface BackupSourceGateway {
   createDatabaseSnapshot(): Promise<string>;
@@ -29,7 +29,7 @@ interface CreateLocalBackupDependencies {
 }
 
 export function createLocalBackupUseCase(dependencies: CreateLocalBackupDependencies) {
-  return async (): Promise<BackupArtifactSummary> => {
+  return async (): Promise<void> => {
     const databaseSnapshotUri = await dependencies.sourceGateway.createDatabaseSnapshot();
     try {
       const createdAt = new Date().toISOString();
@@ -41,13 +41,7 @@ export function createLocalBackupUseCase(dependencies: CreateLocalBackupDependen
         appVersion: dependencies.appVersion,
         databaseContractVersion: dependencies.databaseContractVersion,
       });
-      const published = await dependencies.localTarget.publish(prepared);
-      return {
-        artifactId: published.artifactId,
-        fileName: published.fileName,
-        byteLength: published.byteLength,
-        createdAt,
-      };
+      await dependencies.localTarget.publish(prepared);
     } finally {
       await dependencies.sourceGateway.deleteDatabaseSnapshot(databaseSnapshotUri);
     }

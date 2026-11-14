@@ -10,10 +10,6 @@ import type {
 } from '../domain/BackupTarget';
 
 export class AndroidDownloadsBackupTarget implements BackupTarget {
-  readonly id = 'local-downloads';
-  readonly displayName = '本地下载目录';
-  readonly capabilities = { publish: true, list: true, read: true, delete: true } as const;
-
   publish(source: BackupArtifactHandle): Promise<BackupArtifactHandle> {
     return publishBackupToDownloads(source.locator, source.fileName);
   }

@@ -10,6 +10,7 @@ import { useChatMessageSelection } from '../components/useChatMessageSelection';
 import { useChatMessageShare } from '../components/useChatMessageShare';
 import { useChatFavoriteAction } from '../components/useChatFavoriteAction';
 import { useChatStickerAction } from '../components/useChatStickerAction';
+import { useChatSaveImagesAction } from '../components/useChatSaveImagesAction';
 import { getChatMessageActions } from '../../../messages/domain/ChatMessageActions';
 import ChatContentShareSheet from '../components/ChatContentShareSheet';
 import { ChatSelectionHeader, ChatSelectionFooter } from '../components/ChatSelectionBars';
@@ -23,6 +24,7 @@ import ChatReplyVersionSheet from '../components/ChatReplyVersionSheet';
 import { getChatSelectionKey } from '../../../messages/domain/ChatMessageSelection';
 import { canEditChatMessage } from '../../../messages/domain/ChatMessageEditing';
 import { copyTextToClipboard } from '@platform/device';
+import { readChatCodeBlock } from '../../../messages/domain/ChatCodeBlock';
 import ChatBackground from '../components/ChatBackground';
 import { useChatDetail } from './useChatDetail';
 import { useChatTurnExecutionStatus } from './useChatTurnExecutionStatus';
@@ -30,7 +32,6 @@ import { useChatRegeneration } from './useChatRegeneration';
 import { useAttachmentDraft } from './useAttachmentDraft';
 import { translateMessageText } from '@features/integrations';
 import { deleteChatMessage } from '../../../messages/application/DeleteChatMessage';
-import { isAgentTransientTimelineMessage } from '../../../messages/application/AgentTransientTimeline';
 import { voiceMessagePlaybackCoordinator } from '../../../messages/application/VoiceMessagePlaybackCoordinator';
 import {
   getMessageVoice,
@@ -258,8 +259,11 @@ export default function ChatDetailModule({
     onDeleted: handleSelectionDeleted,
   });
   const share = useChatMessageShare({ sessionId, sourceName: headerTitle, assistantId: aiAssistant?.id, isActive, onShared: selection.exit });
-  const favoriteMessage = useChatFavoriteAction(selectedMessage, headerTitle, aiAssistant?.id);
+  // 仍在生成的投影可复制和选字；回合结束后正文已由消息 owner 封存，沿用全部消息操作。
+  const selectedCanonicalMessage = selectedMessage && selectedMessage.id > 0 ? selectedMessage : null;
+  const favoriteMessage = useChatFavoriteAction(selectedCanonicalMessage, headerTitle, aiAssistant?.id);
   const stickerAction = useChatStickerAction(selectedMessage);
+  const saveImages = useChatSaveImagesAction(selectedMessage, isActive);
   const messageActions = selectedMessage ? getChatMessageActions(selectedMessage) : null;
   const handleShareMessage = useCallback(() => {
     dismissInputSurface();
@@ -322,7 +326,6 @@ export default function ChatDetailModule({
 
   const handleMessageLongPress = useCallback((msg: ChatMessage, position: { x: number; y: number }) => {
     if (msg.senderType !== 'user' && msg.senderType !== 'assistant') return;
-    if (isAgentTransientTimelineMessage(msg)) return;
 
     setSelectedMessage(msg);
     setMenuPosition(position);
@@ -338,7 +341,7 @@ export default function ChatDetailModule({
   const handleCopyMessage = useCallback(() => {
     if (!selectedMessage) return;
     try {
-      copyTextToClipboard(selectedMessage.text);
+      copyTextToClipboard(readChatCodeBlock(selectedMessage.text)?.source ?? selectedMessage.text);
       ToastAndroid.show('复制成功', ToastAndroid.SHORT);
     } catch (error) {
       showAppDialog({ title: '复制失败', message: error instanceof Error ? error.message : '无法写入剪贴板', tone: 'error' });
@@ -348,7 +351,7 @@ export default function ChatDetailModule({
   const handleSelectMessageText = useCallback(() => {
     dismissInputSurface();
     // 菜单关闭会清空 selectedMessage；选字窗口独立持有打开时的正文快照。
-    setTextSelectionText(selectedMessage!.text);
+    setTextSelectionText(readChatCodeBlock(selectedMessage!.text)?.source ?? selectedMessage!.text);
   }, [dismissInputSurface, selectedMessage]);
   const handleFixedStart = useCallback(() => {
     if (!selectedMessage || !sessionId || !summarySettings) return;
@@ -627,22 +630,23 @@ export default function ChatDetailModule({
         visible={actionMenuVisible}
         onClose={handleCloseActionMenu}
         position={menuPosition}
+        onSaveImages={saveImages}
         onCopy={selectedMessage?.text.trim() ? handleCopyMessage : undefined}
         onSelectText={selectedMessage?.text.trim() ? handleSelectMessageText : undefined}
         onRewrite={selectedMessage && canEditChatMessage(selectedMessage) ? handleRewriteMessage : undefined}
-        onRegenerate={selectedMessage?.senderType === 'assistant'
-          && selectedMessage.turnItemIndex != null
-          && selectedMessage.turnRunId === regeneration.eligibleRunId
+        onRegenerate={selectedCanonicalMessage?.senderType === 'assistant'
+          && selectedCanonicalMessage.turnItemIndex != null
+          && selectedCanonicalMessage.turnRunId === regeneration.eligibleRunId
           && !isTyping && !isChatSendBlockedByActiveCall ? handleRegenerateMessage : undefined}
-        onHistory={selectedMessage?.senderType === 'assistant' && selectedMessage.turnItemIndex != null
-          && selectedMessage.turnRunId && regeneration.versionedRunIds.includes(selectedMessage.turnRunId)
-          ? () => { dismissInputSurface(); setHistoryRunId(selectedMessage.turnRunId!); } : undefined}
-        onDelete={handleDeleteMessage}
-        onFixedStart={summarySettings && selectedMessage && projectChatContextMessage(selectedMessage,
-          [selectedMessage.createdAt, selectedMessage.id, 0, selectedMessage.id])?.kind === 'dialogue' ? handleFixedStart : undefined}
+        onHistory={selectedCanonicalMessage?.senderType === 'assistant' && selectedCanonicalMessage.turnItemIndex != null
+          && selectedCanonicalMessage.turnRunId && regeneration.versionedRunIds.includes(selectedCanonicalMessage.turnRunId)
+          ? () => { dismissInputSurface(); setHistoryRunId(selectedCanonicalMessage.turnRunId!); } : undefined}
+        onDelete={selectedCanonicalMessage ? handleDeleteMessage : undefined}
+        onFixedStart={summarySettings && selectedCanonicalMessage && projectChatContextMessage(selectedCanonicalMessage,
+          [selectedCanonicalMessage.createdAt, selectedCanonicalMessage.id, 0, selectedCanonicalMessage.id])?.kind === 'dialogue' ? handleFixedStart : undefined}
         isFixedStart={selectedMessage?.id === summarySettings?.fixedMessageId}
-        onMultiSelect={selectedMessage && selection.availableKeys.has(getChatSelectionKey(selectedMessage)) && voiceRecordingState === 'idle' ? handleEnterSelection : undefined}
-        onForward={selectedMessage && selection.availableKeys.has(getChatSelectionKey(selectedMessage)) && voiceRecordingState === 'idle' ? handleShareMessage : undefined}
+        onMultiSelect={selectedCanonicalMessage && selection.availableKeys.has(getChatSelectionKey(selectedCanonicalMessage)) && voiceRecordingState === 'idle' ? handleEnterSelection : undefined}
+        onForward={selectedCanonicalMessage && selection.availableKeys.has(getChatSelectionKey(selectedCanonicalMessage)) && voiceRecordingState === 'idle' ? handleShareMessage : undefined}
         onQuote={messageActions?.quote ? handleQuoteMessage : undefined}
         onTranslate={messageActions?.translate ? handleTranslateMessage : undefined}
         onFavorite={messageActions?.favorite ? favoriteMessage.toggle : undefined}

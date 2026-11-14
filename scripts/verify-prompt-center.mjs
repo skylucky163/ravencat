@@ -65,7 +65,7 @@ let server = {
 const configuredPrompting = loadTypeScriptModule(
   'src/host/composition/configurePromptingRuntime.ts',
   {
-    '@platform/ai': loadTypeScriptModule('src/platform/ai/moonshotEndpoint.ts'),
+    '@platform/ai': loadTypeScriptModule('src/platform/ai/officialToolsEndpoint.ts'),
     '@features/prompting/composition': {
       configurePromptingRuntimeDependencies: (dependencies) => {
         configuredPromptingDependencies = dependencies;
@@ -100,7 +100,8 @@ assert.deepEqual(
   builtInToolDescriptors,
   '提示词中心工具目录只能返回 Built-in 工具，不能返回 MCP 具体工具',
 );
-builtInToolDescriptors.push({ name: 'kimi_web_search', owner: 'webTools', moonshotOnly: true, defaultEnabled: false });
+builtInToolDescriptors.push({ name: 'kimi_web_search', owner: 'webTools', officialToolProvider: 'moonshot', defaultEnabled: false });
+builtInToolDescriptors.push({ name: 'deepseek_web_search', owner: 'webTools', officialToolProvider: 'deepseek', defaultEnabled: false });
 const editorManagement = loadTypeScriptModule('src/features/prompting/application/ManageAssistantPrompts.ts', {
   './PromptingRuntimeDependencies': { getPromptingRuntimeDependencies: () => configuredPromptingDependencies },
 });
@@ -113,6 +114,13 @@ assert.equal((await configuredPromptingDependencies.tools.list('ai-1')).find(too
 await editorManagement.setAssistantToolPermission('ai-1', 'kimi_web_search', true);
 await editorManagement.setAssistantDirectToolExposure('ai-1', 'kimi_web_search', true);
 assert.equal(editorPermissionWrites.length, 2);
+assert.match((await configuredPromptingDependencies.tools.list('ai-1')).find(tool => tool.name === 'deepseek_web_search').unavailableReason, /DeepSeek 官方 API/u);
+editorAPIBaseURL = 'https://api.deepseek.com/v1';
+assert.equal((await configuredPromptingDependencies.tools.list('ai-1')).find(tool => tool.name === 'deepseek_web_search').unavailableReason, undefined);
+assert.match((await configuredPromptingDependencies.tools.list('ai-1')).find(tool => tool.name === 'kimi_web_search').unavailableReason, /Moonshot 官方 API/u);
+await editorManagement.setAssistantToolPermission('ai-1', 'deepseek_web_search', true);
+await editorManagement.setAssistantDirectToolExposure('ai-1', 'deepseek_web_search', true);
+assert.equal(editorPermissionWrites.length, 4);
 assert.deepEqual(
   await configuredPromptingDependencies.mcpServices.list(),
   [server],

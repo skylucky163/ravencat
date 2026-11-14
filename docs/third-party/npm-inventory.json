@@ -1,6 +1,6 @@
 {
   "description": "锁文件中的 npm 包及安装包内许可文件清单。未安装的跨平台可选包和未附许可文件的包须另行核对；此清单不等于 APK 实际依赖清单。",
-  "lockfileSha256": "b3e2f669d4a163f12513568174078cce74acd13f7e1b2a8d63bb3305a95eaaa0",
+  "lockfileSha256": "55f89a91f6862dff3336af5beeb22143d8f2a01b76d6e7d1013d88e8ac91e8bc",
   "packages": [
     {
       "name": "@0no-co/graphql.web",
@@ -1479,10 +1479,12 @@
       "direct": null,
       "developmentOnly": true,
       "optional": true,
-      "installed": false,
+      "installed": true,
       "license": "MIT",
       "source": "https://www.npmjs.com/package/@emnapi/core/v/1.10.0",
-      "noticeFiles": []
+      "noticeFiles": [
+        "LICENSE"
+      ]
     },
     {
       "name": "@emnapi/runtime",
@@ -1491,10 +1493,12 @@
       "direct": null,
       "developmentOnly": true,
       "optional": true,
-      "installed": false,
+      "installed": true,
       "license": "MIT",
       "source": "https://www.npmjs.com/package/@emnapi/runtime/v/1.10.0",
-      "noticeFiles": []
+      "noticeFiles": [
+        "LICENSE"
+      ]
     },
     {
       "name": "@emnapi/wasi-threads",
@@ -1503,10 +1507,12 @@
       "direct": null,
       "developmentOnly": true,
       "optional": true,
-      "installed": false,
+      "installed": true,
       "license": "MIT",
       "source": "https://www.npmjs.com/package/@emnapi/wasi-threads/v/1.2.1",
-      "noticeFiles": []
+      "noticeFiles": [
+        "LICENSE"
+      ]
     },
     {
       "name": "@eslint-community/eslint-utils",
@@ -2725,7 +2731,7 @@
       "direct": null,
       "developmentOnly": true,
       "optional": true,
-      "installed": false,
+      "installed": true,
       "license": "MIT",
       "source": "https://www.npmjs.com/package/@napi-rs/wasm-runtime/v/1.1.6",
       "noticeFiles": []
@@ -3952,7 +3958,7 @@
       "direct": null,
       "developmentOnly": true,
       "optional": true,
-      "installed": false,
+      "installed": true,
       "license": "MIT",
       "source": "https://www.npmjs.com/package/@tybys/wasm-util/v/0.10.3",
       "noticeFiles": []
@@ -5552,6 +5558,20 @@
       ]
     },
     {
+      "name": "base64-arraybuffer",
+      "version": "1.0.2",
+      "location": "node_modules/base64-arraybuffer",
+      "direct": null,
+      "developmentOnly": false,
+      "optional": false,
+      "installed": true,
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/base64-arraybuffer/v/1.0.2",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
       "name": "base64-js",
       "version": "1.5.1",
       "location": "node_modules/base64-js",
@@ -6354,6 +6374,20 @@
       "installed": true,
       "license": "MIT",
       "source": "https://www.npmjs.com/package/cross-spawn/v/7.0.6",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "css-line-break",
+      "version": "2.1.0",
+      "location": "node_modules/css-line-break",
+      "direct": null,
+      "developmentOnly": false,
+      "optional": false,
+      "installed": true,
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/css-line-break/v/2.1.0",
       "noticeFiles": [
         "LICENSE"
       ]
@@ -9604,6 +9638,20 @@
       "installed": true,
       "license": "ISC",
       "source": "https://www.npmjs.com/package/lru-cache/v/10.4.3",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "html2canvas",
+      "version": "1.4.1",
+      "location": "node_modules/html2canvas",
+      "direct": null,
+      "developmentOnly": false,
+      "optional": false,
+      "installed": true,
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/html2canvas/v/1.4.1",
       "noticeFiles": [
         "LICENSE"
       ]
@@ -13672,6 +13720,34 @@
       ]
     },
     {
+      "name": "react-native-view-shot",
+      "version": "4.0.3",
+      "location": "node_modules/react-native-view-shot",
+      "direct": "runtime",
+      "developmentOnly": false,
+      "optional": false,
+      "installed": true,
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/react-native-view-shot/v/4.0.3",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "react-native-webview",
+      "version": "13.15.0",
+      "location": "node_modules/react-native-webview",
+      "direct": "runtime",
+      "developmentOnly": false,
+      "optional": false,
+      "installed": true,
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/react-native-webview/v/13.15.0",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
       "name": "react-native-worklets",
       "version": "0.5.1",
       "location": "node_modules/react-native-worklets",
@@ -15507,6 +15583,20 @@
       ]
     },
     {
+      "name": "text-segmentation",
+      "version": "1.0.3",
+      "location": "node_modules/text-segmentation",
+      "direct": null,
+      "developmentOnly": false,
+      "optional": false,
+      "installed": true,
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/text-segmentation/v/1.0.3",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
       "name": "thenify",
       "version": "3.3.1",
       "location": "node_modules/thenify",
@@ -16134,6 +16224,20 @@
       "installed": true,
       "license": "MIT",
       "source": "https://www.npmjs.com/package/utils-merge/v/1.0.1",
+      "noticeFiles": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "utrie",
+      "version": "1.0.2",
+      "location": "node_modules/utrie",
+      "direct": null,
+      "developmentOnly": false,
+      "optional": false,
+      "installed": true,
+      "license": "MIT",
+      "source": "https://www.npmjs.com/package/utrie/v/1.0.2",
       "noticeFiles": [
         "LICENSE"
       ]

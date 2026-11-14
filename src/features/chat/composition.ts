@@ -276,3 +276,5 @@ export { chatImageSettingsRepository } from './reply/infrastructure/SQLiteChatIm
 
 export { recordAssistantNicknameChangeInTransaction } from './messages/application/RecordAssistantNicknameChange';
 export { createSharedMomentSendIntent } from './reply/agent/SharedMomentSendIntent';
+export { configureChatCodePreview } from './messages/application/ChatCodePreview';
+export { chatCodePreviewRepository, readChatCodeCoverFileReferences } from './messages/infrastructure/SQLiteChatCodePreviewRepository';

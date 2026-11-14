@@ -1,6 +1,6 @@
 // 模型列表获取与模型选择逻辑
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ModelInfo } from '../../../application/modelTypes';
 import { fetchModelsWithConfig } from '../sharedModelConfig';
 
@@ -33,14 +33,17 @@ export default function useModelSelection({
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const revision = useRef(0);
   const resetModelSelection = useCallback(() => {
+    revision.current++;
     setAvailableModels([]);
     setShowModelPicker(false);
+    setIsLoadingModels(false);
   }, []);
 
   useEffect(() => {
     resetModelSelection();
-  }, [resetKey, resetModelSelection]);
+  }, [resetKey, apiBaseUrl, apiKey, resetModelSelection]);
 
   const handleFetchModels = useCallback(async () => {
     if (!apiBaseUrl || !apiKey) {
@@ -48,12 +51,15 @@ export default function useModelSelection({
     }
 
     setIsLoadingModels(true);
+    const requestRevision = ++revision.current;
 
     try {
       const { models, errorInfo } = await fetchModelsWithConfig({
         apiBaseUrl,
         apiKey,
       });
+      // 地址相同也可能有不同模型权限；切换 Key 后不接收旧请求的列表。
+      if (requestRevision !== revision.current) return;
 
       if (errorInfo) {
         console.log('[ModelSettings] Fetch models failed:', (errorInfo as { message?: string }).message);
@@ -66,7 +72,7 @@ export default function useModelSelection({
         setShowModelPicker(true);
       }
     } finally {
-      setIsLoadingModels(false);
+      if (requestRevision === revision.current) setIsLoadingModels(false);
     }
   }, [apiBaseUrl, apiKey]);
 

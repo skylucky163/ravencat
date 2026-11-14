@@ -33,6 +33,7 @@ export async function readMomentDetail(
     `发布者: ${displayNameOf(moment.authorType, moment.authorId, moment.authorNameSnapshot)}`,
     `authorType: ${moment.authorType}，authorId: ${moment.authorId}`,
     `发布时间: ${new Date(moment.createdAt).toLocaleString('zh-CN')}`,
+    `编辑状态: ${moment.editedAt ? `已编辑，最后编辑时间: ${new Date(moment.editedAt).toLocaleString('zh-CN')}` : '未编辑'}`,
     `内容: ${moment.content}`,
   ];
   if (moment.locationLabel) lines.push(`地点: ${moment.locationLabel}`);
@@ -62,7 +63,7 @@ export async function readMomentDetail(
     data: {
       moment,
       media: media.map((item) => ({
-        id: item.id, sortOrder: item.sortOrder, analysisStatus: item.analysisStatus,
+        id: item.id, mediaAssetId: item.mediaAssetId, sortOrder: item.sortOrder, analysisStatus: item.analysisStatus,
         analysisText: item.analysisText, analysisSource: item.analysisSource, analyzedAt: item.analyzedAt,
       })),
       likes,

@@ -5,7 +5,7 @@
  * preview + run 终态 + 游标推进。fence 失败 = 安静结束本 run：不落错误气泡、
  * 不重试（用户消息事务已触发新一轮 claim，新输入自然被覆盖）。
  * 工具续轮的中间 assistant 文本（前言）经 persistAssistantPrelude 只收集不单独落库，
- * 并入本轮 items 随同一 T3 事务提交；canonical 路径任何 assistant 文本只经 T3 落库。
+ * 并入本轮 items 随同一 T3 事务提交；中断后的已交付正文由展示 owner 在收口事务封存。
  * 图片／表情可由同一 owner 在工具完成后提交并发布，T3 仅绑定其最终顺序。
  * 重写保持整轮原子替换。commit 后再做 UI 通知、逐段回调与领域事件。
  */

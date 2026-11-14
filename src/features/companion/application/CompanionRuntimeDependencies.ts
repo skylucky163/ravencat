@@ -88,7 +88,7 @@ export interface CompanionChatPort {
   /** 只仲裁本次机会；聊天优先，新日程替代旧日程，不排队补跑。 */
   runInConversation<T>(
     sessionId: string, runId: string,
-    priority: { plannedAt: string; updatedAt: string; scheduleId: string },
+    priority: { plannedAt: string; updatedAt: string; scheduleId: string; triggerKind: 'scheduled' | 'unanswered' },
     execute: (context: { signal: AbortSignal; displacedRunId?: string }) => Promise<T>,
     signal?: AbortSignal,
   ): Promise<{ status: 'ran'; value: T } | { status: 'chat_busy' } | { status: 'superseded'; scheduleId: string }>;

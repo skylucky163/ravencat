@@ -272,10 +272,7 @@ export function SpeechConfigurationTest({
     }
   };
   return (
-    <View style={{ marginTop: theme.spacing.lg }}>
-      <Text style={{ color: theme.colors.text.primary, fontSize: 18, marginBottom: theme.spacing.md }}>
-        测试{kind === 'tts' ? '语音合成' : '实时识别'}
-      </Text>
+    <View>
       {kind === 'tts' ? (
         <>
           <InputField label="测试文本" value={text} onChangeText={setText} multiline />
@@ -301,7 +298,6 @@ export function SpeechConfigurationTest({
         <>
           <InputField
             label="预期识别文本（可选）"
-            hint="说出这段话，与下方识别结果对照。"
             value={expected}
             onChangeText={setExpected}
             multiline

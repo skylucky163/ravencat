@@ -480,7 +480,7 @@ function ChatMessageList({
         && shouldCollapseAssistantSegment(msg, interactionProfile)
         && msg.logicalMessageId
       ) {
-        key = `logical_assistant_${getAssistantPresentationGroupKey(msg)}`;
+        key = `logical_assistant_${getAssistantPresentationGroupKey(msg)}_${msg.id}`;
       }
       const metadata = parseMessageMetadata(msg);
       const attachments = getAttachmentsFromMetadata(metadata);

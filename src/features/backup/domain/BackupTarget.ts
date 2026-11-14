@@ -14,23 +14,12 @@ export interface BackupArtifactSummary {
   createdAt: string;
 }
 
-export interface BackupTargetCapabilities {
-  publish: boolean;
-  list: boolean;
-  read: boolean;
-  delete: boolean;
-}
-
 /**
  * 完整备份包的存储目标。
  *
  * Target 只搬运完整产物，不参与数据库快照、媒体枚举或恢复。
  */
 export interface BackupTarget {
-  readonly id: string;
-  readonly displayName: string;
-  readonly capabilities: BackupTargetCapabilities;
-
   publish(source: BackupArtifactHandle): Promise<BackupArtifactHandle>;
   list(): Promise<BackupArtifactSummary[]>;
   open(artifactId: string): Promise<BackupArtifactHandle>;

@@ -29,6 +29,7 @@ function buildRavenCatAISchedulesSchema(
     summary TEXT NOT NULL CHECK (length(trim(summary)) BETWEEN 1 AND 160),
     details TEXT NOT NULL CHECK (length(trim(details)) BETWEEN 1 AND 4000),
     system_calendar INTEGER NOT NULL DEFAULT 0 CHECK (system_calendar IN (0, 1)),
+    ${ifNotExists ? AI_SCHEDULE_TIMING_COLUMNS.join(',\n    ') + ',' : ''}
     source_conversation_id TEXT,
     source_message_ids_json TEXT,
     source_excerpt TEXT CHECK (source_excerpt IS NULL OR length(source_excerpt) BETWEEN 1 AND 2000),
@@ -72,6 +73,37 @@ function buildRavenCatAISchedulesSchema(
     )
   );
 `;
+}
+
+const AI_SCHEDULE_TIMING_COLUMNS = [
+  'recurrence_json TEXT',
+  'series_id TEXT',
+  "trigger_kind TEXT NOT NULL DEFAULT 'scheduled' CHECK (trigger_kind IN ('scheduled','unanswered'))",
+  'conversation_id TEXT',
+  'reply_revision INTEGER',
+  'next_follow_up_minutes INTEGER CHECK (next_follow_up_minutes IS NULL OR next_follow_up_minutes BETWEEN 2 AND 43200)',
+];
+
+/** 等待事实只保存回复代次和消息依据；实际唤醒仍是唯一日程表中的一行。 */
+export const RAVEN_CAT_AI_SCHEDULE_WAIT_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS raven_cat_ai_schedule_wait (
+    conversation_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL DEFAULT 0,
+    active_run_id TEXT
+  );
+  CREATE TABLE IF NOT EXISTS raven_cat_ai_schedule_unanswered (
+    schedule_id TEXT PRIMARY KEY REFERENCES raven_cat_ai_schedules(schedule_id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL,
+    first_visible_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_schedule_unanswered_conversation
+    ON raven_cat_ai_schedule_unanswered(conversation_id, first_visible_at, schedule_id);
+`;
+
+export async function migrateAIScheduleTiming(db: RavenCatCompanionMigrationExecutor): Promise<void> {
+  for (const column of AI_SCHEDULE_TIMING_COLUMNS) await db.execAsync(`ALTER TABLE raven_cat_ai_schedules ADD COLUMN ${column};`);
+  await db.execAsync(`ALTER TABLE raven_cat_contact_settings ADD COLUMN follow_up_enabled INTEGER NOT NULL DEFAULT 0 CHECK (follow_up_enabled IN (0,1));
+    ALTER TABLE raven_cat_contact_settings ADD COLUMN follow_up_interval_minutes INTEGER NOT NULL DEFAULT 10 CHECK (follow_up_interval_minutes BETWEEN 2 AND 43200);`);
 }
 
 export const RAVEN_CAT_AI_SCHEDULES_SCHEMA = buildRavenCatAISchedulesSchema(

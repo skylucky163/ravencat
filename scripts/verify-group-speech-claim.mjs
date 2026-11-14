@@ -551,6 +551,11 @@ async function verifyAdminConfigPersistence(GroupChatRepository) {
   assert.equal(defaultSampling.topP, null, '管理员 Top P 留空不能在重读时补成本地默认值');
   assert.equal(await repository.updateAdminConfig('missing-group', { temperature: 1 }), null);
   db.close();
+
+  // 存储故障必须上抛，不能伪装成不存在、空成员或缺失配置。
+  await assert.rejects(repository.getById('g1'));
+  await assert.rejects(repository.getMembers('g1'));
+  await assert.rejects(repository.getAdminConfig('g1'));
 }
 
 async function verifyAdminConfigCommand(updateGroupChatAdminConfig) {
@@ -859,11 +864,7 @@ async function verifyGroupParticipantDirectory(getGroupParticipantDirectory) {
     enabled,
   }));
   globalThis.__GROUP_PARTICIPANT_DIRECTORY_DEPS__ = {
-    groups: {
-      getById: async (groupId) => groupId === 'g-directory'
-        ? { group: { id: groupId }, members, adminConfig: {} }
-        : null,
-    },
+    groups: {},
     currentUserDirectory: {
       getCurrent: async () => ({
         id: 'user-self',
@@ -877,32 +878,27 @@ async function verifyGroupParticipantDirectory(getGroupParticipantDirectory) {
     },
   };
 
-  const directory = await getGroupParticipantDirectory('g-directory');
+  const directory = await getGroupParticipantDirectory({
+    group: { id: 'g-directory' }, members, adminConfig: {},
+  });
   assert.deepEqual(directory.currentUser, {
-    targetType: 'user',
     userProfileId: 'user-self',
     displayName: '当前用户',
-    avatar: 'file:///avatars/user.jpg',
-    avatarMediaAssetId: null,
   });
   assert.deepEqual(
     directory.assistants,
     [
       {
-        targetType: 'assistant',
         assistantId: 'ai-live',
         displayName: '同名助手',
         nickname: null,
         avatar: 'file:///avatars/live.jpg',
-        avatarMediaAssetId: null,
       },
       {
-        targetType: 'assistant',
         assistantId: 'ai-blocked',
         displayName: '同名助手',
         nickname: null,
         avatar: 'file:///avatars/blocked.jpg',
-        avatarMediaAssetId: null,
       },
     ],
     '目录应保留 blocked 成员和重名成员，并排除 disabled 与已删除成员',
@@ -911,7 +907,6 @@ async function verifyGroupParticipantDirectory(getGroupParticipantDirectory) {
     directory.assistants.every((participant) => !Object.hasOwn(participant, 'agentId')),
     '展示目录不得暴露内部 agentId',
   );
-  assert.equal(await getGroupParticipantDirectory('missing-group'), null);
 }
 
 async function verifyRepositoryClaim(GroupChatRepository) {

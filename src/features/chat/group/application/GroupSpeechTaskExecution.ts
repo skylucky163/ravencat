@@ -104,11 +104,11 @@ export async function executeGroupSpeechTasks(params: {
     const task = await getChatGroupRuntimeDependencies().groups.claimNextQueuedSpeechTask(planId);
     if (!task) return;
     // 每位成员发言前读取当前群资料，单次模型请求与输出解析共用该次目录快照。
-    const currentDetails = (await getChatGroupRuntimeDependencies().groups.getById(groupId))!;
-    const participantDirectory = await getGroupParticipantDirectory(groupId);
-    if (!participantDirectory) {
+    const currentDetails = await getChatGroupRuntimeDependencies().groups.getById(groupId);
+    if (!currentDetails) {
       throw new Error('群聊参与者目录不可用');
     }
+    const participantDirectory = await getGroupParticipantDirectory(currentDetails);
     const memberByAssistantId = new Map(
       currentDetails.members.map((member) => [member.aiAssistantId, member]),
     );

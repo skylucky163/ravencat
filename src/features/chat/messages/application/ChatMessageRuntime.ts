@@ -76,6 +76,8 @@ export interface ChatMessageRuntimeDependencies {
   legacyChatAttachments?: ChatAttachmentMediaAssetPort;
   /** canonical 用户消息 commit 后通知 Host 启动受控执行宿主。 */
   canonicalUserMessage?: {
+    /** 仅真实聊天内容；Host 在同一 T1 内提交关联业务的回复事实，只允许 SQL。 */
+    onSubstantiveInputInTransaction?: (transaction: DatabaseTransactionExecutor, sessionId: string, occurredAt: string) => Promise<void>;
     onCommitted: (payload: CanonicalUserMessageCommittedPayload) => void | Promise<void>;
   };
   /** 页面只提交重写意图，宿主负责启动并持续等待完整执行。 */

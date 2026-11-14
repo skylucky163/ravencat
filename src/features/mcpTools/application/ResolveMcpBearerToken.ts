@@ -1,7 +1,7 @@
 import { McpClientError } from '@platform/mcp';
 import { getMcpToolsRuntimeDependencies } from './McpToolsRuntimeDependencies';
 
-/** 只有建立连接时读取凭据；恢复备份后缺失的设备密钥必须显式要求重新认证。 */
+/** 只有建立连接时读取凭据；旧备份未携带或原本缺失的 Token 必须显式要求重新认证。 */
 export async function resolveMcpBearerToken(reference: string | null): Promise<string | undefined> {
   if (reference === null) return undefined;
   const token = await getMcpToolsRuntimeDependencies().credentialStore.read(reference);

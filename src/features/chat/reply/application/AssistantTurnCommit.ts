@@ -126,7 +126,7 @@ export function buildAssistantTurnItems(
   const createdAt = now.toISOString();
 
   const reasoningText = response.reasoningText?.trim();
-  const segments = visibleSegments.map((segment) => segment.trim()).filter(Boolean);
+  const segments = visibleSegments.filter((segment) => segment.trim().length > 0);
   const willSegment = segments.length > 1;
   const logicalMessageId = reasoningText || willSegment
     ? buildLogicalMessageId()

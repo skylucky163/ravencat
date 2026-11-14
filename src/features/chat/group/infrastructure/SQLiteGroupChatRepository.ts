@@ -120,6 +120,11 @@ function parseInvokedUserMessageIds(json: string | null): number[] {
 }
 
 export class GroupChatRepository implements IGroupChatRepository {
+  async detachServiceReferencesInTransaction(transaction: DatabaseTransactionExecutor, serviceConfigId: string, now: string): Promise<void> {
+    await transaction.runAsync(`UPDATE group_chat_admin_configs SET service_config_id = NULL,
+      api_base_url = NULL, api_key = NULL, updated_at = ? WHERE service_config_id = ?`, [now, serviceConfigId]);
+  }
+
   async getAvatarForAssistant(groupId: string, assistantId: string, isHostAI: boolean): Promise<GroupAvatarQueryResult> {
     return databaseCoordinator.read({ name: 'chat.get-group-avatar-for-assistant', feature: 'chat', priority: 'interactive' }, async db => {
       const row = await db.getFirstAsync<{
@@ -163,75 +168,60 @@ export class GroupChatRepository implements IGroupChatRepository {
   }
 
   async getById(groupId: string): Promise<GroupChatDetails | null> {
-    try {
-      const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'chat.getById', feature: 'chat', priority: 'interactive' });
-      const groupRow = await database.getFirstAsync<GroupChatRow>(
-        'SELECT * FROM group_chats WHERE id = ?',
-        [groupId]
-      );
+    const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'chat.getById', feature: 'chat', priority: 'interactive' });
+    const groupRow = await database.getFirstAsync<GroupChatRow>(
+      'SELECT * FROM group_chats WHERE id = ?',
+      [groupId]
+    );
 
-      if (!groupRow) {
-        return null;
-      }
-
-      const [members, adminConfig] = await Promise.all([
-        this.getMembers(groupId),
-        this.getAdminConfig(groupId),
-      ]);
-
-      if (!adminConfig) {
-        return null;
-      }
-
-      return {
-        group: await this.mapGroupRowToEntity(groupRow),
-        members,
-        adminConfig,
-      };
-    } catch (error) {
-      console.error('[GroupChatRepository] Failed to get by id:', error);
+    if (!groupRow) {
       return null;
     }
+
+    const [members, adminConfig] = await Promise.all([
+      this.getMembers(groupId),
+      this.getAdminConfig(groupId),
+    ]);
+
+    if (!adminConfig) {
+      return null;
+    }
+
+    return {
+      group: await this.mapGroupRowToEntity(groupRow),
+      members,
+      adminConfig,
+    };
   }
 
   async getMembers(groupId: string): Promise<GroupChatMember[]> {
-    try {
-      const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'chat.getMembers', feature: 'chat', priority: 'interactive' });
-      const rows = await database.getAllAsync<GroupChatMemberRow>(
-        `SELECT
-           m.*,
-           a.name,
-           a.nickname,
-           a.avatar,
-           a.avatar_media_asset_id,
-           a.model
-         FROM group_chat_members m
-         LEFT JOIN ai_assistants a ON a.id = m.ai_assistant_id
-         WHERE m.group_id = ?
-         ORDER BY m.display_order ASC, m.created_at ASC`,
-        [groupId]
-      );
+    const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'chat.getMembers', feature: 'chat', priority: 'interactive' });
+    const rows = await database.getAllAsync<GroupChatMemberRow>(
+      `SELECT
+         m.*,
+         a.name,
+         a.nickname,
+         a.avatar,
+         a.avatar_media_asset_id,
+         a.model
+       FROM group_chat_members m
+       LEFT JOIN ai_assistants a ON a.id = m.ai_assistant_id
+       WHERE m.group_id = ?
+       ORDER BY m.display_order ASC, m.created_at ASC`,
+      [groupId]
+    );
 
-      return Promise.all(rows.map((row) => this.mapMemberRowToEntity(row)));
-    } catch (error) {
-      console.error('[GroupChatRepository] Failed to get members:', error);
-      return [];
-    }
+    return Promise.all(rows.map((row) => this.mapMemberRowToEntity(row)));
   }
 
   async getAdminConfig(groupId: string): Promise<GroupChatAdminConfig | null> {
-    try {
-      const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'chat.getAdminConfig', feature: 'chat', priority: 'interactive' });
-      const row = await database.getFirstAsync<GroupChatAdminConfigRow>(
-        'SELECT * FROM group_chat_admin_configs WHERE group_id = ?',
-        [groupId]
-      );
+    const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'chat.getAdminConfig', feature: 'chat', priority: 'interactive' });
+    const row = await database.getFirstAsync<GroupChatAdminConfigRow>(
+      'SELECT * FROM group_chat_admin_configs WHERE group_id = ?',
+      [groupId]
+    );
 
-      return row ? this.mapAdminRowToEntity(row, database) : null;
-    } catch (error) {
-      console.error('[GroupChatRepository] Failed to get admin config:', error);
-      return null;
-    }
+    return row ? this.mapAdminRowToEntity(row, database) : null;
   }
 
   async create(input: CreateGroupChatRecordInput): Promise<GroupChatDetails> {

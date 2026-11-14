@@ -24,7 +24,7 @@ export interface SpeechModelDraft {
   /** 字段名来自 Speech 的提供方定义，不保存任意 JSON 请求模板。 */
   [field: string]: string | boolean;
 }
-export function switchSpeechProvider(provider: SpeechProviderId): Partial<SpeechModelDraft> {
+export function createSpeechProviderDraft(provider: SpeechProviderId): Partial<SpeechModelDraft> {
   const definition = getSpeechProvider(provider);
   const next: Partial<SpeechModelDraft> = {
     provider,
@@ -44,9 +44,14 @@ export function switchSpeechProvider(provider: SpeechProviderId): Partial<Speech
   return next;
 }
 export function getSpeechModelDraft(kind: SpeechKind, config: AuxiliaryModelConfig | null): SpeechModelDraft {
-  // AutoSaveDraftEditor 的字段集合固定；切换提供方不能引入其 saved 快照不知道的新键。
+  let metadata: SpeechMetadata | null = null;
+  if (config) {
+    try { metadata = readSpeechMetadata(config.metadataJson); }
+    catch { metadata = { provider: '' as SpeechProviderId }; }
+  }
+  // 新建草稿允许选提供方；已有资产只预留本提供方各模型需要的参数。
   const parameters: Record<string, string | boolean> = {};
-  for (const provider of SPEECH_PROVIDERS)
+  for (const provider of SPEECH_PROVIDERS.filter(entry => entry.kind === kind && (!metadata || entry.id === metadata.provider)))
     for (const model of new Set([provider.defaultModel, ...provider.models]))
       for (const field of getSpeechParameters(provider.id, model)) parameters[field.key] = '';
   if (!config) {
@@ -60,15 +65,10 @@ export function getSpeechModelDraft(kind: SpeechKind, config: AuxiliaryModelConf
       model: '',
       preserveEndpoint: false,
       provider,
-      ...switchSpeechProvider(provider),
+      ...createSpeechProviderDraft(provider),
     };
   }
-  let metadata: SpeechMetadata;
-  try {
-    metadata = readSpeechMetadata(config.metadataJson);
-  } catch {
-    metadata = { provider: '' as SpeechProviderId };
-  }
+  const savedMetadata = metadata!;
   const draft: SpeechModelDraft = {
     ...parameters,
     serviceConfigId: config.serviceConfigId ?? '',
@@ -76,16 +76,16 @@ export function getSpeechModelDraft(kind: SpeechKind, config: AuxiliaryModelConf
     apiKey: config.apiKey ?? '',
     baseUrl: config.baseUrl,
     model: config.model,
-    provider: metadata.provider,
+    provider: savedMetadata.provider,
     preserveEndpoint: true,
   };
-  if (!SPEECH_PROVIDERS.some((entry) => entry.id === metadata.provider && entry.kind === kind)) return draft;
-  for (const field of getSpeechParameters(metadata.provider, config.model)) {
-    const value = metadata[field.key] ?? field.defaultValue;
+  if (!SPEECH_PROVIDERS.some((entry) => entry.id === savedMetadata.provider && entry.kind === kind)) return draft;
+  for (const field of getSpeechParameters(savedMetadata.provider, config.model)) {
+    const value = savedMetadata[field.key] ?? field.defaultValue;
     draft[field.key] = field.type === 'boolean' ? value === true : value == null ? '' : String(value);
   }
   // 旧 MiniMax 站点由已保存地址推导；打开页面本身不提交或覆盖原连接。
-  if (metadata.provider === 'minimaxT2aV2' && !metadata.region)
+  if (savedMetadata.provider === 'minimaxT2aV2' && !savedMetadata.region)
     draft.region = config.baseUrl.includes('api-uw.')
       ? 'us'
       : config.baseUrl.includes('minimax.io')
@@ -93,7 +93,7 @@ export function getSpeechModelDraft(kind: SpeechKind, config: AuxiliaryModelConf
         : 'china';
   draft.preserveEndpoint =
     config.baseUrl.replace(/\/$/, '') !==
-    speechEndpoint(metadata.provider, { ...metadata, region: draft.region });
+    speechEndpoint(savedMetadata.provider, { ...savedMetadata, region: draft.region });
   return draft;
 }
 export function buildSpeechDraftConfiguration(draft: SpeechModelDraft): SpeechConnectionConfig {
@@ -131,9 +131,6 @@ export function parseSpeechModelDraft(
   const patch: UpdateAuxiliaryModelConfigInput = {};
   const accepted: (keyof SpeechModelDraft)[] = [];
   const errors: DraftErrors<SpeechModelDraft> = {};
-  const changingEndpoint = changed.some((key) =>
-    ['provider', 'baseUrl', 'region', 'workspaceId', 'preserveEndpoint'].includes(String(key)),
-  );
   for (const key of changed) {
     if (key === 'name') {
       if (draft.name.trim()) {
@@ -142,7 +139,7 @@ export function parseSpeechModelDraft(
       } else errors.name = '配置名称不能为空';
     }
     // 清空密钥是明确修改，允许保存为不可用资产，不继承旧密钥。
-    if (key === 'apiKey' && (!changingEndpoint || !draft.apiKey.trim())) {
+    if (key === 'apiKey') {
       patch.apiKey = draft.apiKey.trim() || null;
       accepted.push(key);
     }
@@ -154,7 +151,7 @@ export function parseSpeechModelDraft(
     try {
       configuration = buildSpeechDraftConfiguration(draft);
     } catch {
-      return { patch, accepted, errors: { ...errors, provider: '请重新选择支持的语音提供方' } };
+      return { patch, accepted, errors: { ...errors, provider: '语音提供方无效，请新建配置' } };
     }
     Object.assign(errors, validateSpeechConfiguration(kind, configuration));
     if (!Object.keys(errors).some((key) => key !== 'name')) {
@@ -162,11 +159,6 @@ export function parseSpeechModelDraft(
       patch.model = configuration.model;
       patch.metadataJson = configuration.metadataJson;
       if (changed.includes('serviceConfigId')) patch.serviceConfigId = draft.serviceConfigId || null;
-      // 换提供方时，新密钥必须和新连接一起提交，不能先发往旧提供方。
-      if (changed.includes('apiKey') && !accepted.includes('apiKey')) {
-        patch.apiKey = configuration.apiKey || null;
-        accepted.push('apiKey');
-      }
       accepted.push(...connectionKeys);
     }
   }

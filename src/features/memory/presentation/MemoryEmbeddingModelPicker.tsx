@@ -1,9 +1,10 @@
 /** 选择由 Memory 持久化，原有模型同步流程负责更新向量。 */
 import React from 'react';
-import { ConfiguredModelPicker, showAppDialog } from '@shared/ui';
+import { ConfiguredModelPicker, showAppDialog, useModelManagementNavigation } from '@shared/ui';
 import { getMemoryEmbeddingModelSettings, getMemoryEmbeddingIndexStatus, selectMemoryEmbeddingModel } from '../application/MemoryEmbeddingModels';
 import { subscribeMemoryChanged } from '../application/MemorySignals';
 export default function MemoryEmbeddingModelPicker({ disabled }: { disabled?: boolean }) {
+  const manageModels = useModelManagementNavigation();
   return <ConfiguredModelPicker title="向量化模型"
     description="更换模型不会自动重建。切回未变化的旧模型时，仍匹配正文版本的旧向量会直接恢复使用；也可逐条请求向量化。"
     getSettings={getMemoryEmbeddingModelSettings} onSelect={async id => {
@@ -16,5 +17,5 @@ export default function MemoryEmbeddingModelPicker({ disabled }: { disabled?: bo
           : '当前没有可直接使用的匹配向量。旧数据保留，尚未重新向量化；开启向量化后可逐条请求，也可手动重建全部索引。正文与关键词检索不受影响。' });
       }
     }}
-    subscribeChanged={subscribeMemoryChanged} disabled={disabled} />;
+    subscribeChanged={subscribeMemoryChanged} disabled={disabled} onManageModels={() => manageModels('embedding')} />;
 }

@@ -30,6 +30,7 @@ export {
   GetAIScheduleTool,
   ListAISchedulesTool,
   UpdateAIScheduleTool,
+  RemoveAIScheduleCalendarEventsTool,
 } from './aiTools/AIScheduleTools';
 
 export { default as CompanionSettingsScreen } from './presentation/CompanionSettingsScreen';

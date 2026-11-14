@@ -36,6 +36,7 @@ export default function GroupAdminSettings({
     apiBaseUrl,
     setApiBaseUrl,
     apiKey,
+    serviceConfigId,
     setApiKey,
     selectedModel,
     temperature,
@@ -111,7 +112,7 @@ export default function GroupAdminSettings({
 
           <View style={commonStyles.section}>
             <ThemedSurface variant="card" style={{ borderRadius: theme.radius.lg, overflow: 'hidden' }}>
-              <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} onFill={fillServiceConnection} disabled={isTesting || isLoadingModels} />
+              <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} serviceConfigId={serviceConfigId} onFill={fillServiceConnection} disabled={isTesting || isLoadingModels} />
             </ThemedSurface>
           </View>
 

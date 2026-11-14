@@ -1,6 +1,6 @@
 /** MCP Server 配置的 SQLite 适配器；仅保存元数据、诊断与状态，不保存任何凭据明文。 */
 
-import { databaseCoordinator } from '@platform/persistence';
+import { databaseCoordinator, type DatabaseReadExecutor } from '@platform/persistence';
 import {
   createMcpServerConfigFromRow,
   type McpServerConfig,
@@ -21,6 +21,14 @@ const SERVER_SELECT = `SELECT mcp_servers.*, (
     WHERE server_id = mcp_servers.id ORDER BY assistant_id
   )
 ) AS assistant_ids_json FROM mcp_servers`;
+
+/** 按归档快照读取引用，包含停用服务，不使用备份期间可能已变化的活动配置。 */
+export async function readMcpCredentialReferences(db: DatabaseReadExecutor): Promise<string[]> {
+  const rows = await db.getAllAsync<{ credential_ref: string }>(
+    'SELECT DISTINCT credential_ref FROM mcp_servers WHERE credential_ref IS NOT NULL',
+  );
+  return rows.map(row => row.credential_ref);
+}
 
 export class SQLiteMcpServerConfigRepository implements McpServerConfigRepository {
   async list(): Promise<McpServerConfig[]> {

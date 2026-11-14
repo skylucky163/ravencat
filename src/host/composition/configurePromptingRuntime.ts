@@ -16,7 +16,7 @@ import {
   type McpServerConfig,
   type McpServerListItemWithEnabledToolCount,
 } from '@features/mcpTools';
-import { resolveMoonshotAPIBaseURL } from '@platform/ai';
+import { resolveOfficialToolsAPIBaseURL } from '@platform/ai';
 import { getAssistantChatSummaryGenerationState } from '@features/chat';
 import {
   getSystemPromptPreset,
@@ -66,9 +66,9 @@ export function configurePromptingRuntime(): void {
         if (!assistantId) return definitions;
         const assistant = await aiAssistantRepository.getById(assistantId);
         if (!assistant) throw new Error('AI 不存在');
-        const supportsMoonshotTools = resolveMoonshotAPIBaseURL(assistant.apiBaseUrl) !== null;
-        return definitions.map((tool) => ({ ...tool, unavailableReason: tool.moonshotOnly && !supportsMoonshotTools
-          ? '当前接口不支持，仅限 Moonshot 官方 API；已保存的权限和星标会保留。' : undefined }));
+        return definitions.map((tool) => ({ ...tool, unavailableReason: tool.officialToolProvider
+          && !resolveOfficialToolsAPIBaseURL(tool.officialToolProvider, assistant.apiBaseUrl)
+          ? `当前接口不支持，仅限 ${tool.officialToolProvider === 'moonshot' ? 'Moonshot' : 'DeepSeek'} 官方 API；已保存的权限和星标会保留。` : undefined }));
       },
       async listOverrides(assistantId) {
         return (await assistantToolPermissionRepository.list(assistantId)).map((permission) => ({

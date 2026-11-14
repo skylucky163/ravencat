@@ -73,7 +73,7 @@ function MomentItem({
   const isOwnMoment = item.actorType === 'user' && item.actorId === currentUserId;
   const ownership = { isOwnMoment };
   const showMoreButton = hasMomentLevelUserActions(ownership);
-  // 可见范围只是给作者自己的轻量提示；M6 不提供任何编辑入口（audience 创建后不可变）。
+  // 可见范围只向作者展示；编辑入口同样按稳定身份判断所有权。
   const visibilityHint = isOwnMoment ? describeMomentVisibility(item.audienceMode) : null;
   const renderedComments = useMemo<RenderedMomentComment[]>(() => {
     const commentById = new Map(item.comments.map((comment) => [comment.id, comment]));
@@ -217,6 +217,7 @@ function MomentItem({
         {item.createdAt ? (
           <Text style={styles.timeText}>
             {formatTime(item.createdAt)}
+            {item.editedAt ? ' · 已编辑' : ''}
             {visibilityHint ? ` · ${visibilityHint}` : ''}
           </Text>
         ) : null}
@@ -321,6 +322,10 @@ function MomentItem({
         isOwnMoment={isOwnMoment}
         aiCommentsCount={aiComments.length}
         onDeleteMoment={handleDeleteMoment}
+        onEditMoment={() => {
+          setShowMoreMenu(false);
+          navigation.editMoment(item.id);
+        }}
         onOpenAIManager={() => {
           setShowMoreMenu(false);
           setShowAIManager(true);
@@ -350,7 +355,6 @@ function MomentItem({
           visible
           media={item.media}
           initialIndex={mediaViewerIndex}
-          canManage={isOwnMoment}
           onClose={() => setMediaViewerIndex(null)}
           onUpdated={() => onMediaUpdated?.()}
         />

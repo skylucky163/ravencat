@@ -4,6 +4,7 @@ import type { AgentRunResult } from '@platform/agentRuntime';
 import type { AISchedule } from '../domain/AISchedule';
 import { buildAIScheduleTriggerBlocks } from './CompanionPromptBlocks';
 import { runHostAutonomousAgent } from './RunHostAutonomousAgent';
+import { getCompanionRuntimeDependencies } from './CompanionRuntimeDependencies';
 
 export interface RunAIScheduleAutonomousAgentInput {
   runId: string;
@@ -16,6 +17,11 @@ export interface RunAIScheduleAutonomousAgentInput {
 export async function runAIScheduleAutonomousAgent(
   input: RunAIScheduleAutonomousAgentInput,
 ): Promise<AgentRunResult> {
+  const dependencies = getCompanionRuntimeDependencies();
+  const [unanswered, settings] = await Promise.all([
+    dependencies.repositories.aiSchedules.listUnanswered(input.sessionId),
+    dependencies.repositories.companionSettings.ensureDefault(),
+  ]);
   return runHostAutonomousAgent({
     runId: input.runId,
     sessionId: input.sessionId,
@@ -37,6 +43,11 @@ export async function runAIScheduleAutonomousAgent(
       details: input.claimedSchedule.details,
       sourceExcerpt: input.claimedSchedule.sourceExcerpt,
       triggeredAt: input.triggeredAt,
+      triggerKind: input.claimedSchedule.triggerKind,
+      recurrence: input.claimedSchedule.recurrence,
+      unanswered,
+      followUpEnabled: settings.followUpEnabled,
+      followUpIntervalMinutes: settings.followUpIntervalMinutes,
     }),
     signal: input.signal,
   });

@@ -8,6 +8,7 @@
  */
 
 import { getCurrentUserProfile, SELF_USER_PROFILE_ID } from '@features/profile';
+import { MediaAssetMissingError, MediaAssetNotFoundError, resolveMediaAsset } from '@features/media';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import type {
   CreateMomentInput as RepositoryCreateMomentInput,
@@ -17,7 +18,10 @@ import type {
 } from '../domain/MomentRepository';
 import { MomentDomainError } from '../domain/MomentErrors';
 import { normalizeMomentLocationLabel } from '../domain/MomentLocation';
-import { createMomentId } from './MomentIds';
+import { createMomentId, createMomentMediaId } from './MomentIds';
+import { startNewMomentMediaAnalysis } from './MomentMediaAnalysis';
+
+export const MAX_MOMENT_MEDIA_COUNT = 9;
 
 /** 校验 audience 所需要的 AI 目录；由调用方注入，命令本身不依赖具体仓储实现。 */
 export interface MomentAudienceDirectory {
@@ -44,6 +48,8 @@ export interface CreateAgentMomentInput {
   agentId: string;
   nameSnapshot: string;
   content: string;
+  /** 按展示顺序引用已有图片资产，不接受路径或 URL。 */
+  mediaAssetIds?: readonly string[];
   audience?: MomentAudience;
   abortSignal?: AbortSignal;
 }
@@ -103,7 +109,42 @@ export async function createAgentMoment(
     audience: input.audience,
     abortSignal: input.abortSignal,
   });
-  return repository.createMoment(prepared);
+  const normalizedIds = await validateMomentMediaAssetIds(input.mediaAssetIds ?? []);
+  throwIfAbortSignalAborted(input.abortSignal);
+  // 仅新增业务引用；现有事务与外键保证图片、正文、audience 和 Inbox 一起成立或回滚。
+  const moment = await repository.createMoment({
+    ...prepared,
+    media: normalizedIds.map((mediaAssetId, sortOrder) => ({
+      id: createMomentMediaId(), mediaAssetId, sortOrder,
+    })),
+  });
+  if (normalizedIds.length > 0) startNewMomentMediaAnalysis(moment.id);
+  return moment;
+}
+
+/** 模型传入的资产 ID 在媒体边界校验一次，发布与编辑共用。 */
+export async function validateMomentMediaAssetIds(mediaAssetIds: readonly string[]): Promise<string[]> {
+  if (mediaAssetIds.length > MAX_MOMENT_MEDIA_COUNT) {
+    throw new MomentDomainError('too_many_media', `时刻最多附带 ${MAX_MOMENT_MEDIA_COUNT} 张图片`);
+  }
+  const normalizedIds = mediaAssetIds.map((id) => id.trim());
+  if (normalizedIds.some((id) => !id) || new Set(normalizedIds).size !== normalizedIds.length) {
+    throw new MomentDomainError('invalid_media', '图片媒体 ID 不能为空或重复');
+  }
+  for (const id of normalizedIds) {
+    try {
+      const { asset } = await resolveMediaAsset(id);
+      if (!asset.mimeType.startsWith('image/')) {
+        throw new MomentDomainError('invalid_media', `媒体 ${id} 不是图片`);
+      }
+    } catch (error) {
+      if (error instanceof MediaAssetNotFoundError || error instanceof MediaAssetMissingError) {
+        throw new MomentDomainError('invalid_media', `图片 ${id} 不存在或文件已不可用，请使用有效的图片媒体 ID`);
+      }
+      throw error;
+    }
+  }
+  return normalizedIds;
 }
 
 async function prepareMoment(
@@ -138,7 +179,7 @@ async function prepareMoment(
   };
 }
 
-function normalizeAudience(
+export function normalizeAudience(
   currentAgentIds: readonly string[],
   audience?: MomentAudience
 ): MomentAudience {

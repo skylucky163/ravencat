@@ -1,4 +1,5 @@
 // 朋友圈界面数据 Hook。
+import { subscribeMomentEdited } from '../application/EditMoment';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -163,6 +164,7 @@ export default function useMoments(authorAgentId?: string) {
 
   // commit 后 one-shot 每完成一张就刷新当前窗口；事件不承担任务调度或自动重试。
   // 刷新会重建 nextCursor，因此后续 loadMore 不会因为旧 cursor 错页。
+  useEffect(() => subscribeMomentEdited(() => { void reloadLoadedMoments(); }), [reloadLoadedMoments]);
   useEffect(() => subscribeMomentMediaAnalysisUpdated(() => {
     void reloadLoadedMoments();
   }), [reloadLoadedMoments]);

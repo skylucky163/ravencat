@@ -95,10 +95,13 @@ if (!directory) {
   console.log(JSON.stringify({ unreadBeforeRead, unreadAfterRead, history: await displays.listHistory('s'), visible: (await messages.getMessages('s', { limit: 100 })).messages,
     orphan, orphanStatus: db.prepare("SELECT status, terminal_reason FROM conversation_turn_runs WHERE session_id = 'orphan-tools'").get(),
     earlyHistory: await displays.listHistory('early-text'),
+    earlyVisible: (await messages.getMessages('early-text', { limit: 100 })).messages,
     autonomousFailureHistory: await displays.listHistory('autonomous-model-failure'),
+    autonomousFailureVisible: (await messages.getMessages('autonomous-model-failure', { limit: 100 })).messages,
     autonomousFailureEvidence: await messages.listAgentActivityEvidence(['autonomous-model-failure']),
     streamedVisible: (await messages.getMessages('stream-bubbles', { limit: 100 })).messages,
     streamedInterrupted: await displays.listHistory('stream-bubbles-stopped'),
+    streamedInterruptedVisible: (await messages.getMessages('stream-bubbles-stopped', { limit: 100 })).messages,
     completeVisible: (await messages.getMessages('complete-loop', { limit: 100 })).messages,
     crashVisible: (await messages.getMessages('crash-display', { limit: 100 })).messages,
     timeoutVisible: (await messages.getMessages('timeout-display', { limit: 100 })).messages,
@@ -171,7 +174,7 @@ for (const bubbleDeliveryMode of ['single-bubble', 'multi-bubble']) for (const c
 try {
   db.exec(`PRAGMA foreign_keys = ON;
     CREATE TABLE chat_conversations(id TEXT PRIMARY KEY, kind TEXT);
-    CREATE TABLE ai_assistants(id TEXT PRIMARY KEY); INSERT INTO ai_assistants VALUES ('ai');
+    CREATE TABLE ai_assistants(id TEXT PRIMARY KEY, agent_id TEXT); INSERT INTO ai_assistants VALUES ('ai', 'agent-ai');
     CREATE TABLE sessions(id TEXT PRIMARY KEY, last_message TEXT, last_time TEXT, updated_at TEXT,
       visible_after_message_id INTEGER, visible_after_at TEXT, ai_assistant_id TEXT);
     INSERT INTO chat_conversations VALUES ('s', 'direct'); INSERT INTO sessions(id) VALUES ('s');
@@ -488,6 +491,39 @@ try {
   assert.deepEqual(streamingSaved.map(message => message.clientMessageId), [...previousBubbles.keys()], 'T3 沿用已显示气泡身份');
   assert.deepEqual(streamingSaved.map(usageOf), streamingExpected.map((_, index) => index === streamingExpected.length - 1
     ? [120, 100, 20, 80] : [0, 0, 0, undefined]), '真实用量只由最终尾泡承载');
+  // 单气泡和多气泡均保持代码独立；T3 不能改变流式身份、源码或围栏内的空白。
+  for (const mode of ['single-bubble', 'multi-bubble']) {
+    const sessionId = `code-preview-${mode}`;
+    const html = '```html\n<!doctype html><title>计数器</title>\n\n<button onclick="this.textContent++">0</button>\n```';
+    const text = `开头说明\n${html}\n结尾说明`;
+    db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run(sessionId, 'direct');
+    db.prepare('INSERT INTO sessions(id) VALUES (?)').run(sessionId);
+    await commitCanonicalUserMessage({ message: { ...user('写一个网页'), sessionId } });
+    const run = await turns.claimIfIdle(sessionId, 'user_reply');
+    const display = new presentation.ChatTurnPresentation(run, ai.agentId, ai.id);
+    const commit = createSingleTransactionTurnCommit(run, ai.id, display);
+    commit.configureSegmentDelivery({ aiConfig: ai });
+    await display.start();
+    const timeline = new ChatAgentTimeline(run.runId, display.sink, { bubbleDeliveryMode: mode });
+    timeline.startStep(1);
+    for (const chunk of ['开头说明\n', '`', '``ht', 'ml\n', '<!doctype html><title>计数器</title>\n', '\n',
+      '<button onclick="this.textContent++">0</button>\n', '`', '``', '\n结尾说明']) {
+      timeline.appendDelta(1, 'assistant', chunk);
+      await display.flush();
+    }
+    const shown = store.snapshotAgentTransientTimelineWithReplacements(sessionId);
+    assert.deepEqual(shown.map(item => item.text), ['开头说明', html, '结尾说明']);
+    timeline.reconcileModelTurn(1, { assistantText: text, reasoningText: '', toolCalls: [], usage: {}, messageId: `code-${mode}` });
+    await display.flush();
+    const items = timeline.buildCommitItems({ sessionId, aiConfig: ai, policy: { bubbleDeliveryMode: mode }, finalAssistantPolicy: 'commit_as_reply', finalStepIndex: 1 });
+    const result = await commit.commitAgentTimeline({ sessionId, aiConfig: ai, response: { text },
+      runtimeContext: { replyRunId: run.runId }, items, callbacks: {} });
+    await display.finish();
+    assert.equal(result.outcome, 'committed');
+    assert.deepEqual(result.messages.map(item => item.text), shown.map(item => item.text));
+    assert.deepEqual(result.messages.map(item => item.clientMessageId), shown.map(item => item.clientMessageId));
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM chat_code_previews WHERE source_message_id = ?').get(result.messages[1].id).n, 1);
+  }
   // 中途打断时，只保留已交付的气泡和活动尾泡，不补发迟到正文。
   const stoppedSession = 'stream-bubbles-stopped';
   db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run(stoppedSession, 'direct');
@@ -505,7 +541,8 @@ try {
   stoppedTimeline.appendDelta(1, 'assistant', '迟到正文');
   await stoppedDisplay.flush();
   await stoppedDisplay.finish();
-  assert.deepEqual((await displays.listHistory(stoppedSession))[0].items.map(item => item.snapshot.text), ['已闭合', '活动尾泡']);
+  assert.deepEqual((await messages.getMessages(stoppedSession, { limit: 20 })).messages.filter(item => item.senderType === 'assistant').map(item => item.text), ['已闭合', '活动尾泡']);
+  assert.deepEqual((await displays.listHistory(stoppedSession))[0].items, [], '结束的正文已取得普通消息身份');
   assert.deepEqual(deliveryEvents.filter(item => item.sessionId === stoppedSession).map(item => item.message), ['已闭合'],
     '中断保留已经提醒的气泡，不补发活动尾泡或迟到正文');
   assert.equal((await messages.getLatestArrivedConversationPreview(stoppedSession, [])).text, '停止', '后续用户输入优先于旧 run 已交付的正文');
@@ -699,11 +736,19 @@ try {
   await earlyDisplay.flush();
   await commitCanonicalUserMessage({ message: { ...user('1'), sessionId: earlySession } });
   await earlyDisplay.finish();
-  assert.deepEqual((await displays.listHistory(earlySession))[0].items.map(item => item.snapshot.text), ['知道了，接着处理。', '正在调用：换头像']);
+  assert.deepEqual((await messages.getMessages(earlySession, { limit: 20 })).messages.filter(item => !item.isMe).map(item => item.text), ['知道了，接着处理。', '正在调用：换头像']);
   const unknownTool = store.snapshotAgentTransientTimelineWithReplacements(earlySession).find(message => message.senderType === 'system');
   assert.equal(JSON.parse(unknownTool.metadataJson).status, 'running', '中断不能把未知结果改成成功或失败');
   assert.equal(db.prepare('SELECT status FROM conversation_turn_runs WHERE run_id = ?').get(earlyRun.runId).status, 'superseded');
-  assert.equal((await messages.getMessages(earlySession, { limit: 100 })).messages.some(message => !message.isMe), false, '独立前言不能伪装成 T3 成功回复');
+  assert.equal((await messages.getMessages(earlySession, { limit: 100 })).messages.some(message => message.senderType === 'assistant'), true, '回合未成功也保留正常消息身份');
+  const earlyUsers = await messages.listUserMessagesInRange(earlySession, 0, Number.MAX_SAFE_INTEGER);
+  const protectedEarly = await summaries.readContext(earlySession, earlyUsers.map(message => message.id));
+  assert.equal(protectedEarly.raw.some(item => item.content.includes('知道了，接着处理。')), false,
+    '原输入仍在本轮固定区间时，普通历史排除所属封存正文');
+  const pendingEarly = await buildChatTurnAIInput({ repository: messages, sessionId: earlySession,
+    replyCursorAtClaim: 0, inputHighWatermark: earlyUsers.at(-1).id, assistantId: ai.id });
+  assert.equal(pendingEarly.turnInputMessages.filter(item => String(item.content).includes('知道了，接着处理。')).length, 1,
+    '固定输入组装器只提供一次实际已交付正文');
   // 模拟进程突然死亡：未确认尾部保持隐藏；已开始工具的孤儿不自动重放。
   for (const sessionId of ['orphan-tools', 'crash-display']) {
     db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run(sessionId, 'direct');
@@ -1019,6 +1064,7 @@ try {
     const evidence = (await messages.listAgentActivityEvidence([sessionId]))[0];
     assert.equal(evidence.terminalCode, 'COMPLETED');
     assert.ok(evidence.respondedAt);
+    assert.equal(evidence.firstVisibleAt !== null,!silent,'思考和静默记录不构成等待用户回复的可见消息');
     assert.ok(saved.every(message => !['responded', 'terminal'].includes(JSON.parse(message.metadataJson).phase)),
       '不另写已响应和结束消息，证据来自共享回合与展示');
     const deliveries = autonomousDeliveries.filter(item => item.sessionId === sessionId);
@@ -1087,13 +1133,14 @@ try {
     if (mode === 'prepare-failure') await assert.rejects(running, /准备失败/);
     else await running;
     await turns.finishAutonomous(owner);
-    assert.equal((await messages.getMessages(sessionId, { limit: 30 })).messages.filter(message => message.senderType === 'assistant').length, 0);
+    assert.deepEqual((await messages.getMessages(sessionId, { limit: 30 })).messages.filter(message => message.senderType === 'assistant').map(message => message.text), mode === 'prepare-failure' ? [] : [partial]);
     assert.equal(autonomousDeliveries.filter(item => item.sessionId === sessionId).length, 0);
     const history = await displays.listHistory(sessionId);
     assert.equal(history[0].state, 'interrupted');
-    assert.deepEqual(history[0].items.map(item => item.snapshot.text), mode === 'prepare-failure' ? [] : [partial]);
+    assert.deepEqual(history[0].items, [], '结束后正文通过普通消息读回');
     const evidence = (await messages.listAgentActivityEvidence([sessionId]))[0];
     assert.equal(evidence.respondedAt !== null, mode !== 'prepare-failure');
+    assert.equal(evidence.firstVisibleAt !== null, mode !== 'prepare-failure','已持久交付的半段正文也是实际可见消息');
     assert.equal(evidence.terminalCode, mode === 'prepare-failure' ? 'EXECUTION_FAILED'
       : mode === 'model-failure' ? 'MODEL_REQUEST_FAILED' : 'CANCELLED_BY_USER');
     const context = await displays.listInterruptedContext(sessionId, 0);
@@ -1111,11 +1158,10 @@ try {
   const continuedScheduleInput = await commitCanonicalUserMessage({ message: { ...user('刚才怎么了'), sessionId: 'autonomous-model-failure' } });
   const scheduleHistory = await promptHistoryBuilder.loadPrivateSummaryContext({ sessionId: 'autonomous-model-failure', aiConfig: ai,
     runtimeContext: { batchedUserMessageIds: [continuedScheduleInput.id] } });
-  assert.equal(scheduleHistory.messages.filter(message => message.logicalMessageId === 'interrupted:autonomous-model-failure'
-    && message.content.includes('收到的半段') && message.role === 'user').length, 1,
-  '用户接着说话时，日程半段输出应按触发来源位置作为历史资料进入模型一次');
+  assert.equal(scheduleHistory.messages.filter(message => message.content.includes('收到的半段') && message.role === 'assistant').length, 1,
+    '封存的半段正文作为真实助手消息进入历史一次');
   db.prepare('UPDATE sessions SET ai_assistant_id = ? WHERE id = ?').run(ai.id, stoppedSession);
-  assert.equal(await messages.getUnreadCountByAI(ai.id), 1, '中断保留已交付完整气泡的未读，活动尾泡不计入');
+  assert.equal(await messages.getUnreadCountByAI(ai.id), 2, '回合结束后，已收到的尾泡也成为一条未读消息');
   db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run('schedule-replaced', 'direct');
   db.prepare('INSERT INTO sessions(id) VALUES (?)').run('schedule-replaced');
   const replaced = await turns.claimAutonomousIfIdle('schedule-replaced', 'replaced-schedule');
@@ -1465,15 +1511,15 @@ try {
     '工具完成投影丢失时，独立进程仍读到已经提交的图片');
   assert.match(restored.mediaCrashContext[0].content, /committedMessage/u);
   assert.match(restored.mediaCrashContext[0].content, /cat-asset/u);
-  assert.equal(restored.unreadBeforeRead, 1, '独立进程恢复后未读仍来自持久交付事实');
+  assert.equal(restored.unreadBeforeRead, 2, '独立进程恢复后未读仍来自持久交付事实');
   assert.equal(restored.unreadAfterRead, 0, '恢复后打开会话可清除尚无正式消息 ID 的未读');
-  assert.deepEqual(restored.autonomousFailureHistory[0].items.map(item => item.snapshot.text), ['收到的半段'],
+  assert.deepEqual(restored.autonomousFailureVisible.filter(message => message.senderType === 'assistant').map(message => message.text), ['收到的半段'],
     '没有用户输入的日程失败后，独立进程仍能读回已交付正文');
   assert.equal(restored.autonomousFailureEvidence[0].terminalCode, 'MODEL_REQUEST_FAILED');
   assert.deepEqual(restored.history[0].items.map(item => item.snapshot.text), publishedPrefix);
   assert.deepEqual(restored.streamedVisible.filter(message => message.senderType === 'assistant').map(message => message.text), streamingExpected,
     '独立进程恢复不重新分泡或重复正文');
-  assert.deepEqual(restored.streamedInterrupted[0].items.map(item => item.snapshot.text), ['已闭合', '活动尾泡'],
+  assert.deepEqual(restored.streamedInterruptedVisible.filter(message => message.senderType === 'assistant').map(message => message.text), ['已闭合', '活动尾泡'],
     '流式分泡中断后重开仍只保留已交付前缀');
   assert.deepEqual(restored.visible.filter(message => !message.isMe).map(message => message.text), ['A', 'B', '']);
   assert.deepEqual(restored.crashVisible.filter(message => !message.isMe).map(message => message.text), ['已交付']);
@@ -1481,9 +1527,10 @@ try {
   assert.equal(restored.orphanStatus.status, 'failed');
   assert.equal(restored.orphanStatus.terminal_reason, 'orphan_after_tool_start');
   assert.deepEqual(restored.timeoutVisible.filter(message => !message.isMe).map(message => message.text), ['已显示']);
-  assert.deepEqual(restored.earlyHistory[0].items.map(item => item.snapshot.text), ['知道了，接着处理。', '正在调用：换头像']);
-  assert.equal(restored.earlyHistory[0].items[0].snapshot.tokensUsed, 120, '中断后独立进程仍保留已交付统计');
-  assert.equal(restored.earlyHistory[0].items[0].snapshot.cachedTokens, 80);
+  assert.deepEqual(restored.earlyVisible.filter(message => !message.isMe).map(message => message.text), ['知道了，接着处理。', '正在调用：换头像']);
+  const earlyReply = restored.earlyVisible.find(message => message.senderType === 'assistant');
+  assert.equal(earlyReply.tokensUsed, 120, '中断后独立进程仍保留已交付统计');
+  assert.equal(JSON.parse(earlyReply.metadataJson).cachedTokens, 80);
   assert.deepEqual(restored.completeVisible.filter(message => message.senderType === 'assistant').map(usageOf),
     [...firstExposure.values()].map(item => item.usage), '正常完成后重启保持相同统计');
   assert.equal(restored.completeVisible.filter(message => message.senderType === 'reasoning').length, 3);

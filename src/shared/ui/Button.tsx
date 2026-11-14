@@ -1,10 +1,15 @@
 /** 通用按钮组件。 */
 
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
-import React from 'react';
-import { TouchableOpacity, Text, StyleSheet } from 'react-native';
+import React, { useCallback, useRef } from 'react';
+import { Animated, Easing, TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { useReducedMotion } from 'react-native-reanimated';
 import { useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
+
+const PRESSED_SCALE = 0.97;
+const PRESS_IN_DURATION = 100;
+const PRESS_OUT_DURATION = 160;
 
 export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'text' | 'outline';
 
@@ -81,12 +86,35 @@ export default function Button({
   textStyle: customTextStyle,
 }: ButtonProps) {
   const styles = useThemedStyles(createStyles);
+  const scale = useRef(new Animated.Value(1)).current;
+  const reducedMotion = useReducedMotion();
+
+  const handlePressIn = useCallback(() => {
+    if (disabled || reducedMotion) return;
+    Animated.timing(scale, {
+      toValue: PRESSED_SCALE,
+      duration: PRESS_IN_DURATION,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [disabled, reducedMotion, scale]);
+
+  const handlePressOut = useCallback(() => {
+    if (disabled || reducedMotion) return;
+    Animated.timing(scale, {
+      toValue: 1,
+      duration: PRESS_OUT_DURATION,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [disabled, reducedMotion, scale]);
 
   const buttonStyle = [
     styles.base,
     styles[variant],
     disabled && styles.disabled,
     style,
+    { transform: [{ scale }] },
   ];
 
   const textStyle = [
@@ -99,8 +127,11 @@ export default function Button({
   return (
     <TouchableOpacity
       onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
       style={buttonStyle}
-      activeOpacity={0.7}
+      // 减少动态效果时退回透明度反馈，不做缩放。
+      activeOpacity={reducedMotion ? 0.7 : 1}
       disabled={disabled}
     >
       <Text style={textStyle}>{title}</Text>

@@ -1,4 +1,5 @@
 /** 定义 AI Schedule 的持久事实、内容边界与不可逆状态机。 */
+import { isAIScheduleRecurrence, type AIScheduleRecurrence } from './AIScheduleTiming';
 
 export type AIScheduleStatus = 'scheduled' | 'claimed' | 'consumed' | 'cancelled';
 
@@ -39,6 +40,12 @@ export interface AISchedule {
   summary: string;
   details: string;
   systemCalendar: boolean;
+  recurrence: AIScheduleRecurrence | null;
+  seriesId: string | null;
+  triggerKind: 'scheduled' | 'unanswered';
+  conversationId: string | null;
+  replyRevision: number | null;
+  nextFollowUpMinutes: number | null;
   sourceConversationId: string | null;
   sourceMessageIds: string[] | null;
   sourceExcerpt: string | null;
@@ -60,6 +67,12 @@ export interface AIScheduleRow {
   summary: string;
   details: string;
   system_calendar: number;
+  recurrence_json: string | null;
+  series_id: string | null;
+  trigger_kind: 'scheduled' | 'unanswered';
+  conversation_id: string | null;
+  reply_revision: number | null;
+  next_follow_up_minutes: number | null;
   source_conversation_id: string | null;
   source_message_ids_json: string | null;
   source_excerpt: string | null;
@@ -81,8 +94,15 @@ const STATUSES = new Set<AIScheduleStatus>([
   'cancelled',
 ]);
 
-export function createAISchedule(data: AISchedule): AISchedule {
+type TimingFields = 'recurrence' | 'seriesId' | 'triggerKind' | 'conversationId' | 'replyRevision' | 'nextFollowUpMinutes';
+export function createAISchedule(data: Omit<AISchedule, TimingFields> & Partial<Pick<AISchedule, TimingFields>>): AISchedule {
   const schedule = {
+    recurrence: null,
+    seriesId: null,
+    triggerKind: 'scheduled' as const,
+    conversationId: null,
+    replyRevision: null,
+    nextFollowUpMinutes: null,
     ...data,
     sourceMessageIds: data.sourceMessageIds ? [...data.sourceMessageIds] : null,
   };
@@ -99,6 +119,12 @@ export function createAIScheduleFromRow(row: AIScheduleRow | null): AISchedule |
     summary: row.summary,
     details: row.details,
     systemCalendar: row.system_calendar === 1,
+    recurrence: row.recurrence_json ? JSON.parse(row.recurrence_json) : null,
+    seriesId: row.series_id,
+    triggerKind: row.trigger_kind,
+    conversationId: row.conversation_id,
+    replyRevision: row.reply_revision,
+    nextFollowUpMinutes: row.next_follow_up_minutes,
     sourceConversationId: row.source_conversation_id,
     sourceMessageIds: parseSourceMessageIds(row.source_message_ids_json),
     sourceExcerpt: row.source_excerpt,
@@ -126,6 +152,9 @@ export function assertAISchedule(schedule: AISchedule): void {
   assertCompletionDisposition(schedule.completionDisposition);
   assertBoundedText(schedule.summary, 'summary', AI_SCHEDULE_SUMMARY_MAX_LENGTH);
   assertBoundedText(schedule.details, 'details', AI_SCHEDULE_DETAILS_MAX_LENGTH);
+  if (schedule.recurrence && (!isAIScheduleRecurrence(schedule.recurrence) || !schedule.seriesId)) {
+    throw new Error('重复日程必须保存合法规则与系列身份');
+  }
 
   if (!STATUSES.has(schedule.status)) {
     throw new Error(`RavenCat AI Schedule 状态非法：${schedule.status}`);

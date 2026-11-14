@@ -1,3 +1,4 @@
+import { chatCodeDependencies } from './chat-timeline-fixture.mjs';
 import { sharedMomentIntent, chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 /**
  * Chat 语音消息链路行为验证（lifecycle / 失败清理 / provider 契约 / 播放状态）。
@@ -25,6 +26,7 @@ function read(relativePath) {
 
 /** 以 CommonJS 方式编译单个 TS 模块，并按显式 mock 表解析依赖。 */
 function loadTypeScriptModule(relativePath, mocks = {}) {
+  mocks = { ...chatCodeDependencies, ...mocks };
   const absolutePath = path.join(repoRoot, relativePath);
   const compiled = ts.transpileModule(read(relativePath), {
     compilerOptions: {

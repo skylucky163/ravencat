@@ -6,6 +6,7 @@ import type {
   AIScheduleStatus,
 } from './AISchedule';
 import type { AIScheduleContextItem, AIScheduleDispatchInput } from './AIScheduleContext';
+import type { AIScheduleRecurrence, AIScheduleUnansweredItem } from './AIScheduleTiming';
 
 export type AIScheduleCommandErrorCode =
   | 'companion_disabled'
@@ -60,15 +61,30 @@ export interface UpdateAIScheduleInput {
   summary?: string;
   details?: string;
   systemCalendar?: boolean;
+  recurrence?: AIScheduleRecurrence | null;
 }
 
+export interface RemoveAIScheduleCalendarInput {
+  ownerAIId: string;
+  scope: 'schedule' | 'series' | 'all';
+  /** 单条与重复系列通过任意一期的真实身份定位；all 不接受此字段。 */
+  scheduleId?: string;
+}
+
+export type RemoveAIScheduleCalendarOutcome =
+  | { status: 'updated'; scheduleIds: string[]; updatedCount: number }
+  | { status: 'not_found' | 'not_owner' };
+
 export interface AIScheduleRepository {
+  removeCalendarLinks(input: RemoveAIScheduleCalendarInput): Promise<RemoveAIScheduleCalendarOutcome>;
+  listUnanswered(conversationId: string): Promise<AIScheduleUnansweredItem[]>;
+  setNextFollowUpInterval(input: { scheduleId: string; ownerAIId: string; runId: string; minutes: number }): Promise<AIScheduleCommandOutcome<'updated'>>;
   /** 对当前投递作版本裁决，收口过期安排，并将已到期的旧安排归并到最新安排。 */
   prepareDispatch(input: AIScheduleDispatchInput): Promise<AISchedule | null>;
   expireScheduled(occurredAt: string, ownerAIId?: string): Promise<void>;
-  mergeDueIntoChat(ownerAIId: string, occurredAt: string): Promise<void>;
+  mergeDueIntoChat(ownerAIId: string, occurredAt: string): Promise<boolean>;
   mergeScheduled(scheduleId: string, targetScheduleId: string | null, occurredAt: string, failureCode?: string): Promise<void>;
-  mergeClaimedRun(runId: string, targetScheduleId: string | null, occurredAt: string): Promise<void>;
+  mergeClaimedRun(runId: string, targetScheduleId: string | null, occurredAt: string, firstVisibleAt?: string | null): Promise<void>;
   listPendingContext(ownerAIId: string, targetScheduleId: string | null): Promise<AIScheduleContextItem[]>;
   bindContext(input: { runId: string; occurredAt: string; acknowledge: AIScheduleContextItem[];
     present: AIScheduleContextItem[] }): Promise<AIScheduleContextItem[]>;
@@ -94,6 +110,7 @@ export interface AIScheduleRepository {
     expectedRemindAt: string;
     /** 与 callback 一起携带的 durable 版本 token（updated_at）；不一致即拒绝。 */
     projectionToken: string;
+    conversationId: string;
   }): Promise<AIScheduleCommandOutcome<'claimed'>>;
   consumeClaimed(input: {
     scheduleId: string;
@@ -102,6 +119,7 @@ export interface AIScheduleRepository {
     /** consume 与 completionDisposition 必须由同一个 SQLite transaction 提交。 */
     completionDisposition: AIScheduleCompletionDisposition;
     failureCode?: string;
+    firstVisibleAt?: string | null;
   }): Promise<AIScheduleCommandOutcome<'consumed'>>;
   /** 供 projection reconcile 读取全部 scheduled 真值（不依赖 owner 或时间范围）。 */
   listAllScheduled(): Promise<AISchedule[]>;

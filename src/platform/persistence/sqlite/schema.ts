@@ -1,4 +1,4 @@
-import { MODEL_SERVICE_SCHEMA } from './modelServiceSchema';
+import { MODEL_SERVICE_SCHEMA } from './modelServiceGroupSchema';
 /** 集中定义 SQLite 建表与索引语句。 */
 import { CALL_HISTORY_SCHEMA } from './callHistorySchema';
 
@@ -9,6 +9,7 @@ import {
   RAVEN_CAT_AI_SCHEDULES_CONSUMED_OCCURRED_HISTORY_INDEX,
   RAVEN_CAT_AI_SCHEDULES_SCHEMA,
   RAVEN_CAT_AI_SCHEDULE_CONTEXT_SCHEMA,
+  RAVEN_CAT_AI_SCHEDULE_WAIT_SCHEMA,
   RAVEN_CAT_COMPANION_STATE_SCHEMA,
 } from './ravenCatCompanionSchema';
 import {
@@ -52,7 +53,7 @@ import {
   STICKERS_GROUP_ORDER_INDEX,
   STICKERS_SCHEMA,
 } from './stickerSchema';
-import { AI_DOWNLOADED_IMAGES_SCHEMA } from './aiImageSchema';
+import { AI_DOWNLOADED_IMAGES_SCHEMA, AI_GENERATED_IMAGES_SCHEMA, IMAGE_GENERATION_SETTINGS_SCHEMA, AI_GENERATED_IMAGES_INDEXES } from './aiImageSchema';
 import { CHAT_FAVORITES_SCHEMA, CHAT_FAVORITES_INDEXES } from './chatFavoriteSchema';
 import {
   MOMENTS_SCHEMA,
@@ -81,8 +82,10 @@ import { CHAT_REPLY_VERSIONS_SCHEMA } from './chatReplyVersionSchema';
 import { MCP_SERVERS_SCHEMA, MCP_TOOL_GRANTS_SCHEMA, MCP_SERVER_ASSISTANTS_SCHEMA, MCP_TOOL_GRANTS_INDEXES } from './mcpSchema';
 import { WEB_SEARCH_SCHEMA } from './webSearchSchema';
 import { CHAT_BUBBLE_SKINS_SCHEMA } from './chatBubbleSkinSchema';
+import { CHAT_CODE_PREVIEW_SCHEMA } from './chatCodePreviewSchema';
 
 export const SCHEMAS: Record<string, string> = {
+  chatCodePreviews: CHAT_CODE_PREVIEW_SCHEMA,
   modelServices: MODEL_SERVICE_SCHEMA,
   chatBubbleSkins: CHAT_BUBBLE_SKINS_SCHEMA,
   webSearch: WEB_SEARCH_SCHEMA,
@@ -622,6 +625,8 @@ export const SCHEMAS: Record<string, string> = {
       quiet_hours_end_minutes INTEGER NOT NULL DEFAULT 480
         CHECK (quiet_hours_end_minutes BETWEEN 0 AND 1439),
       user_screen_capture_blacklist_json TEXT NOT NULL DEFAULT '[]',
+      follow_up_enabled INTEGER NOT NULL DEFAULT 0 CHECK (follow_up_enabled IN (0,1)),
+      follow_up_interval_minutes INTEGER NOT NULL DEFAULT 10 CHECK (follow_up_interval_minutes BETWEEN 2 AND 43200),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -631,6 +636,7 @@ export const SCHEMAS: Record<string, string> = {
 
   ravenCatAISchedules: RAVEN_CAT_AI_SCHEDULES_SCHEMA,
   ravenCatAIScheduleContext: RAVEN_CAT_AI_SCHEDULE_CONTEXT_SCHEMA,
+  ravenCatAIScheduleWait: RAVEN_CAT_AI_SCHEDULE_WAIT_SCHEMA,
 
   ravenCatFloatingInteractionSettings: RAVEN_CAT_FLOATING_INTERACTION_SETTINGS_SCHEMA,
 
@@ -652,10 +658,13 @@ export const SCHEMAS: Record<string, string> = {
   stickerSystemConfig: STICKER_SYSTEM_CONFIG_SCHEMA,
   aiStickerTasks: AI_STICKER_TASKS_SCHEMA,
   aiDownloadedImages: AI_DOWNLOADED_IMAGES_SCHEMA,
+  aiGeneratedImages: AI_GENERATED_IMAGES_SCHEMA,
+  imageGenerationSettings: IMAGE_GENERATION_SETTINGS_SCHEMA,
   chatTimelineRunAnchor: CHAT_TIMELINE_RUN_ANCHOR_SCHEMA,
 };
 
 export const INDEXES: Record<string, string> = {
+  aiGeneratedImages: AI_GENERATED_IMAGES_INDEXES,
   chatSummaryWorkQueue: CHAT_SUMMARY_WORK_QUEUE_TRIGGERS,
   chatFavorites: CHAT_FAVORITES_INDEXES,
   idxStickerOwnership: STICKER_OWNERSHIP_INDEXES,

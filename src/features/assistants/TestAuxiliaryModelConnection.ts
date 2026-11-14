@@ -14,12 +14,10 @@ export interface TestAuxiliaryModelConnectionParams {
   topP?: number | null;
   maxTokens?: number | null;
   skipParams?: boolean;
-  metadataJson?: string | null;
 }
 
 export interface TestAuxiliaryModelConnectionResult {
   skipped: boolean;
-  skipReason?: string | null;
   success: boolean;
   result?: ConnectionTestResult;
   rawError: string | null;
@@ -81,7 +79,6 @@ export async function testAuxiliaryModelConnection(
   if (!baseUrl || !apiKey || !model) {
     return {
       skipped: true,
-      skipReason: null,
       success: false,
       rawError: null,
       errorInfo: null,
@@ -101,7 +98,6 @@ export async function testAuxiliaryModelConnection(
     if (result.success) {
       return {
         skipped: false,
-        skipReason: null,
         success: true,
         result,
         rawError: null,
@@ -111,7 +107,6 @@ export async function testAuxiliaryModelConnection(
 
     return {
       skipped: false,
-      skipReason: null,
       success: false,
       result,
       rawError: result.error,
@@ -121,7 +116,6 @@ export async function testAuxiliaryModelConnection(
     const rawError = error instanceof Error ? error.message : String(error || '');
     return {
       skipped: false,
-      skipReason: null,
       success: false,
       rawError,
       errorInfo: getErrorDisplayInfo(error as Error | string, { includeDetails: true }),

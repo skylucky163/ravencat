@@ -2,9 +2,11 @@ import type { DatabaseTransactionExecutor } from '@platform/persistence';
 import type { AgentToolExecutionContext } from '@shared/aiTools';
 import { createRuntimeSlot } from '@shared/runtime/RuntimeSlot';
 import type { AIDownloadedImageRepository } from '../domain/AIDownloadedImageRepository';
+import type { AIGeneratedImageRepository } from '../domain/AIGeneratedImageRepository';
 
 export interface AIImageRuntimeDependencies {
   downloads: AIDownloadedImageRepository;
+  generated: AIGeneratedImageRepository;
   assertCurrent(transaction: DatabaseTransactionExecutor, context: AgentToolExecutionContext): Promise<void>;
   resolveAvatar(target: 'user_avatar' | 'self_avatar' | 'assistant_avatar', assistantId: string, selector?: string): Promise<
     | { status: 'found'; mediaAssetId?: string; imageUri?: string; label: string }

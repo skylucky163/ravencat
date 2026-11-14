@@ -8,6 +8,7 @@ export default function ChatMenuRoute() {
   const aiId = Array.isArray(params.aiId) ? params.aiId[0] : params.aiId;
   return aiId ? <ChatMenuRouteScreen aiId={aiId}
     onOpenAssistantProfile={() => router.push(`/assistants/${encodeURIComponent(aiId)}` as Href)}
+    onOpenCodeLibrary={() => router.push(`/assistants/${encodeURIComponent(aiId)}/works` as Href)}
     onOpenModelSettings={() => router.push(`/assistants/${encodeURIComponent(aiId)}/model-settings` as Href)}
     onOpenConversationSettings={() => router.push(`/assistants/${encodeURIComponent(aiId)}/chat-settings` as Href)}
     onOpenSummary={() => router.push(`/chat/${encodeURIComponent(aiId)}/summary` as Href)} />

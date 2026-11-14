@@ -29,6 +29,7 @@ const models = load(`${directory}management/AIModelSettings/modelSettingsHelpers
   '@shared/ui/draftValidation': numbers, '@shared/prompt': prompt,
 });
 const auxiliary = load(`${directory}auxiliaryModels/auxiliaryModelDraft.ts`, {
+  '@platform/ai/imageGenerationConfig': load('src/platform/ai/imageGenerationConfig.ts'),
   '@shared/ui/draftValidation': numbers, '@shared/prompt': prompt,
 });
 const speechCatalog = load('src/features/speech/application/SpeechProviderCatalog.ts');
@@ -286,9 +287,10 @@ try {
         Keyboard: { dismiss() {} } },
       'react-native-safe-area-context': { SafeAreaView: 'SafeArea' },
       '@features/speech': { ...speechCatalog, SpeechConfigurationTest: 'SpeechTest' },
-      '@shared/ui': { KeyboardAvoidingContainer: 'KeyboardContainer', Button: 'Button', DropdownField: 'Dropdown', InputField: 'Input', ToggleField: 'Toggle', ModelPickerModal: 'ModelPicker', ListItem: 'ListItem' },
+      '@shared/ui': { KeyboardAvoidingContainer: 'KeyboardContainer', Button: 'Button', DropdownField: 'Dropdown', InputField: 'Input', ModelPickerField: 'Input', ToggleField: 'Toggle', ModelPickerModal: 'ModelPicker', ListItem: 'ListItem' },
       '@shared/ui/NavigationHeader': { default: 'Header' },
-      '@shared/theme': { useTheme: () => ({ colors: { background: { app: '#fff' }, feedback: { error: '#e00' }, text: { secondary: '#555' } }, spacing: { md: 12, lg: 16, xl: 24 } }) },
+      '@shared/ui/commonStyles': { createCommonStyles: () => ({}) },
+      '@shared/theme': { useTheme: () => ({ colors: { background: { screen: '#fff' }, surface: { input: '#eee' }, feedback: { error: '#e00' }, text: { primary: '#111', secondary: '#555' } }, radius: { md: 12 }, spacing: { md: 12, lg: 16, xl: 24 } }) },
       '@shared/ui/useAutoSaveDraft': {
         useAutoSaveDraft: ({ initial: draft, parse, save }) => {
           const form = new core.AutoSaveDraftEditor(draft, parse, save);
@@ -298,14 +300,15 @@ try {
       },
       '@shared/ui/useAutoSaveFeedback': { useAutoSaveFeedback: () => ({ fieldLayout: () => () => {} }) },
       '@shared/ui/AutoSaveErrors': { AutoSaveErrors: 'Errors' }, './speechModelDraft': speechDraft, './ServiceConnectionPicker': { default: 'ServicePicker' },
+      './ModelFormSection': { default: 'FormSection' },
     });
     const nodes = (tree) => tree && typeof tree === 'object' ? [tree, ...(tree.children ?? []).flat(Infinity).flatMap(nodes)] : [];
-    const render = (provider, model) => nodes(SpeechPage({ kind: 'tts', modelId: 'voice',
+    const render = (provider, model, kind = 'tts', modelId = 'voice') => nodes(SpeechPage({ kind, modelId,
       initialData: { name: 'voice', enabled: true, baseUrl: 'https://example.invalid/v1', apiKey: 'key', model,
         metadataJson: JSON.stringify({ provider, voiceId: 'voice' }) },
       saving: false, onSave: async (patch) => { writes.push(patch); }, onCreate() {}, onBack() {},
     }));
-    const manual = render('openaiCompatible', 'custom-model').find((node) => node.type === 'Input' && node.props.label === '模型');
+    const manual = render('openaiCompatible', 'custom-model').find((node) => node.type === 'Input' && node.props.placeholder === '模型 ID');
     manual.props.onChangeText('custom-model-v2'); mock.timers.tick(10000); await tick();
     assert.deepEqual(writes, [], '手输模型名不能逐字保存');
     manual.props.onBlur(); await tick();
@@ -313,6 +316,10 @@ try {
     const picker = render('openai', 'tts-1').find((node) => node.type === 'ModelPicker');
     picker.props.onSelect('tts-1-hd'); await tick();
     assert.equal(writes.at(-1).model, 'tts-1-hd');
+    for (const [kind, provider, model] of [['tts', 'openai', 'tts-1'], ['stt', 'volcengineRealtimeAsr', 'bigmodel']]) {
+      assert.equal(render(provider, model, kind).find(node => node.type === 'Dropdown' && node.props.label === '提供方').props.disabled, true);
+      assert.equal(render(provider, model, kind, null).find(node => node.type === 'Dropdown' && node.props.label === '提供方').props.disabled, false, '新建可以选择提供方');
+    }
   }
   // 页面接线行为：后台提交、系统返回拦截、成功后返回、新建不自动保存。
   {
@@ -431,9 +438,7 @@ const baseClientModule = load('src/platform/ai/BaseAIClient.ts', {
   './errorMapping': load('src/platform/ai/errorMapping.ts'),
 });
 const factory = load('src/platform/ai/OpenAIClient.ts', {
-  './moonshotEndpoint': load('src/platform/ai/moonshotEndpoint.ts'),
   './BaseAIClient': baseClientModule,
-  './KimiClient': { KimiClient: class extends baseClientModule.BaseAIClient {} },
   './modelDiscovery': {}, './errorMapping': {},
 });
 const connection = load('src/platform/ai/connectionTest.ts', { './OpenAIClient': factory });

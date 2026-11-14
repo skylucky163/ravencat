@@ -11,6 +11,15 @@ import type { IAuxiliaryModelRepository } from '../domain/AuxiliaryModelReposito
 import { databaseCoordinator, type DatabaseTransactionExecutor, type DatabaseReadExecutor } from '@platform/persistence';
 import { initializeAuxiliaryModelInTransaction } from './SQLiteAuxiliaryModelDefaults';
 import { getAuxiliaryModelInitialization } from '../application/AuxiliaryModelInitialization';
+import { readSpeechMetadata } from '@features/speech';
+import { readTranslationMetadata } from '@features/integrations';
+import { readImageGenerationProfile } from '@platform/ai/imageGenerationConfig';
+
+function readProvider(config: AuxiliaryModelConfig): string | null {
+  if (config.capabilityKind === 'stt' || config.capabilityKind === 'tts') return readSpeechMetadata(config.metadataJson).provider;
+  if (config.capabilityKind === 'translation') return readTranslationMetadata(config.metadataJson!).provider;
+  return readImageGenerationProfile(config.metadataJson)?.provider ?? null;
+}
 
 interface AuxiliaryModelConfigRow {
   id: string;
@@ -36,7 +45,7 @@ export class AuxiliaryModelRepository implements IAuxiliaryModelRepository {
   async listModelConfigs(params: { capabilityKind?: CapabilityKind } = {}): Promise<AuxiliaryModelConfig[]> {
     const db = databaseCoordinator.openTaskExecutor({ name: 'assistants.listModelConfigs', feature: 'assistants', priority: 'runtime' });
     // 历史退休资产不作为当前可运行能力进入模型中心。
-    const whereParts: string[] = ["capability_kind IN ('summary', 'embedding', 'ocr', 'stt', 'tts', 'translation')"];
+    const whereParts: string[] = ["capability_kind IN ('summary', 'embedding', 'ocr', 'image_generation', 'stt', 'tts', 'translation')"];
     const values: string[] = [];
 
     if (params.capabilityKind) {
@@ -121,6 +130,12 @@ export class AuxiliaryModelRepository implements IAuxiliaryModelRepository {
         const current = await this.getModelConfigByIdInTransaction(transaction, id);
         if (!current) throw new Error(`辅助模型配置不存在：${id}`);
         const next = { ...current, ...input };
+        // 供应商属于资产身份；与参数写入共用事务，在服务绑定及派生失效之前裁决。
+        if (['stt', 'tts', 'translation', 'image_generation'].includes(current.capabilityKind)
+          && (input.metadataJson !== undefined || input.capabilityKind !== undefined)
+          && (next.capabilityKind !== current.capabilityKind || readProvider(next) !== readProvider(current))) {
+          throw new Error('提供方在创建后不可修改，请新建配置');
+        }
         const serviceConfigId = supportsModelService(next.capabilityKind, next.metadataJson)
           ? await bindModelService(transaction, getModelServiceConnection(next.baseUrl, next.apiKey), input.serviceConfigId)
           : null;

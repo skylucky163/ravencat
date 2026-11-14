@@ -152,7 +152,7 @@ deferMeasurements = false;
 await act(async () => { rendered.unmount(); });
 assert.equal(listeners.size, 0);
 
-// 底部弹窗铺满独立原生窗口，直接使用屏幕键盘顶边，不受原生平移和缩放坐标影响。
+// 底部弹窗的窗口边界交给原生模块；表单继续拥有草稿和按钮行为。
 const modalTheme = load('src/shared/theme/themes/defaultLight.ts', {}).defaultLightTheme;
 const modalNative = {
   ...native, TouchableOpacity: 'Button', TouchableWithoutFeedback: 'Backdrop',
@@ -171,7 +171,7 @@ const ModalSheet = load('src/shared/ui/ModalSheet.tsx', {
   'react-native': modalNative,
   '@shared/theme': { useTheme: () => modalTheme, useThemedStyles: factory => factory(modalTheme), ThemedSurface: 'Surface' },
   'react-native-safe-area-context': { useSafeAreaInsets: () => ({ bottom: 0 }) },
-  './KeyboardAvoidingContainer': { __esModule: true, default: props => React.createElement(Container, { ...props, testID: 'window' }) },
+  '../../../modules/modal-window': { ModalWindow: 'ModalWindow' },
 }).default;
 const MessageEditor = load('src/features/chat/presentation/messages/components/ChatMessageEditor.tsx', {
   ...dependencies,
@@ -184,12 +184,9 @@ for (let cycle = 0; cycle < 3; cycle++) {
   await act(async () => { rendered = create(React.createElement(MessageEditor, {
     message: { id: 1, text: '待改写的 AI 正文' }, onClose() {}, onSaved() {},
   }), { createNodeMock: () => windowNative }); });
-  await layout({ y: 160, height: 640 });
-  assert.equal(keyboardHeight(), 500, '系统平移窗口时弹窗底边仍保持在键盘顶边');
+  assert.equal(listeners.size, 0, '原生弹窗不叠加 JS 键盘避让监听');
   const editorInput = rendered.root.findByType('Input');
   await act(async () => editorInput.props.onChangeText('修改后的 AI 正文'));
-  await showKeyboard();
-  assert.equal(keyboardHeight(), 500, '编辑和重复键盘事件不会引入额外空白');
   assert.equal(editorInput.props.value, '修改后的 AI 正文');
   assert.equal(rendered.root.findAllByType('Input').length, 1, '改写只有一个原生输入');
   await act(async () => rendered.unmount());

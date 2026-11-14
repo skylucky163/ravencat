@@ -1,7 +1,21 @@
 /** 日历与日程详情的时间、终态及命令错误文案。 */
-import type { ProactiveLifeCompletionDisposition } from '../domain/ProactiveLifeReadRepository';
+import type { ProactiveLifeCalendarRecord, ProactiveLifeCompletionDisposition } from '../domain/ProactiveLifeReadRepository';
 import type { AIScheduleApplicationErrorCode } from '../application/AIScheduleApplication';
 import type { AISchedule } from '../domain/AISchedule';
+import type { AIScheduleRecurrence } from '../domain/AIScheduleTiming';
+
+/** 未来一期从规则预览转为实际安排时保留显示身份；历史事实仍按自身 ID 区分。 */
+export function proactiveLifeCalendarItemKey(entry: ProactiveLifeCalendarRecord): string {
+  const identity = entry.kind === 'future' ? entry.item.seriesId ?? entry.item.sourceId : entry.item.sourceId;
+  return `${entry.kind}:${identity}@${entry.item.plannedAt}`;
+}
+
+export function proactiveLifeRecurrenceLabel(recurrence: AIScheduleRecurrence): string {
+  if (recurrence.frequency === 'daily') return '每天重复';
+  if (recurrence.frequency === 'monthly') return `每月 ${recurrence.monthDay} 号重复`;
+  const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+  return `每周${recurrence.weekdays!.map(day => weekdays[day]).join('、')}重复`;
+}
 
 
 /** 将 read model 的稳定终态映射为用户可理解的历史状态。 */

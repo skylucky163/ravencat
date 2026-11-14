@@ -26,7 +26,7 @@ export default function SharedMomentCard({ moment, preview = false, onOpen, onLo
     <View style={styles.body}><Text style={styles.text} numberOfLines={preview ? undefined : 2} ellipsizeMode="tail">{moment.content}</Text>
       {!preview && moment.images.length ? <MediaAssetImage mediaAssetId={moment.images[0].mediaAssetId} uriCache={uriCache} style={styles.thumbnail} resizeMode="cover" /> : null}</View>
     {preview && moment.images.length ? <View style={styles.grid}>{moment.images.map((image, index) => <MediaAssetImage key={`${index}:${image.mediaAssetId}`} mediaAssetId={image.mediaAssetId} uriCache={uriCache} style={styles.image} resizeMode="cover" />)}</View> : null}
-    <View style={styles.footer}><CircleDot size={14} color={theme.colors.brand.primary} /><Text style={styles.hint}>时刻{moment.images.length ? ` · ${moment.images.length} 张图片` : ''} · {preview ? '分享时的内容' : '点击查看原帖'}</Text></View>
+    <View style={styles.footer}><CircleDot size={14} color={theme.colors.brand.primary} /><Text style={styles.hint}>时刻{moment.editedAt ? ' · 已编辑' : ''}{moment.images.length ? ` · ${moment.images.length} 张图片` : ''} · {preview ? '分享时的内容' : '点击查看原帖'}</Text></View>
   </TouchableOpacity>;
 }
 const createStyles = (theme: PresentationTheme) => StyleSheet.create({

@@ -213,6 +213,10 @@ assert.doesNotMatch(capturedPromptParams.currentInput, /update_ai_schedule|调�
 assistant.enableTools = true;
 let capturedScheduleInput;
 const scheduleWrapper = loadModule('src/features/companion/application/RunAIScheduleAutonomousAgent.ts', {
+  './CompanionRuntimeDependencies': { getCompanionRuntimeDependencies: () => ({ repositories: {
+    aiSchedules: { listUnanswered: async () => [] },
+    companionSettings: { ensureDefault: async () => ({ followUpEnabled: false, followUpIntervalMinutes: 10 }) },
+  } }) },
   './CompanionPromptBlocks': promptBlocks,
   './RunHostAutonomousAgent': {
     runHostAutonomousAgent: async (input) => { capturedScheduleInput = input; return { terminalCode: 'COMPLETED' }; },
@@ -221,7 +225,7 @@ const scheduleWrapper = loadModule('src/features/companion/application/RunAISche
 await scheduleWrapper.runAIScheduleAutonomousAgent({
   sessionId: 'real-session',
   runId: 'run-s', claimedSchedule: {
-    scheduleId: 'schedule-x', ownerAIId: 'host-ai', remindAt: '2026-09-13T09:00:00.000Z',
+    scheduleId: 'schedule-x', ownerAIId: 'host-ai', remindAt: '2026-09-13T09:00:00.000Z', triggerKind:'scheduled', recurrence:null,
     summary: '考试', details: '数据库考试', sourceExcerpt: '用户说上午有考试',
   }, triggeredAt,
 });

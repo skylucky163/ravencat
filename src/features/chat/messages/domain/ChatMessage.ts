@@ -52,8 +52,10 @@ export interface ChatMessage {
   promptTokens?: number;
   completionTokens?: number;
   metadataJson?: string | null;
+  /** 延后封存的回合沿用原输入位置，不因新取得的数据库 ID 排到后续用户消息之后。 */
+  timelineAnchor?: { id: number; createdAt: string };
   /**
-   * 所属 Agent timeline run。user_reply 由 ConversationTurnCoordinator 的 T3 事务写入；
+   * 所属 Agent timeline run。user_reply 在 T3 或已交付正文的中断封存事务中写入；
    * 无用户输入的 Chat-visible run 由 Chat 消息事务写入。transient timeline 沿用同一
    * run 标识，保证提交前后的消息 identity 一致。
    * 工具执行期间写入的 durable 业务卡片（如 Together Listening 邀请卡）也携带本字段，

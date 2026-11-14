@@ -1,3 +1,4 @@
+import { chatCodeDependencies } from './chat-timeline-fixture.mjs';
 import { chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionSql, chatMessageMutations, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /**
@@ -42,6 +43,7 @@ function loadTypeScriptModule(relativePath) {
 }
 
 function loadTypeScriptModuleWithMocks(relativePath, mocks) {
+  mocks = { ...chatCodeDependencies, ...mocks };
   const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -104,6 +106,7 @@ function createDatabase() {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(MEDIA_ASSET_SCHEMA);
   db.exec(SCHEMAS.assistantProfileCovers);
+  db.exec(SCHEMAS.aiGeneratedImages);
   db.exec(CHAT_BUBBLE_SKINS_SCHEMA);
   db.exec(CHAT_FAVORITES_SCHEMA);
   db.exec(MEDIA_ASSET_CONTENT_HASH_INDEX);

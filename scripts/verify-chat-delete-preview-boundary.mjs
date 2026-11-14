@@ -1,3 +1,4 @@
+import { chatCodeBlockModuleUrl, chatCodePreviewRepositoryModuleUrl } from './chat-timeline-fixture.mjs';
 import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /**
@@ -104,7 +105,7 @@ const chatEventsUrl = transpileToModuleUrl(read('src/features/chat/messages/even
 
 const messageRepositorySource = transpileSource(
   'src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts',
-).replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`).replaceAll(
+).replaceAll("from '../domain/ChatCodeBlock'", `from '${chatCodeBlockModuleUrl}'`).replaceAll("from './SQLiteChatCodePreviewRepository'", `from '${chatCodePreviewRepositoryModuleUrl}'`).replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`).replaceAll(
   `from '@platform/persistence'`,
   `from '${persistenceStubUrl}'`,
 ).replaceAll(

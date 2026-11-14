@@ -51,7 +51,7 @@ mocks.set('@features/companion', { loadAIScheduleContext: async () => '' });
 const metadata = load('src/features/chat/messages/domain/chatMessageMetadata.ts');
 const { projectChatContextMessage } = load('src/features/chat/summary/domain/ChatContext.ts');
 const { buildConversationTimeline } = load('src/features/chat/summary/domain/ChatSummaryTimeline.ts');
-mocks.set('@features/chat', { ...metadata, getChatBackgroundContexts: async () => [], getChatInterruptedTurnContext: async () => [], getChatSummaryContext: async (_conversation, protectedIds = []) => ({
+mocks.set('@features/chat', { ...metadata, ...load('src/features/chat/messages/domain/ChatCodeBlock.ts'), getChatBackgroundContexts: async () => [], getChatInterruptedTurnContext: async () => [], getChatSummaryContext: async (_conversation, protectedIds = []) => ({
   segments, pendingCalls, raw: remaining.filter((item) => !protectedIds.includes(item.messageId)),
   settings: summarySettings, contextSegments: summarySettings.injectEnabled ? contextSegments ?? segments : [],
   timeline: buildConversationTimeline(remaining.filter((item) => !protectedIds.includes(item.messageId)), pendingCalls),

@@ -1,17 +1,18 @@
 import ServiceConnectionPicker from './ServiceConnectionPicker';
 /** 辅助模型编辑：已有资产自动保存，新资产在完整校验后显式创建。 */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTheme } from '@shared/theme';
+import { ThemedSurface, useTheme } from '@shared/theme';
 import NavigationHeader from '@shared/ui/NavigationHeader';
-import { KeyboardAvoidingContainer, Button, InputField, ModelPickerModal, SliderField, showAppDialog } from '@shared/ui';
+import { KeyboardAvoidingContainer, Button, DropdownField, InputField, ModelPickerField, ModelPickerModal, SliderField, showAppDialog } from '@shared/ui';
+import { IMAGE_GENERATION_PROVIDERS } from '@platform/ai/imageGenerationConfig';
 import { createCommonStyles } from '@shared/ui/commonStyles';
 import type { AuxiliaryModelConfig, UpdateAuxiliaryModelConfigInput } from '../../domain/AuxiliaryModel';
 import type { ModelInfo } from '../../application/modelTypes';
 import type { AuxiliaryModelFormData } from './types';
 import MaxTokensSection from '../management/AIModelSettings/MaxTokensSection';
-import { createModelSettingsStyles } from '../management/AIModelSettings/styles';
+import ModelFormSection from './ModelFormSection';
 import { fetchModelsWithConfig } from '../management/sharedModelConfig';
 import { useAutoSaveDraft, useAutoSaveNavigation } from '@shared/ui/useAutoSaveDraft';
 import { useAutoSaveFeedback } from '@shared/ui/useAutoSaveFeedback';
@@ -20,7 +21,7 @@ import { readDraftNumber } from '@shared/ui/draftValidation';
 import { getAuxiliaryModelDraft, parseAuxiliaryModelDraft, type AuxiliaryModelDraft } from './auxiliaryModelDraft';
 
 interface AuxiliaryModelEditScreenProps {
-  capabilityKind: 'summary' | 'embedding' | 'ocr';
+  capabilityKind: 'summary' | 'embedding' | 'ocr' | 'image_generation';
   capabilityLabel: string;
   modelId?: string | null;
   initialData?: AuxiliaryModelConfig | null;
@@ -37,14 +38,16 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
 }: AuxiliaryModelEditScreenProps) {
   const theme = useTheme();
   const commonStyles = useMemo(() => createCommonStyles(theme), [theme]);
-  const modelSettingsStyles = useMemo(() => createModelSettingsStyles(theme), [theme]);
   const isEdit = !!modelId;
   const isEmbeddingCapability = capabilityKind === 'embedding';
+  const isImageGeneration = capabilityKind === 'image_generation';
+  const hasSamplingParams = !isEmbeddingCapability && !isImageGeneration;
   const initial = useMemo(() => getAuxiliaryModelDraft(initialData), [initialData]);
   const parse = useCallback((draft: AuxiliaryModelDraft, changed: (keyof AuxiliaryModelDraft)[]) => parseAuxiliaryModelDraft(capabilityKind, draft, changed), [capabilityKind]);
   const editor = useAutoSaveDraft({ initial, parse, save: onSave, enabled: isEdit });
   const { draft, errors, commit, flush, restore, change, validateAll } = editor;
   const { name, baseUrl, apiKey, model, tempInput, topPInput, maxTokens } = draft;
+  const imageProvider = IMAGE_GENERATION_PROVIDERS.find(provider => provider.id === draft.imageProvider);
   const temperatureInput = readDraftNumber(tempInput, 'Temperature', 0, 2, true);
   const topPNumberInput = readDraftNumber(topPInput, 'Top P', 0, 1, true);
   const temperature = temperatureInput.error ? initialData?.temperature ?? null : temperatureInput.value;
@@ -70,17 +73,37 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
+  const modelRequest = useRef(0);
+  useEffect(() => {
+    modelRequest.current++;
+    setAvailableModels([]); setIsLoadingModels(false);
+  }, [baseUrl, apiKey]);
+  useEffect(() => () => { modelRequest.current++; }, []);
+  const selectImageProvider = (id: string) => {
+    const provider = IMAGE_GENERATION_PROVIDERS.find(value => value.id === id)!;
+    // 切换供应商意味着新的认证边界，旧 Key 不随地址一起带给新供应商。
+    change({ imageProvider: id, baseUrl: provider.baseURL,
+      model: provider.models[0] ?? '', apiKey: '', serviceConfigId: '',
+      ...(!name.trim() || name === imageProvider?.label ? { name: provider.label } : {}) }, true);
+    setAvailableModels([]); setShowModelPicker(false);
+  };
   const handleFetchModels = async () => {
     if (!baseUrl.trim() || !apiKey.trim()) { setTestInputError('获取模型列表需要填写 API 地址和 Key。'); return; }
-    setIsLoadingModels(true);
+    const revision = ++modelRequest.current;
+    setIsLoadingModels(true); setTestInputError(null);
     try {
       const result = await fetchModelsWithConfig({ apiBaseUrl: baseUrl, apiKey });
+      if (revision !== modelRequest.current) return;
       if (result.errorInfo) { setTestInputError(result.errorInfo.message || '无法获取模型列表。'); return; }
       setAvailableModels(result.models);
-      if (result.models.length > 0) setShowModelPicker(true);
-      else setTestInputError('未获取到模型，请检查地址和 Key。');
-    } catch (error) { setTestInputError(error instanceof Error ? error.message : '获取模型列表失败。'); }
-    finally { setIsLoadingModels(false); }
+      if (result.models.length === 0) setTestInputError('未获取到模型，请检查地址和 Key。');
+    } catch (error) { if (revision === modelRequest.current) setTestInputError(error instanceof Error ? error.message : '获取模型列表失败。'); }
+    finally { if (revision === modelRequest.current) setIsLoadingModels(false); }
+  };
+  const openModelPicker = () => {
+    setTestInputError(null); setShowModelPicker(true);
+    if (isImageGeneration) setAvailableModels(imageProvider!.models.map(id => ({ id, name: id })));
+    else if (availableModels.length === 0) void handleFetchModels();
   };
   const handleSelectModel = (modelId: string) => { setField('model', modelId, true); setShowModelPicker(false); };
   const buildFormData = (): AuxiliaryModelFormData | null => {
@@ -88,8 +111,8 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
     if (!values) return null;
     return {
       id: modelId || undefined, serviceConfigId: values.serviceConfigId, name: values.name, baseUrl: values.baseUrl, model: values.model,
-      apiKey: values.apiKey ?? '', temperature: values.temperature ?? null,
-      topP: values.topP ?? null, maxTokens: values.maxTokens ?? null, metadataJson: values.metadataJson,
+      apiKey: values.apiKey ?? '', temperature: hasSamplingParams ? values.temperature ?? null : null,
+      topP: hasSamplingParams ? values.topP ?? null : null, maxTokens: hasSamplingParams ? values.maxTokens ?? null : null, metadataJson: values.metadataJson,
     };
   };
   const handleTestConnection = async () => {
@@ -142,70 +165,77 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
         <ScrollView
           ref={feedback.scrollRef}
           style={commonStyles.screenContainer}
-          contentContainerStyle={modelSettingsStyles.contentContainer}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <ThemedSurface variant="card" style={[commonStyles.formSurface, { padding: theme.spacing.lg, paddingBottom: theme.spacing.xl }]}>
+          <ModelFormSection title="配置">
+          {isImageGeneration && <View>
+            <DropdownField label="提供方" value={draft.imageProvider} options={IMAGE_GENERATION_PROVIDERS.map(provider => ({ value: provider.id, label: provider.label }))}
+              disabled={isEdit} onChange={selectImageProvider} error={errors.imageProvider} />
+            {!imageProvider && isEdit && <Text style={{ color: theme.colors.feedback.error, lineHeight: 22 }}>旧自定义生图接口已停用，请新建供应商明确的配置。</Text>}
+          </View>}
           {/* 配置名称 */}
-          <View style={modelSettingsStyles.section} onLayout={feedback.fieldLayout(['name'])}>
+          <View onLayout={feedback.fieldLayout(['name'])}>
             <InputField
               label="配置名称"
               value={name}
               onChangeText={setName}
               {...fieldProps('name')}
-              placeholder={capabilityKind === 'summary' ? '如：聊天摘要模型' : isEmbeddingCapability ? '如：记忆向量模型' : '如：图片理解模型'}
-              inputStyle={modelSettingsStyles.borderedInput}
+              placeholder={capabilityKind === 'summary' ? '如：聊天摘要模型' : isEmbeddingCapability ? '如：记忆向量模型' : isImageGeneration ? '如：文生图模型' : '如：图片理解模型'}
             />
           </View>
+          </ModelFormSection>
 
-          <View style={modelSettingsStyles.section} onLayout={feedback.fieldLayout(['baseUrl'])}>
+          <ModelFormSection title="连接">
+          <View onLayout={feedback.fieldLayout(['baseUrl'])}>
             <InputField
               label="API 地址"
               value={baseUrl}
               onChangeText={setBaseUrl}
               {...fieldProps('baseUrl')}
-              placeholder="https://api.example.cn/v1"
-              hint="支持填写 OpenAI 兼容格式地址，也支持带 /v4 的厂商地址"
+              placeholder="https://api.example.com/v1"
+              editable={!isImageGeneration}
               autoCapitalize="none"
               autoCorrect={false}
-              inputStyle={modelSettingsStyles.borderedInput}
+              autoGrow
             />
           </View>
 
 
-          <View style={modelSettingsStyles.section} onLayout={feedback.fieldLayout(['apiKey'])}>
+          <View onLayout={feedback.fieldLayout(['apiKey'])}>
             <InputField
               label="API Key"
               value={apiKey}
               onChangeText={setApiKey}
               {...fieldProps('apiKey')}
-              placeholder="sk-..."
+              placeholder="填写服务商提供的 API Key"
               autoGrow
               autoCapitalize="none"
-              inputStyle={modelSettingsStyles.borderedInput}
+              autoCorrect={false}
+              rightAccessory={isImageGeneration && imageProvider ? <ServiceConnectionPicker mode="key" baseUrl={baseUrl} apiKey={apiKey} disabled={saving || testing}
+                onFill={service => { change({ apiKey: service.apiKey, serviceConfigId: '' }, true); setTestInputError(null); }} /> : undefined}
             />
+            {!isImageGeneration && <ServiceConnectionPicker baseUrl={baseUrl} apiKey={apiKey} serviceConfigId={draft.serviceConfigId} disabled={isLoadingModels || testing}
+              onFill={service => { change({ serviceConfigId: service.id, baseUrl: service.baseUrl, apiKey: service.apiKey }, true); setAvailableModels([]); setShowModelPicker(false); setTestInputError(null); }} />}
           </View>
+          </ModelFormSection>
 
 
 
-          <ServiceConnectionPicker baseUrl={baseUrl} apiKey={apiKey} disabled={isLoadingModels || testing}
-            onFill={service => { change({ serviceConfigId: service.id, baseUrl: service.baseUrl, apiKey: service.apiKey }, true); setAvailableModels([]); setShowModelPicker(false); setTestInputError(null); }} />
-          <View style={modelSettingsStyles.section} onLayout={feedback.fieldLayout(['model'])}>
-            {isEmbeddingCapability && <Text style={{ color: theme.colors.text.secondary, lineHeight: 22 }}>
-              修改正在使用的模型或连接配置后，记忆、表情包等功能的原向量可能不再适用。旧向量会保留，不会自动重新向量化；请到对应功能中手动重建。此处需要选择支持向量化的模型。
-            </Text>}
-            <InputField label="模型名称" value={model} onChangeText={setModel} {...fieldProps('model')}
-              placeholder={isEmbeddingCapability ? '填写向量模型 ID' : '填写模型 ID，或从列表选择'} autoCapitalize="none" autoCorrect={false} />
-            <Button title={isLoadingModels ? '获取中…' : '获取模型列表'} variant="text" disabled={isLoadingModels} onPress={() => { void handleFetchModels(); }} />
-            {availableModels.length > 0 && <Button title="从已获取的列表选择" variant="text" onPress={() => setShowModelPicker(true)} />}
+          <ModelFormSection title="模型">
+          <View onLayout={feedback.fieldLayout(['model'])}>
+            <ModelPickerField label="模型名称" value={model} disabled={isImageGeneration && !imageProvider}
+              onPress={openModelPicker} loading={isLoadingModels} error={errors.model}
+              onChangeText={isImageGeneration ? undefined : setModel} onBlur={blur} placeholder="模型 ID" />
           </View>
+          </ModelFormSection>
 
-          {!isEmbeddingCapability ? (
-            <>
+          {hasSamplingParams ? (
+            <ModelFormSection title="参数">
               <View onLayout={feedback.fieldLayout(['tempInput'])}><SliderField
               {...fieldProps('tempInput')}
                 label="Temperature"
-                description="留空使用服务商默认值。"
                 value={temperature}
                 inputValue={tempInput}
                 onInputChange={handleTempChange}
@@ -218,7 +248,6 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
               <View onLayout={feedback.fieldLayout(['topPInput'])}><SliderField
               {...fieldProps('topPInput')}
                 label="Top P"
-                description="留空使用服务商默认值。"
                 value={topP}
                 inputValue={topPInput}
                 onInputChange={handleTopPChange}
@@ -234,32 +263,21 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
                 value={maxTokens}
                 onChangeText={handleMaxTokensChange}
               /></View>
-            </>
+            </ModelFormSection>
           ) : null}
 
-          {/* 删除模型（仅编辑时显示） */}
-          {isEdit && onDelete ? (
-            <View style={[modelSettingsStyles.section, { borderBottomWidth: 0 }]}>
-              <Button
-                title="删除该模型"
-                variant="danger"
-                onPress={handleDelete}
-                style={{ backgroundColor: theme.colors.background.app }}
-                textStyle={{ color: theme.colors.feedback.error }}
-              />
-            </View>
-          ) : null}
-
-          {testInputError ? <Text accessibilityRole="alert" style={{ color: theme.colors.feedback.error, padding: theme.spacing.lg, fontSize: 13 }}>{testInputError}</Text> : null}
-          {/* 测试连接 */}
-          <View style={modelSettingsStyles.section}>
+          {!isImageGeneration && <ModelFormSection title="测试">
+            {testInputError ? <Text accessibilityRole="alert" style={{ color: theme.colors.feedback.error, marginBottom: theme.spacing.md, fontSize: 13 }}>{testInputError}</Text> : null}
             <Button
-              title={testing ? '测试中…' : '测试连接'}
+              title={testing ? '检查中…' : '测试连接'}
               variant="secondary"
               disabled={testing}
               onPress={handleTestConnection}
             />
-          </View>
+          </ModelFormSection>}
+          {isEdit && onDelete && <Button title="删除配置" variant="text" onPress={handleDelete}
+            style={{ marginTop: theme.spacing.lg }} textStyle={{ color: theme.colors.feedback.error }} />}
+          </ThemedSurface>
         </ScrollView>
       </KeyboardAvoidingContainer>
 
@@ -270,6 +288,8 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
           selectedModel={model}
           onSelect={handleSelectModel}
           onClose={() => setShowModelPicker(false)}
+          loading={isLoadingModels} error={testInputError}
+          onRefresh={isImageGeneration ? undefined : () => { void handleFetchModels(); }} onRetry={isImageGeneration ? undefined : () => { void handleFetchModels(); }}
           title="选择模型"
           emptyText="暂无可用模型"
         />

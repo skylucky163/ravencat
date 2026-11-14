@@ -184,3 +184,4 @@ export {
   subscribeApplicationExecutions,
   type ApplicationExecutionRequest,
 } from './BackgroundRuntime';
+export { saveImageToGallery } from './SaveImageToGallery';

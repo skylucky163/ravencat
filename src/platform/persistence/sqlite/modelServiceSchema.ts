@@ -1,7 +1,7 @@
 /** 服务与用途分离；升级保留模型 ID、摘要引用与全部业务参数。 */
 import type { DatabaseWriteExecutor } from '../runtime';
 
-export const MODEL_SERVICE_SCHEMA = `
+export const LEGACY_MODEL_SERVICE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS model_service_configs (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT NOT NULL,
   auth_type TEXT NOT NULL CHECK (auth_type IN ('apiKey', 'tencentCloud')),

@@ -6,5 +6,7 @@ export interface MomentShareSnapshot {
   content: string;
   locationLabel: string | null;
   createdAt: string;
+  /** 旧的持久化分享没有此字段；新分享保存发送时的最后编辑时间。 */
+  editedAt?: string | null;
   images: { mediaAssetId: string; analysisText: string | null }[];
 }

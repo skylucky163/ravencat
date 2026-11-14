@@ -12,7 +12,8 @@ export interface IChatTurnPresentationRepository {
   listPublishedMessageIds(runIds: readonly string[]): Promise<number[]>;
   complete(runId: string): Promise<boolean>;
   listHistory(sessionId: string, window?: ChatTurnPresentationWindow): Promise<ChatTurnPresentationHistory[]>;
-  listInterruptedContext(sessionId: string, fromInputId: number, toInputId?: number): Promise<ChatInterruptedTurnContext[]>;
+  /** 未消费输入包含已发生正文；普通历史已读取封存消息，只补独立执行资料。 */
+  listInterruptedContext(sessionId: string, fromInputId: number, toInputId?: number, scope?: 'pending_input' | 'history'): Promise<ChatInterruptedTurnContext[]>;
   listOpenRunIds(sessionId: string): Promise<string[]>;
   interruptOrphans(activeRunIds: readonly string[]): Promise<void>;
   interrupt(runId: string, reason: string): Promise<void>;

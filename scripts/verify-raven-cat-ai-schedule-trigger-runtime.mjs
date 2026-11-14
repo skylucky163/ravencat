@@ -19,13 +19,17 @@ async function importTypeScriptModule(relativePath, transform = (source) => sour
     fileName: sourcePath,
   });
   const target = path.join(tmpDir, `${path.basename(relativePath, '.ts')}.mjs`);
-  fs.writeFileSync(target, output.outputText, 'utf8');
+  fs.writeFileSync(target, output.outputText
+    .replaceAll("'./AIScheduleTiming'", "'./AIScheduleTiming.mjs'")
+    .replaceAll("'../domain/AIScheduleTiming'", "'./AIScheduleTiming.mjs'")
+    .replaceAll("'./AIScheduleTimingPersistence'", "'./AIScheduleTimingPersistence.mjs'"), 'utf8');
   return import(`${pathToFileURL(target).href}?v=${Date.now()}-${Math.random()}`);
 }
 
 // ---------------------------------------------------------------------------
 // Part A：SQLite Repository claim CAS（due-time + stale projection）与 authority invalidation。
 // ---------------------------------------------------------------------------
+await importTypeScriptModule('src/features/companion/domain/AIScheduleTiming.ts');
 const domain = await importTypeScriptModule('src/features/companion/domain/AISchedule.ts');
 const schema = await importTypeScriptModule('src/platform/persistence/sqlite/ravenCatCompanionSchema.ts');
 
@@ -36,6 +40,8 @@ db.exec(schema.RAVEN_CAT_COMPANION_STATE_SCHEMA);
 db.exec("INSERT INTO raven_cat_companion_state (id, desired_enabled, activation_status, host_ai_id, created_at, updated_at) VALUES ('default', 1, 'enabled', 'host-ai', '2026-09-01', '2026-09-01')");
 db.exec(schema.RAVEN_CAT_AI_SCHEDULES_SCHEMA);
 db.exec(schema.RAVEN_CAT_AI_SCHEDULE_CONTEXT_SCHEMA);
+db.exec(schema.RAVEN_CAT_AI_SCHEDULE_WAIT_SCHEMA);
+db.exec("CREATE TABLE raven_cat_contact_settings(id TEXT PRIMARY KEY, follow_up_enabled INTEGER DEFAULT 0, follow_up_interval_minutes INTEGER DEFAULT 10); INSERT INTO raven_cat_contact_settings(id) VALUES ('default');");
 db.exec(schema.RAVEN_CAT_AI_SCHEDULES_OWNER_STATUS_TIME_INDEX);
 db.exec(schema.RAVEN_CAT_AI_SCHEDULES_OWNER_TIME_INDEX);
 
@@ -61,6 +67,8 @@ fs.writeFileSync(path.join(tmpDir, 'TestPersistence.mjs'), `
   };
 `, 'utf8');
 
+await importTypeScriptModule('src/features/companion/infrastructure/AIScheduleTimingPersistence.ts', source => source
+  .replace("'../domain/AISchedule'", "'./AISchedule.mjs'"));
 const repositoryModule = await importTypeScriptModule(
   'src/features/companion/infrastructure/SQLiteAIScheduleRepository.ts',
   (source) => source
@@ -94,7 +102,7 @@ const created = await repository.createScheduled(domain.createAISchedule(baseSch
 assert.equal(created.status, 'created');
 
 // 5. 提前到达 → not_due。
-assert.equal((await repository.claimScheduled({
+assert.equal((await repository.claimScheduled({ conversationId: 'test-chat',
   scheduleId: 'schedule-a', ownerAIId: 'host-ai', runId: 'run-a',
   claimedAt: '2026-09-13T08:59:00.000Z',
   expectedRemindAt: '2026-09-13T09:00:00.000Z',
@@ -102,7 +110,7 @@ assert.equal((await repository.claimScheduled({
 })).status, 'not_due');
 
 // 4. stale projection：expectedRemindAt 与当前 remind_at 不一致 → stale_projection。
-assert.equal((await repository.claimScheduled({
+assert.equal((await repository.claimScheduled({ conversationId: 'test-chat',
   scheduleId: 'schedule-a', ownerAIId: 'host-ai', runId: 'run-a',
   claimedAt: '2026-09-13T09:01:00.000Z',
   expectedRemindAt: '2026-09-13T10:00:00.000Z',
@@ -110,7 +118,7 @@ assert.equal((await repository.claimScheduled({
 })).status, 'stale_projection');
 
 // 4. stale projection：projectionToken 与当前 updated_at 不一致 → stale_projection。
-assert.equal((await repository.claimScheduled({
+assert.equal((await repository.claimScheduled({ conversationId: 'test-chat',
   scheduleId: 'schedule-a', ownerAIId: 'host-ai', runId: 'run-a',
   claimedAt: '2026-09-13T09:01:00.000Z',
   expectedRemindAt: '2026-09-13T09:00:00.000Z',
@@ -118,7 +126,7 @@ assert.equal((await repository.claimScheduled({
 })).status, 'stale_projection');
 
 // 6. duplicate：第一条 claim winner，第二条 already_claimed。
-const first = await repository.claimScheduled({
+const first = await repository.claimScheduled({ conversationId: 'test-chat',
   scheduleId: 'schedule-a', ownerAIId: 'host-ai', runId: 'run-a',
   claimedAt: '2026-09-13T09:01:00.000Z',
   expectedRemindAt: '2026-09-13T09:00:00.000Z',
@@ -126,7 +134,7 @@ const first = await repository.claimScheduled({
 });
 assert.equal(first.status, 'claimed');
 assert.equal(first.schedule.claimedByRunId, 'run-a');
-assert.equal((await repository.claimScheduled({
+assert.equal((await repository.claimScheduled({ conversationId: 'test-chat',
   scheduleId: 'schedule-a', ownerAIId: 'host-ai', runId: 'run-b',
   claimedAt: '2026-09-13T09:02:00.000Z',
   expectedRemindAt: '2026-09-13T09:00:00.000Z',
@@ -220,6 +228,19 @@ fs.writeFileSync(path.join(tmpDir, 'TestAIScheduleApplication.mjs'), `
     }),
   });
   export const claimAIScheduleCommand = async () => { throw new Error('unused'); };
+  export const removeAIScheduleCalendarLinksCommand = async input => {
+    const truth=globalThis.__aiScheduleProjectionTruth;
+    const anchor=input.scope==='all'?null:truth.get(input.scheduleId);
+    if(input.scope!=='all'&&!anchor)return {status:'error',code:'not_found'};
+    if(anchor&&anchor.ownerAIId!==input.ownerAIId)return {status:'error',code:'not_owner'};
+    const seriesId=anchor?.seriesId??anchor?.scheduleId;
+    const selected=[...truth.values()].filter(item=>item.ownerAIId===input.ownerAIId&&(input.scope==='all'
+      ||input.scope==='schedule'&&item.scheduleId===input.scheduleId
+      ||input.scope==='series'&&(item.seriesId===seriesId||item.scheduleId===seriesId)));
+    let updatedCount=0;
+    for(const item of selected){if(item.systemCalendar)updatedCount++;saveTruth({...item,systemCalendar:false});}
+    return {status:'updated',updatedCount,scheduleIds:selected.map(item=>item.scheduleId)};
+  };
 `, 'utf8');
 
 fs.writeFileSync(path.join(tmpDir, 'TestRuntimeDeps.mjs'), `
@@ -591,6 +612,45 @@ const pausedCalendarOwner = new ownerModule.AIScheduleProjectionOwner({
 await pausedCalendarOwner.reconcile();
 assert.equal(calendarEvents.size, 1, '暂停主动伴随不撤销系统提醒');
 
+// 独立清理系统日历：历史、整个系列、部分失败与权限恢复均不取消内部日程。
+projectionTruth.clear();calendarEvents.clear();calendarAccess='ready';
+for(const item of [
+  {...baseSchedule,scheduleId:'calendar-old',seriesId:'calendar-series',status:'consumed',systemCalendar:true},
+  {...baseSchedule,scheduleId:'calendar-next',seriesId:'calendar-series',systemCalendar:true},
+  {...baseSchedule,scheduleId:'calendar-alone',systemCalendar:true},
+  {...baseSchedule,scheduleId:'foreign-calendar',ownerAIId:'other-ai',systemCalendar:true},
+]){projectionTruth.set(item.scheduleId,item);calendarEvents.set(item.scheduleId,{key:item.scheduleId});}
+calendarEvents.set('user-personal-calendar',{key:'user-personal-calendar'});
+const nativeBeforeRemoval=fakeNativeCalls.length;
+const oldProjectionToken=projectionTruth.get('calendar-next').updatedAt;
+const failedKeys=new Set(['calendar-next']);
+calendar.listKeys=async()=>[...calendarEvents.keys()].flatMap(key=>[key,key]);
+calendar.remove=async key=>{if(failedKeys.has(key))throw new Error('部分日历事件暂无法删除');calendarEvents.delete(key);};
+let removed=await calendarOwner.removeCalendarEvents({ownerAIId:'host-ai',scope:'series',scheduleId:'calendar-old'});
+assert.equal(removed.calendar,'failed');assert.equal(removed.removedCount,1);assert.equal(removed.pendingCount,1);
+assert.equal(projectionTruth.get('calendar-old').status,'consumed');
+assert.equal(projectionTruth.get('calendar-next').status,'scheduled');
+assert.equal(projectionTruth.get('calendar-next').updatedAt,oldProjectionToken);
+assert.equal(projectionTruth.get('calendar-next').systemCalendar,false);
+assert.equal(projectionTruth.get('calendar-alone').systemCalendar,true);
+assert.equal(fakeNativeCalls.length,nativeBeforeRemoval,'不重排或取消内部 AI 闹钟');
+failedKeys.clear();calendarAccess='no_writable_calendar';
+removed=await calendarOwner.removeCalendarEvents({ownerAIId:'host-ai',scope:'series',scheduleId:'calendar-old'});
+assert.equal(removed.calendar,'synced');assert.equal(removed.updatedCount,0);assert.equal(removed.removedCount,1,
+  '没有新建可写日历也能重试清理已有事件；已经关闭关联的记录仍可找到残留事件');
+calendarAccess='permission_required';
+removed=await calendarOwner.removeCalendarEvents({ownerAIId:'host-ai',scope:'all'});
+assert.equal(removed.calendar,'permission_required');assert.equal(removed.pendingCount,null);
+assert.equal(projectionTruth.get('calendar-alone').systemCalendar,false,'缺权限也先阻止未来导出');
+assert.equal(calendarEvents.has('calendar-alone'),true,'不能把缺权限伪装成系统事件已删除');
+calendarAccess='ready';
+removed=await calendarOwner.removeCalendarEvents({ownerAIId:'host-ai',scope:'all'});
+assert.equal(removed.calendar,'synced');assert.equal(removed.removedCount,1);
+assert.deepEqual([...calendarEvents.keys()].sort(),['foreign-calendar','user-personal-calendar']);
+assert.equal(projectionTruth.get('foreign-calendar').systemCalendar,true);
+assert.equal(fakeNativeCalls.length,nativeBeforeRemoval);
+projectionTruth.clear();calendarEvents.clear();
+
 // coordinator 的 retry 是单飞、合并、一次性且严格最多四次；第五个 timer 不得产生。
 const repairCoordinatorModule = await importTypeScriptModule(
   'src/features/companion/application/AIScheduleProjectionRepairCoordinator.ts',
@@ -675,6 +735,7 @@ const runnerMocks = {
         mergeClaimedRun: async () => {}, mergeScheduled: async () => {},
       } },
       chat: {
+        listAgentActivityEvidence: async () => [],
         resolveCanonicalConversation: async () => ({ id: 'canonical-session' }),
         runInConversation: async (_sessionId, _runId, _priority, execute, signal) => {
           if (admissionGate) await admissionGate;
@@ -684,6 +745,7 @@ const runnerMocks = {
     }),
   },
   './AIScheduleProjectionOwner': {
+    reconcileAIScheduleProjections: async () => ({}),
     claimAIScheduleForHeadless: async (input) => {
       runnerCalls.push(['claim', input]);
       const outcome = claimOutcomes.shift();

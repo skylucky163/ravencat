@@ -16,6 +16,7 @@ interface UseAddAIFormResult {
   name: string;
   setName: (name: string) => void;
   apiKey: string;
+  serviceConfigId: string;
   apiBaseUrl: string;
   selectedModel: string;
   systemPrompt: string;
@@ -48,6 +49,7 @@ export default function useAddAIForm({ onAdded, onBack }: UseAddAIFormOptions): 
     name,
     setName,
     apiKey,
+    serviceConfigId,
     setApiKey,
     apiBaseUrl,
     setApiBaseUrl,
@@ -114,6 +116,7 @@ export default function useAddAIForm({ onAdded, onBack }: UseAddAIFormOptions): 
 
   return {
     handleFillServiceConnection: service => { resetModelFlow(); fillServiceConnection(service); },
+    serviceConfigId,
     // 表单字段
     name,
     setName,

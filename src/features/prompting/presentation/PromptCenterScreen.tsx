@@ -34,7 +34,7 @@ const RULE_NAMES: Record<RuleDefinitionId, string> = {
   'internal.group_chat_secondary_summary': '群聊二级摘要提示词',
   'internal.vision_ocr': '图片识别提示词',
 };
-const PACKAGE_NAMES: Record<string, string> = { kimiOfficial: 'Kimi 官方工具', webTools: '联网工具包', media: '图片', applicationSettings: '应用设置工具', groupChat: '群聊', protocol: '协议空间', moments: '时刻', wallet: '羽库记账', calls: '通话', memory: '记忆', chat: '语音', stickers: '表情包', togetherListening: '一起听', host: '主理 AI 专属' };
+const PACKAGE_NAMES: Record<string, string> = { kimiOfficial: 'Kimi 官方工具', deepseekOfficial: 'DeepSeek 官方工具', webTools: '联网工具包', media: '图片', applicationSettings: '应用设置工具', groupChat: '群聊', protocol: '协议空间', moments: '时刻', wallet: '羽库记账', calls: '通话', memory: '记忆', chat: '语音', stickers: '表情包', togetherListening: '一起听', host: '主理 AI 专属' };
 
 /** 展示按产品用途分包；摘要工具仍由 Chat 拥有，主理工具统一在专属包管理。 */
 function getToolPackageId(tool: Snapshot['tools'][number]): string {
@@ -348,13 +348,26 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
     ],
   } : undefined;
   const rightButton = page.kind === 'custom' ? <HeaderAddButton accessibilityLabel="添加自定义提示词" disabled={busy} onPress={() => openUser(null)} /> : undefined;
+  const assistantSelector = <TouchableOpacity accessibilityRole="button"
+    accessibilityLabel={assistant ? `切换编辑的 AI，当前：${getAssistantDisplayName(assistant)}` : '暂无 AI'}
+    accessibilityState={{ disabled: !assistants.length || busy }} disabled={!assistants.length || busy}
+    onPress={() => setSelectorOpen(true)} activeOpacity={0.7}
+    style={[theme.effects.glass.enabled ? styles.glassRowInner : styles.row, !assistants.length && styles.muted]}>
+    <View style={styles.copy}>
+      <Text style={styles.assistantName}>{assistant ? getAssistantDisplayName(assistant) : '暂无 AI'}</Text>
+      <Text style={styles.subtitle}>{assistant ? `编辑对象${assistant.isHostAI ? ' · 主理 AI' : ''} · 专属配置仅对这位 AI 生效，身份池名单全局共用` : '添加 AI 后可选择编辑对象'}</Text>
+    </View>
+    {!!assistants.length && <Text style={styles.action}>切换</Text>}
+  </TouchableOpacity>;
   return <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}><KeyboardAvoidingContainer enabled={page.kind === 'editor' || page.kind === 'userEditor' || page.kind === 'persona'} style={styles.screen}>
     <NavigationHeader title={title} onGoBack={onBack} rightButton={rightButton} help={headerHelp} />
     {assistantListError ? <Text style={styles.description}>未能读取 AI 列表，请返回后重新打开。</Text> : !snapshot ? loadError ? <Text style={styles.description}>未能读取提示词配置，请返回后重新打开。</Text> : <ActivityIndicator style={styles.loading} /> : <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
       {page.kind === 'overview' && <>
-        <View style={styles.hero}><Text style={styles.eyebrow}>{assistant ? getAssistantDisplayName(assistant) : '全局默认'} · 中文</Text><Text style={styles.heading}>从身份，到此刻</Text><Text style={styles.description}>单聊、群聊、记账回应和日程唤醒共用以下顺序。
+        <View style={styles.hero}><Text style={styles.heading}>从身份，到此刻</Text><Text style={styles.description}>单聊、群聊、记账回应和日程唤醒共用以下顺序。
 有内容且满足场景条件的条目才会带入。</Text></View>
-        {overviewRow('编辑对象', assistant ? `${getAssistantDisplayName(assistant)}${assistant.isHostAI ? ' · 主理 AI' : ''} · 专属配置只对这位 AI 生效，身份池名单全局共用` : '暂无 AI', () => setSelectorOpen(true), undefined, !assistants.length)}
+        {theme.effects.glass.enabled
+          ? <GlassSurface material={{ cornerRadius: theme.radius.lg }} style={styles.glassRow}>{assistantSelector}</GlassSurface>
+          : assistantSelector}
         {CHAT_PROMPT_READING_FLOW.map((step, index) => <React.Fragment key={step.id}>
           {(index === 0 || CHAT_PROMPT_READING_FLOW[index - 1].section !== step.section)
             && <Text style={styles.section}>{readingSections[step.section]}</Text>}
@@ -457,7 +470,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
           const members = tools.filter((tool) => getToolPackageId(tool) === id);
           const unavailable = members.every(toolIsUnavailable);
           return <View key={id} style={unavailable && styles.muted}>{row(PACKAGE_NAMES[id] ?? id,
-            `${members.length} 个工具${unavailable ? ' · 当前接口不支持，仅限 Moonshot 官方 API' : ''}`,
+            `${members.length} 个工具${unavailable ? ' · 当前接口不支持，需使用对应服务商的官方 API' : ''}`,
             () => onOpenPage({ kind: 'package', id }))}</View>;
         })}
       </>}

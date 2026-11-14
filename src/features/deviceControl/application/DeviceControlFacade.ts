@@ -73,13 +73,11 @@ export type ReleaseAiSoftLockApplicationResult =
   | { status: 'released'; lock: SoftAppLock; native: DeviceControlSynchronizationResult }
   | { status: 'not_found'; native: DeviceControlSynchronizationResult };
 
-export type ExpireDueSoftLocksResult = {
+export type ReconcileDeviceControlResult = {
   expired: SoftAppLock[];
   active: SoftAppLock[];
   native: DeviceControlSynchronizationResult;
 };
-
-export type ReconcileDeviceControlResult = ExpireDueSoftLocksResult;
 
 function toSoftLockProjection(lock: SoftAppLock): NativeSoftLockProjection {
   return {
@@ -192,18 +190,6 @@ export class DeviceControlFacade {
     return result.outcome === 'released'
       ? { status: 'released', lock: result.lock, native }
       : { status: 'not_found', native };
-  }
-
-  async expireDueSoftLocks(): Promise<ExpireDueSoftLocksResult> {
-    return this.runCommand(() => this.expireDueSoftLocksCommand());
-  }
-
-  private async expireDueSoftLocksCommand(): Promise<ExpireDueSoftLocksResult> {
-    const nowEpochMs = this.now();
-    const expired = await this.dependencies.repository.expireDue(nowEpochMs);
-    const active = await this.dependencies.repository.listActive(nowEpochMs);
-    const native = await this.reconcileAndStopIfIdle(active);
-    return { expired, active, native };
   }
 
   /**

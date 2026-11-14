@@ -14,6 +14,7 @@ import { getCompanionRuntimeDependencies } from './CompanionRuntimeDependencies'
 import {
   activateCompanionScheduling,
   disableCompanionScheduling,
+  reconcileAIScheduleProjections,
 } from './AIScheduleProjectionOwner';
 
 export interface CompanionProductState {
@@ -51,7 +52,7 @@ export async function loadCompanionProductState(): Promise<CompanionProductState
 export async function updateCompanionProductSettings(
   updates: UpdateCompanionSettingsInput,
 ): Promise<CompanionSettings> {
-  return getCompanionRuntimeDependencies().repositories.companionSettings.update(
+  const settings = await getCompanionRuntimeDependencies().repositories.companionSettings.update(
     updates.userScreenCaptureBlacklist === undefined
       ? updates
       : {
@@ -61,6 +62,10 @@ export async function updateCompanionProductSettings(
           ),
         },
   );
+  if (updates.followUpEnabled !== undefined || updates.followUpIntervalMinutes !== undefined) {
+    await reconcileAIScheduleProjections();
+  }
+  return settings;
 }
 
 export async function loadCompanionUserScreenCaptureBlacklist(): Promise<string[]> {

@@ -11,7 +11,7 @@ let assistants = [
 let candidateReads = 0;
 const momentTools = load('src/features/moments/aiTools/AICreateMomentTool.ts', {
   '@features/assistants': { listAIAssistants: async () => { candidateReads++; return assistants; }, getAssistantDisplayName: (assistant) => assistant.name },
-  '@shared/runtime/abortSignal': {}, '../application/CreateMoment': {}, '../domain/MomentErrors': {},
+  '@shared/runtime/abortSignal': {}, '../application/CreateMoment': { MAX_MOMENT_MEDIA_COUNT: 9 }, '../domain/MomentErrors': {},
 });
 const configuredMoment = await momentTools.createMomentToolForRun();
 const candidateDescription = (tool) => tool.definition.parameters.properties.audience.properties.agentIds.description;

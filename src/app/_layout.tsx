@@ -3,12 +3,16 @@ import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import KimiPhoneHost from '@host/KimiPhoneHost';
 import StickerProgressNavigationBoundary from '@host/navigation/StickerProgressNavigationBoundary';
+import ChatCodeNavigationBoundary from '@host/navigation/ChatCodeNavigationBoundary';
+import ModelManagementNavigationBoundary from '@host/navigation/ModelManagementNavigationBoundary';
 
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <KimiPhoneHost>
         <StickerProgressNavigationBoundary>
+        <ChatCodeNavigationBoundary>
+        <ModelManagementNavigationBoundary>
         <Stack
           screenOptions={{
             animation: 'slide_from_right',
@@ -22,6 +26,7 @@ export default function RootLayout() {
           {/* 会话身份决定页面唯一性，连续点击不能创建多个相同聊天页。 */}
           <Stack.Screen name="chat/[aiId]/index" dangerouslySingular />
           <Stack.Screen name="chat/groups/[groupId]" dangerouslySingular />
+          <Stack.Screen name="chat/code/[previewId]" dangerouslySingular />
           <Stack.Screen name="wallet/index" />
           <Stack.Screen name="auxiliary-models/index" />
           <Stack.Screen name="auxiliary-models/services/index" />
@@ -38,9 +43,10 @@ export default function RootLayout() {
           <Stack.Screen name="memory/edit" />
           <Stack.Screen name="memory/trigger" />
           <Stack.Screen name="prompt-center/index" />
-          <Stack.Screen name="backup/index" />
+          <Stack.Screen name="data-management" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="assistants/[aiId]" dangerouslySingular />
+          <Stack.Screen name="assistants/[aiId]/works" dangerouslySingular />
           <Stack.Screen name="assistants/[aiId]/edit" dangerouslySingular />
           <Stack.Screen name="assistants/[aiId]/moments" dangerouslySingular />
           <Stack.Screen name="assistants/[aiId]/model-settings" dangerouslySingular />
@@ -49,6 +55,7 @@ export default function RootLayout() {
           <Stack.Screen name="favorites" />
           <Stack.Screen name="profile/[field]" />
           <Stack.Screen name="moments/publish" />
+          <Stack.Screen name="moments/edit" />
           <Stack.Screen name="moments/settings" />
           <Stack.Screen name="moments/[momentId]" dangerouslySingular />
           <Stack.Screen name="raven-cat/index" />
@@ -64,6 +71,8 @@ export default function RootLayout() {
             options={{ animation: 'none', presentation: 'card' }}
           />
         </Stack>
+        </ModelManagementNavigationBoundary>
+        </ChatCodeNavigationBoundary>
         </StickerProgressNavigationBoundary>
       </KimiPhoneHost>
     </GestureHandlerRootView>

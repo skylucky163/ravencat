@@ -10,6 +10,7 @@ import { useChatMessageSelection } from '../messages/components/useChatMessageSe
 import { useChatMessageShare } from '../messages/components/useChatMessageShare';
 import { useChatFavoriteAction } from '../messages/components/useChatFavoriteAction';
 import { useChatStickerAction } from '../messages/components/useChatStickerAction';
+import { useChatSaveImagesAction } from '../messages/components/useChatSaveImagesAction';
 import { getChatMessageActions } from '../../messages/domain/ChatMessageActions';
 import ChatContentShareSheet from '../messages/components/ChatContentShareSheet';
 import { ChatSelectionHeader, ChatSelectionFooter } from '../messages/components/ChatSelectionBars';
@@ -51,6 +52,7 @@ import ChatMessageTextSelectionSheet from '../messages/components/ChatMessageTex
 import { getChatSelectionKey } from '../../messages/domain/ChatMessageSelection';
 import { canEditChatMessage } from '../../messages/domain/ChatMessageEditing';
 import { copyTextToClipboard } from '@platform/device';
+import { readChatCodeBlock } from '../../messages/domain/ChatCodeBlock';
 import { useAttachmentDraft } from '../messages/ChatDetail/useAttachmentDraft';
 import { translateMessageText } from '@features/integrations';
 import { deleteChatMessage } from '../../messages/application/DeleteChatMessage';
@@ -286,6 +288,7 @@ export default function GroupChatDetail({
   const share = useChatMessageShare({ sessionId, sourceName: group.name, isActive, onShared: selection.exit });
   const favoriteMessage = useChatFavoriteAction(selectedMessage, group.name);
   const stickerAction = useChatStickerAction(selectedMessage);
+  const saveImages = useChatSaveImagesAction(selectedMessage, isActive);
   const messageActions = selectedMessage ? getChatMessageActions(selectedMessage) : null;
   const handleShareMessage = useCallback(() => {
     dismissInputSurface();
@@ -329,11 +332,11 @@ export default function GroupChatDetail({
   });
 
   const refreshGroupDetails = useCallback(async () => {
-    const [details, directory, runningPlan] = await Promise.all([
+    const [details, runningPlan] = await Promise.all([
       getGroupChat(sessionId),
-      getGroupParticipantDirectory(sessionId),
       getActiveGroupSpeechPlan(sessionId),
     ]);
+    const directory = details ? await getGroupParticipantDirectory(details) : null;
     setGroupDetails(details);
     setParticipantDirectory(directory);
     setActivePlan(runningPlan);
@@ -453,7 +456,9 @@ export default function GroupChatDetail({
       showAppDialog({ title: '终止失败', message: error instanceof Error ? error.message : '强制终止失败', tone: 'error' });
     } finally {
       setIsTerminating(false);
-      await refreshGroupDetails();
+      await refreshGroupDetails().catch((error) => {
+        console.error('[GroupChatDetail] 终止后刷新失败:', error);
+      });
     }
   }, [activePlan, isTerminating, refreshGroupDetails, sessionId]);
 
@@ -522,10 +527,14 @@ export default function GroupChatDetail({
       if (!result.success && result.error) {
         showAppDialog({ title: '召唤失败', message: result.error, tone: 'error' });
       }
+    } catch (error) {
+      showAppDialog({ title: '召唤失败', message: error instanceof Error ? error.message : '召唤失败', tone: 'error' });
     } finally {
       setIsInvoking(false);
       setIsTyping(false);
-      await refreshGroupDetails();
+      await refreshGroupDetails().catch((error) => {
+        console.error('[GroupChatDetail] 召唤后刷新失败:', error);
+      });
     }
   }, [isSummonDisabled, refreshGroupDetails, sessionId]);
 
@@ -573,7 +582,7 @@ export default function GroupChatDetail({
   const handleCopyMessage = useCallback(() => {
     if (!selectedMessage) return;
     try {
-      copyTextToClipboard(selectedMessage.text);
+      copyTextToClipboard(readChatCodeBlock(selectedMessage.text)?.source ?? selectedMessage.text);
       ToastAndroid.show('复制成功', ToastAndroid.SHORT);
     } catch (error) {
       showAppDialog({ title: '复制失败', message: error instanceof Error ? error.message : '无法写入剪贴板', tone: 'error' });
@@ -582,7 +591,7 @@ export default function GroupChatDetail({
 
   const handleSelectMessageText = useCallback(() => {
     dismissInputSurface();
-    setTextSelectionText(selectedMessage!.text);
+    setTextSelectionText(readChatCodeBlock(selectedMessage!.text)?.source ?? selectedMessage!.text);
   }, [dismissInputSurface, selectedMessage]);
 
   const handleRewriteMessage = useCallback(() => {
@@ -868,6 +877,7 @@ export default function GroupChatDetail({
         visible={actionMenuVisible}
         onClose={handleCloseActionMenu}
         position={menuPosition}
+        onSaveImages={saveImages}
         onCopy={selectedMessage?.text.trim() ? handleCopyMessage : undefined}
         onSelectText={selectedMessage?.text.trim() ? handleSelectMessageText : undefined}
         onRewrite={selectedMessage && canEditChatMessage(selectedMessage) ? handleRewriteMessage : undefined}

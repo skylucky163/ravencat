@@ -17,6 +17,12 @@ export function createCommonStyles(theme: PresentationTheme) {
       backgroundColor: theme.colors.background.screen,
     },
 
+    // 由 ThemedSurface 拥有表单材质，样式只规定留白与圆角。
+    formSurface: {
+      margin: theme.spacing.lg,
+      borderRadius: theme.radius.lg,
+    },
+
     // 导航栏保存按钮
     navSaveBtn: {
       padding: theme.spacing.sm,
@@ -30,7 +36,7 @@ export function createCommonStyles(theme: PresentationTheme) {
 
     // 统一输入框
     input: {
-      backgroundColor: theme.colors.background.screen,
+      backgroundColor: theme.colors.surface.input,
       borderRadius: theme.radius.md,
       paddingHorizontal: theme.spacing.md,
       paddingVertical: 12,

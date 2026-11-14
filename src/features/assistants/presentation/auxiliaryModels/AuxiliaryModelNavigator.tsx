@@ -1,5 +1,6 @@
 import ModelServiceListScreen from './ModelServiceListScreen';
 import ModelServiceEditScreen from './ModelServiceEditScreen';
+import { subscribeAuxiliaryModelsChanged } from '../../AuxiliaryModelsChanged';
 /** 辅助模型中心只管理资产，路由适配由 Host 负责。 */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
@@ -55,7 +56,8 @@ export default function AuxiliaryModelNavigator({ onBack, route, onNavigate, ref
     mountedRef.current = true;
     const request = loadRequest.current;
     void loadData();
-    return () => { mountedRef.current = false; request.revision++; };
+    const unsubscribe = subscribeAuxiliaryModelsChanged(() => { void loadData(false); });
+    return () => { mountedRef.current = false; request.revision++; unsubscribe(); };
   }, [loadData]);
   useEffect(() => {
     if (previousRefreshRevisionRef.current === refreshRevision) return;
@@ -108,11 +110,10 @@ export default function AuxiliaryModelNavigator({ onBack, route, onNavigate, ref
         temperature: formData.temperature,
         topP: formData.topP,
         maxTokens: formData.maxTokens,
-        metadataJson: formData.metadataJson,
       });
 
       if (result.skipped) {
-        showAppDialog({ title: '提示', message: result.skipReason || '请先补全 Base URL、API Key 和模型名称。' });
+        showAppDialog({ title: '提示', message: '请先补全 Base URL、API Key 和模型名称。' });
         return;
       }
 

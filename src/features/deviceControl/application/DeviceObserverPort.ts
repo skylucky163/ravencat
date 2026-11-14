@@ -115,9 +115,6 @@ export interface DeviceObserverPort {
   addConnectionStateListener(
     listener: (state: DeviceObserverConnectionState) => void
   ): DeviceObserverSubscription;
-  addWindowStateListener(
-    listener: (state: DeviceObserverWindowState) => void
-  ): DeviceObserverSubscription;
   getConnectionState(): Promise<DeviceObserverConnectionState>;
   getCurrentWindowState(): Promise<DeviceObserverWindowState>;
   getInstalledLaunchableApps(): Promise<DeviceObserverInstalledLaunchableApp[]>;

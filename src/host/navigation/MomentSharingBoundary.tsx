@@ -18,8 +18,11 @@ export default function MomentSharingBoundary({ children }: { children: ReactNod
   const openAssistantProfile = useCallback((assistantId: string) => {
     router.push(`/assistants/${encodeURIComponent(assistantId)}` as Href);
   }, [router]);
+  const editMoment = useCallback((momentId: string) => {
+    router.push(`/moments/edit?momentId=${encodeURIComponent(momentId)}` as Href);
+  }, [router]);
   return <ChatShareNavigationProvider openMoment={openMoment}>
-    <MomentNavigationProvider openMoment={openMoment} shareMoment={shareMoment} openAssistantProfile={openAssistantProfile}>
+    <MomentNavigationProvider openMoment={openMoment} editMoment={editMoment} shareMoment={shareMoment} openAssistantProfile={openAssistantProfile}>
       {children}
       <ChatContentShareSheet share={share} />
     </MomentNavigationProvider>

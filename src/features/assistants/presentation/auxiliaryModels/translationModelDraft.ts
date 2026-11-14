@@ -1,4 +1,4 @@
-/** 翻译连接与提供方参数作为一组提交，避免切换提供方时混用旧凭据。 */
+/** 翻译连接与参数作为一组提交；提供方只在创建时选择。 */
 import { readTranslationMetadata, validateTranslationModelConfig, type TranslationModelConfig, type TranslationProvider } from '@features/integrations';
 import type { DraftCommit, DraftErrors } from '@shared/ui/AutoSaveDraftEditor';
 import type { AuxiliaryModelConfig, UpdateAuxiliaryModelConfigInput } from '../../domain/AuxiliaryModel';
@@ -10,7 +10,7 @@ export interface TranslationModelDraft {
   source: string; target: string; secretId: string; region: string; projectId: string;
 }
 const connectionKeys: (keyof TranslationModelDraft)[] = ['serviceConfigId', 'provider', 'baseUrl', 'apiKey', 'model', 'source', 'target', 'secretId', 'region', 'projectId'];
-export function switchTranslationProvider(provider: TranslationProvider): Omit<TranslationModelDraft, 'name'> {
+export function createTranslationProviderDraft(provider: TranslationProvider): Omit<TranslationModelDraft, 'name'> {
   return {
     serviceConfigId: '', provider, baseUrl: provider === 'aiModel' ? '' : 'https://tmt.tencentcloudapi.com',
     apiKey: '', model: provider === 'aiModel' ? '' : 'TextTranslate',
@@ -18,7 +18,7 @@ export function switchTranslationProvider(provider: TranslationProvider): Omit<T
   };
 }
 export function getTranslationModelDraft(data: AuxiliaryModelConfig | null): TranslationModelDraft {
-  if (!data) return { name: '', ...switchTranslationProvider('aiModel') };
+  if (!data) return { name: '', ...createTranslationProviderDraft('aiModel') };
   const metadata = readTranslationMetadata(data.metadataJson!);
   return {
     serviceConfigId: data.serviceConfigId ?? '', name: data.name, provider: metadata.provider,

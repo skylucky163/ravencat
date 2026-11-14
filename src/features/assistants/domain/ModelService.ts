@@ -5,13 +5,32 @@ export interface ModelServiceConnection {
   authType: 'apiKey' | 'tencentCloud';
   credentialsJson: string;
 }
+/** 具体 Key 的有效连接；name 与 baseUrl 由所属分组提供，id 是业务绑定身份。 */
 export interface ModelServiceConfig extends ModelServiceConnection {
   id: string;
+  groupId: string;
   name: string;
+  keyName: string;
+  ordinal: number;
   createdAt: string;
   updatedAt: string;
 }
-export interface SaveModelServiceInput extends ModelServiceConnection { name: string }
+
+export interface ModelServiceGroup {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authType: ModelServiceConnection['authType'];
+  nextKeyOrdinal: number;
+  keys: ModelServiceConfig[];
+}
+export interface ModelServiceKeyInput { name: string; apiKey: string; credentialsJson: string; ordinal?: number }
+export interface CreateModelServiceGroupInput {
+  name: string;
+  baseUrl: string;
+  authType: ModelServiceConnection['authType'];
+  keys: ModelServiceKeyInput[];
+}
 
 /** 专用提供方拥有自己的协议和凭据，只有兼容接口复用通用服务。 */
 export function supportsModelService(capabilityKind: string, metadataJson: string | null | undefined): boolean {

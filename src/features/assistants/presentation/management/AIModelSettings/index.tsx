@@ -6,7 +6,7 @@ import { View, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { AIProfile } from '../../../domain/AIProfile';
 
-import { useTheme } from '@shared/theme';
+import { ThemedSurface, useTheme } from '@shared/theme';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import { KeyboardAvoidingContainer, ModelPickerModal, Button, InputField, ToggleField, AIInfoCard, SliderField, showAppDialog, type AppDialogButton, type AppDialogTone } from '@shared/ui';
 import useModelSettings from './useModelSettings';
@@ -64,6 +64,7 @@ export default function AIModelSettings({
     testResult,
     apiBaseUrl,
     apiKey,
+    serviceConfigId,
     enableTools,
     disableThinking,
     isHostAI,
@@ -108,11 +109,11 @@ export default function AIModelSettings({
         <ScrollView
           ref={feedback.scrollRef}
           style={commonStyles.screenContainer}
-          contentContainerStyle={styles.contentContainer}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
         >
+          <ThemedSurface variant="card" style={[commonStyles.formSurface, styles.contentContainer]}>
           {/* AI 信息卡片 */}
           <View style={styles.section}>
             <AIInfoCard
@@ -155,7 +156,7 @@ export default function AIModelSettings({
           </View>
 
           <View style={styles.section}>
-            <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} onFill={fillServiceConnection} disabled={isTesting || isLoadingModels} />
+            <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} serviceConfigId={serviceConfigId} onFill={fillServiceConnection} disabled={isTesting || isLoadingModels} />
           </View>
 
           {/* 模型选择 + 测试连接 */}
@@ -256,6 +257,7 @@ export default function AIModelSettings({
             <AssistantVoiceModelPicker assistantId={aiAssistant.id} />
           </View>
 
+          </ThemedSurface>
         </ScrollView>
       </KeyboardAvoidingContainer>
 

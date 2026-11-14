@@ -1,6 +1,6 @@
 /** 跨 Feature 初始选择只在 Host 装配；SQL 与用户选择保护留在各 owner。 */
-import { configureAuxiliaryModelInitialization } from '@features/assistants/composition';
-import { invalidateChatSummaryModelReferencesInTransaction, invalidateChatSummaryServiceReferencesInTransaction } from '@features/chat/composition';
+import { aiAssistantRepository, configureAuxiliaryModelInitialization } from '@features/assistants/composition';
+import { groupChatRepository, invalidateChatSummaryModelReferencesInTransaction, invalidateChatSummaryServiceReferencesInTransaction } from '@features/chat/composition';
 import { initializeSpeechRecognitionModelInTransaction } from '@features/speech/composition';
 import { initializeTranslationModelInTransaction } from '@features/integrations/composition';
 import { momentRepository } from '@features/moments/composition';
@@ -15,6 +15,11 @@ export function configureAuxiliaryModelInitializationRuntime(): void {
       await stickerRepository.invalidateEmbeddingModelInTransaction(transaction, modelConfigId);
     },
     invalidateServiceReferencesInTransaction: invalidateChatSummaryServiceReferencesInTransaction,
+    async detachServiceReferencesInTransaction(transaction, serviceConfigId, now) {
+      const assistantIds = await aiAssistantRepository.detachServiceReferencesInTransaction(transaction, serviceConfigId, now);
+      await groupChatRepository.detachServiceReferencesInTransaction(transaction, serviceConfigId, now);
+      return assistantIds;
+    },
     async initializeModelSelections(transaction, model) {
       switch (model.capabilityKind) {
         case 'ocr':

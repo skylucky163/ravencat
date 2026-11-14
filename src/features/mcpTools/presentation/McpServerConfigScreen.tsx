@@ -1,9 +1,10 @@
 /** MCP Server 配置页：编辑元数据、连接测试与工具授权；服务启停由工具列表管理。 */
 
-import { ToggleDetailRow, showAppDialog } from '@shared/ui';
+import { Button, Card, InputField, KeyboardAvoidingContainer, ToggleDetailRow, showAppDialog } from '@shared/ui';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
 import NavigationHeader from '@shared/ui/NavigationHeader';
@@ -23,7 +24,6 @@ import {
 } from '../application/DeleteMcpServer';
 import {
   testMcpServerConnection,
-  type McpConnectionTestResult,
 } from '../application/TestMcpServerConnection';
 import {
   listMcpDiscoveredToolGrants,
@@ -39,154 +39,32 @@ interface McpServerConfigScreenProps {
   onBack: () => void;
 }
 
-const createStyles = (theme: PresentationTheme) =>
-  StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: theme.colors.background.screen,
-    },
-    scrollContent: {
-      padding: 16,
-      paddingBottom: 48,
-    },
-    fieldLabel: {
-      fontSize: 13,
-      color: theme.colors.text.secondary,
-      marginBottom: 6,
-    },
-    input: {
-      minHeight: 44,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderRadius: theme.radius.md,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.strong,
-      backgroundColor: theme.colors.surface.default,
-      fontSize: 15,
-      color: theme.colors.text.primary,
-      marginBottom: 16,
-    },
-    descriptionInput: {
-      minHeight: 96,
-      textAlignVertical: 'top',
-    },
-    infoRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingVertical: 12,
-      paddingHorizontal: 12,
-      borderRadius: theme.radius.md,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.light,
-      backgroundColor: theme.colors.surface.default,
-      marginBottom: 16,
-    },
-    infoLabel: {
-      fontSize: 15,
-      color: theme.colors.text.primary,
-    },
-    infoValue: {
-      fontSize: 15,
-      color: theme.colors.text.secondary,
-    },
-    saveButton: {
-      alignItems: 'center',
-      paddingVertical: 12,
-      borderRadius: theme.radius.lg,
-      backgroundColor: theme.colors.brand.primary,
-      marginTop: 8,
-    },
-    saveButtonText: {
-      fontSize: 15,
-      fontWeight: '600',
-      color: '#FFFFFF',
-    },
-    deleteButton: {
-      alignItems: 'center',
-      paddingVertical: 12,
-      borderRadius: theme.radius.lg,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.strong,
-      marginTop: 12,
-    },
-    deleteButtonText: {
-      fontSize: 15,
-      color: '#FF3B30',
-    },
-    testButton: {
-      alignItems: 'center',
-      paddingVertical: 12,
-      borderRadius: theme.radius.lg,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.strong,
-      marginTop: 12,
-    },
-    testButtonText: {
-      fontSize: 15,
-      color: theme.colors.brand.primary,
-    },
-    discoveryCard: {
-      borderRadius: theme.radius.md,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.light,
-      backgroundColor: theme.colors.surface.default,
-      padding: 12,
-      marginTop: 12,
-    },
-    discoveryTitle: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: theme.colors.text.primary,
-      marginBottom: 4,
-    },
-    // 工具行自带左右内边距，卡片只负责圆角与裁切。
-    toolCard: {
-      borderRadius: theme.radius.md,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.colors.border.light,
-      backgroundColor: theme.colors.surface.default,
-      marginTop: 12,
-      overflow: 'hidden',
-    },
-    toolCardHeader: {
-      padding: 12,
-      paddingBottom: 0,
-    },
-    discoveryMeta: {
-      fontSize: 12,
-      color: theme.colors.text.secondary,
-      marginBottom: 8,
-    },
-    toolRow: {
-      paddingVertical: 6,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: theme.colors.border.light,
-    },
-    toolName: {
-      fontSize: 14,
-      fontWeight: '500',
-      color: theme.colors.text.primary,
-    },
-    toolLocalName: {
-      fontSize: 11,
-      color: theme.colors.text.tertiary,
-      marginTop: 1,
-    },
-    toolDescription: {
-      fontSize: 12,
-      color: theme.colors.text.secondary,
-      marginTop: 2,
-    },
-    staleText: {
-      fontSize: 11,
-      color: '#FF9500',
-      marginTop: 2,
-    },
-    saving: {
-      marginTop: 12,
-    },
-  });
+const createStyles = (theme: PresentationTheme) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: theme.colors.background.screen },
+  body: { flex: 1 },
+  scrollContent: { padding: 16, gap: 16, paddingBottom: 24 },
+  sectionTitle: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 16 },
+  lastField: { marginBottom: 0 },
+  descriptionInput: { minHeight: 72 },
+  hint: { fontSize: 12, lineHeight: 18, color: theme.colors.text.tertiary },
+  testActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
+  testButton: { flex: 1, minWidth: 132, paddingHorizontal: 12 },
+  connectionInfo: {
+    marginTop: 16, padding: 12, gap: 4,
+    borderRadius: theme.radius.md, backgroundColor: theme.colors.surface.muted,
+  },
+  connectionLabel: { fontSize: 12, color: theme.colors.text.secondary },
+  connectionValue: { fontSize: 13, color: theme.colors.text.primary },
+  progress: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
+  toolCard: { borderRadius: theme.radius.lg, overflow: 'hidden' },
+  toolCardHeader: { padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  toolTitle: { flex: 1, fontSize: 15, fontWeight: '600', color: theme.colors.text.primary },
+  toolHint: { paddingHorizontal: 16, paddingBottom: 12 },
+  toolDescription: { fontSize: 12, lineHeight: 18, color: theme.colors.text.secondary },
+  staleText: { fontSize: 12, lineHeight: 18, color: theme.colors.feedback.warning },
+  deleteText: { color: theme.colors.feedback.error },
+  loading: { marginTop: 48 },
+});
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof McpConfigError) {
@@ -196,7 +74,7 @@ function getErrorMessage(error: unknown): string {
       NAME_TOO_LONG: `显示名称不能超过 ${MCP_SERVER_NAME_MAX_LENGTH} 个字符`,
       NAME_CONFLICT: '已有同名 MCP Server，请换一个名称',
       DESCRIPTION_TOO_LONG: `服务简介不能超过 ${MCP_SERVER_DESCRIPTION_MAX_LENGTH} 个字符`,
-      ASSISTANT_REQUIRED: '请至少选择一位生效 AI',
+      ASSISTANT_REQUIRED: '请先在“生效 AI”中至少选择一位 AI，再测试连接。只有选中的 AI 可以使用此服务。',
       URL_INVALID: 'Server URL 不是合法地址',
       URL_PROTOCOL: '地址只允许 https://，或本机回环/局域网/Tailscale（100.x / *.ts.net）的 http://',
       URL_USERINFO: 'URL 中禁止包含用户名或密码',
@@ -230,11 +108,11 @@ export default function McpServerConfigScreen({
   const [bearerToken, setBearerToken] = useState('');
   const [hasSavedToken, setHasSavedToken] = useState(false);
   const [enabled, setEnabled] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [discovery, setDiscovery] = useState<McpConnectionTestResult | null>(null);
   const [savedConnection, setSavedConnection] = useState<McpServerConfig | null>(null);
   const [toolGrants, setToolGrants] = useState<McpDiscoveredToolGrantView[] | null>(null);
+  const [toolGrantsExpanded, setToolGrantsExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // 错误展示由页面生命周期拥有，异步操作结束时无需用户滚回顶部查看。
@@ -299,24 +177,10 @@ export default function McpServerConfigScreen({
     };
   }, [initialServerId]);
 
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await saveMcpServer({ id: serverId, name, url, description, assistantIds,
-        enabled: initialServerId === null || enabled, authMode,
-        bearerToken: bearerToken.trim() || undefined });
-      onBack();
-    } catch (saveError) {
-      setError(getErrorMessage(saveError));
-      setSaving(false);
-    }
-  }, [serverId, initialServerId, name, url, description, assistantIds, enabled, authMode, bearerToken, onBack]);
-
   const handleTestConnection = useCallback(async (protocolEra: McpProtocolEra) => {
     setTesting(true);
     setError(null);
-    setDiscovery(null);
+    setToolGrantsExpanded(false);
     try {
       // 测试必须使用屏幕当前配置；先保存，再沿同一持久配置链路连接。
       const saved = await saveMcpServer({ id: serverId, name, url, description, assistantIds, enabled, authMode,
@@ -329,10 +193,10 @@ export default function McpServerConfigScreen({
       // 显示当前配置的授权，失败测试不会抹掉原成功链路的工具列表。
       await loadToolGrants(saved.id);
       const result = await testMcpServerConnection(saved.id, protocolEra);
-      setDiscovery(result);
       setSavedConnection(result.server);
       setEnabled(result.server.enabled);
       await loadToolGrants(saved.id);
+      showAppDialog({ title: '连接成功' });
     } catch (testError) {
       setError(getErrorMessage(testError));
     } finally {
@@ -361,21 +225,21 @@ export default function McpServerConfigScreen({
       return;
     }
     showAppDialog({
-      title: '删除 MCP Server',
-      message: '删除后将同时移除该 Server 的全部工具授权，且无法恢复。',
+      title: '删除 MCP 服务',
+      message: '删除后将同时移除此服务的全部工具授权，且无法恢复。',
       buttons: [
         { text: '取消', style: 'cancel' },
         {
           text: '删除',
           style: 'destructive',
           onPress: () => {
-            setSaving(true);
+            setDeleting(true);
             setError(null);
             deleteMcpServer(serverId)
               .then(onBack)
               .catch((deleteError) => {
                 setError(getErrorMessage(deleteError));
-                setSaving(false);
+                setDeleting(false);
               });
           },
         },
@@ -383,180 +247,116 @@ export default function McpServerConfigScreen({
     });
   }, [serverId, onBack]);
 
+  const title = initialServerId === null ? '新增 MCP 服务' : 'MCP 服务配置';
+  const busy = deleting || testing;
+  const ToolChevron = toolGrantsExpanded ? ChevronUp : ChevronDown;
+
   if (loading) {
     return (
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-        <NavigationHeader title="Server 配置" onGoBack={onBack} />
-        <ActivityIndicator style={{ marginTop: 48 }} />
+        <NavigationHeader title={title} onGoBack={onBack} />
+        <ActivityIndicator style={styles.loading} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <NavigationHeader
-        title={serverId ? 'Server 配置' : '新增 MCP Server'}
+        title={title}
         onGoBack={onBack}
+        help={{ sections: [
+          { title: '填写或导入', body: '填写服务名称和地址，或在连接设置中导入官方 mcpServers JSON。仅支持远程 Streamable HTTP 服务，不支持本地 command / stdio。简介可帮助 AI 了解服务用途。' },
+          { title: '生效 AI', body: '新增时至少选择一位 AI，只有选中的 AI 可以使用此服务。之后可在工具列表或配置页修改。' },
+          { title: '连接测试', body: '根据服务文档选择传统握手或新版协议测试。每次测试前都会自动保存当前配置，连接失败也会保留；修改后再次测试会更新同一服务。成功后使用对应协议，另一种测试失败不会覆盖当前配置已有的成功链路。' },
+          { title: '认证与备份', body: 'Bearer Token 只需粘贴令牌，不含 Bearer 前缀。编辑时留空保留已保存的令牌，更换地址需重新填写。令牌保存在设备安全存储中，完整本地备份会包含明文令牌；旧备份未包含的令牌需重新填写。' },
+        ] }}
       />
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.fieldLabel}>显示名称</Text>
-        <TextInput
-          style={styles.input}
-          value={name}
-          onChangeText={setName}
-          placeholder="例如：我的知识库"
-          placeholderTextColor={theme.colors.text.tertiary}
-          maxLength={MCP_SERVER_NAME_MAX_LENGTH}
-          editable={!saving && !testing}
-        />
+      <KeyboardAvoidingContainer style={styles.body}>
+        <ScrollView style={styles.body} contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled">
+          <Card>
+            <Text style={styles.sectionTitle}>服务信息</Text>
+            <InputField label="服务名称" value={name} onChangeText={setName}
+              placeholder="例如：我的知识库" maxLength={MCP_SERVER_NAME_MAX_LENGTH} editable={!busy} />
+            <InputField label="服务简介（可选）" value={description} onChangeText={setDescription}
+              placeholder="告诉 AI 这个服务可以做什么" multiline autoGrow
+              style={styles.lastField} inputStyle={styles.descriptionInput}
+              maxLength={MCP_SERVER_DESCRIPTION_MAX_LENGTH} editable={!busy} />
+          </Card>
 
-        <McpConnectionFields url={url} authMode={authMode} bearerToken={bearerToken}
-          hasSavedToken={hasSavedToken} disabled={saving || testing} onUrlChange={setUrl}
-          onAuthModeChange={(mode) => { setAuthMode(mode); setBearerToken(''); }}
-          onTokenChange={setBearerToken} onImport={(draft) => {
-            setName(draft.name); setUrl(draft.url); setAuthMode(draft.authMode);
-            setBearerToken(draft.bearerToken ?? ''); setDiscovery(null);
-          }} />
+          <Card>
+            <McpConnectionFields url={url} authMode={authMode} bearerToken={bearerToken}
+              hasSavedToken={hasSavedToken} disabled={busy} onUrlChange={setUrl}
+              onAuthModeChange={(mode) => { setAuthMode(mode); setBearerToken(''); }}
+              onTokenChange={setBearerToken} onImport={(draft) => {
+                setName(draft.name); setUrl(draft.url); setAuthMode(draft.authMode);
+                setBearerToken(draft.bearerToken ?? '');
+              }} />
+          </Card>
 
-        <Text style={styles.fieldLabel}>服务简介（可选，注入 AI 上下文）</Text>
-        <TextInput
-          style={[styles.input, styles.descriptionInput]}
-          value={description}
-          onChangeText={setDescription}
-          placeholder="例如：我的记忆库，存放日常对话摘要与笔记"
-          placeholderTextColor={theme.colors.text.tertiary}
-          multiline
-          maxLength={MCP_SERVER_DESCRIPTION_MAX_LENGTH}
-          editable={!saving && !testing}
-        />
+          {assistants !== null && <Card>
+            <McpAssistantSelection assistants={assistants} selectedIds={assistantIds}
+              collapsible disabled={busy} required={serverId === null}
+              onToggle={(id, selected) => {
+                setAssistantIds((current) => selected ? [...current, id] : current.filter((value) => value !== id));
+              }} />
+          </Card>}
 
-        {assistants !== null && <McpAssistantSelection assistants={assistants} selectedIds={assistantIds}
-          collapsible={initialServerId !== null}
-          disabled={saving || testing} required={serverId === null} onToggle={(id, selected) => {
-            setAssistantIds((current) => selected ? [...current, id] : current.filter((value) => value !== id));
-          }} />}
-
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Transport</Text>
-          <Text style={styles.infoValue}>Streamable HTTP</Text>
-        </View>
-
-        {savedConnection !== null && savedConnection.connectionStatus === 'available' && (
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>已验证链路</Text>
-            <Text style={styles.infoValue}>
-              {savedConnection.lastProtocolEra === 'legacy' ? '传统握手' : '新版协议'} · {savedConnection.lastNegotiatedProtocolVersion}
-            </Text>
-          </View>
-        )}
-
-        <TouchableOpacity
-          style={styles.testButton}
-          activeOpacity={0.7}
-          onPress={() => {
-            void handleTestConnection('legacy');
-          }}
-          disabled={testing || saving || assistants === null || (serverId === null && assistantIds.length === 0)}
-        >
-          <Text style={styles.testButtonText}>传统握手测试</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.testButton}
-          activeOpacity={0.7}
-          onPress={() => {
-            void handleTestConnection('modern');
-          }}
-          disabled={testing || saving || assistants === null || (serverId === null && assistantIds.length === 0)}
-        >
-          <Text style={styles.testButtonText}>新版协议测试</Text>
-        </TouchableOpacity>
-        <Text style={styles.discoveryMeta}>
-          测试会保存当前配置。成功后使用对应链路；另一条测试失败不会覆盖已验证链路。
-        </Text>
-        {testing && <ActivityIndicator style={styles.saving} />}
-
-        {discovery ? (
-          <ThemedSurface variant="card" cornerRadius={theme.radius.md} style={styles.discoveryCard}>
-            <Text style={styles.discoveryTitle}>
-              连接成功：{discovery.serverInfo?.name ?? '未知 Server'}
-            </Text>
-            <Text style={styles.discoveryMeta}>
-              协议版本：{discovery.protocolVersion}
-            </Text>
-            <Text style={styles.discoveryMeta}>
-              发现 {discovery.tools.length} 个工具；首次发现和新增工具默认开启，已有工具保留当前开关；耗时 {discovery.durationMs} ms
-            </Text>
-            {discovery.tools.map((tool) => (
-              <View key={tool.localName} style={styles.toolRow}>
-                <Text style={styles.toolName}>{tool.remoteName}</Text>
-                <Text style={styles.toolLocalName}>{tool.localName}</Text>
-                {tool.description ? (
-                  <Text style={styles.toolDescription} numberOfLines={2}>
-                    {tool.description}
-                  </Text>
-                ) : null}
-              </View>
-            ))}
-          </ThemedSurface>
-        ) : null}
-
-        {toolGrants && toolGrants.length > 0 ? (
-          <ThemedSurface variant="card" cornerRadius={theme.radius.md} style={styles.toolCard}>
-            <View style={styles.toolCardHeader}>
-              <Text style={styles.discoveryTitle}>工具授权</Text>
-              <Text style={styles.discoveryMeta}>
-                首次发现和新增工具默认允许 AI 请求，可按需关闭
-              </Text>
+          <Card>
+            <Text style={styles.sectionTitle}>连接测试</Text>
+            <Text style={styles.hint}>按服务支持的协议测试。</Text>
+            <View style={styles.testActions}>
+              <Button title="传统握手测试" variant="outline" style={styles.testButton}
+                disabled={busy || assistants === null} onPress={() => { void handleTestConnection('legacy'); }} />
+              <Button title="新版协议测试" variant="outline" style={styles.testButton}
+                disabled={busy || assistants === null} onPress={() => { void handleTestConnection('modern'); }} />
             </View>
-            {toolGrants.map((grant, index) => (
-              <ToggleDetailRow key={grant.localToolName} title={grant.remoteToolName}
-                detail={<>
-                  <Text style={styles.toolLocalName}>{grant.localToolName}</Text>
-                  {grant.description ? <Text style={styles.toolDescription} numberOfLines={2}>{grant.description}</Text> : null}
-                  {grant.stale ? <Text style={styles.staleText}>
-                    {grant.canAuthorize
-                      ? 'schema 已变化，请确认后重新授权'
-                      : '工具已从最近一次发现快照中消失'}
-                  </Text> : null}
-                </>}
-                value={grant.enabled}
-                toggleAccessibilityLabel={`允许 AI 请求：${grant.remoteToolName}`}
-                onValueChange={(next) => {
-                  void handleToggleToolGrant(grant.remoteToolName, next);
-                }}
-                disabled={!grant.canAuthorize || testing}
-                divider={index < toolGrants.length - 1} />
-            ))}
-          </ThemedSurface>
-        ) : null}
+            {testing && <View style={styles.progress}>
+              <ActivityIndicator size="small" color={theme.colors.brand.primary} />
+              <Text style={styles.hint}>正在测试连接…</Text>
+            </View>}
+            {savedConnection !== null && savedConnection.connectionStatus === 'available' && (
+              <View style={styles.connectionInfo}>
+                <Text style={styles.connectionLabel}>已验证链路</Text>
+                <Text style={styles.connectionValue}>
+                  {savedConnection.lastProtocolEra === 'legacy' ? '传统握手' : '新版协议'} · {savedConnection.lastNegotiatedProtocolVersion}
+                </Text>
+              </View>
+            )}
+          </Card>
 
-        <TouchableOpacity
-          style={styles.saveButton}
-          activeOpacity={0.7}
-          onPress={() => {
-            void handleSave();
-          }}
-          disabled={saving || testing || assistants === null || (serverId === null && assistantIds.length === 0)}
-        >
-          <Text style={styles.saveButtonText}>保存</Text>
-        </TouchableOpacity>
+          {toolGrants && toolGrants.length > 0 ? (
+            <ThemedSurface variant="card" cornerRadius={theme.radius.lg} style={styles.toolCard}>
+              <TouchableOpacity style={styles.toolCardHeader} activeOpacity={0.7}
+                accessibilityRole="button" accessibilityLabel="工具授权"
+                accessibilityState={{ expanded: toolGrantsExpanded }}
+                onPress={() => setToolGrantsExpanded((current) => !current)}>
+                <Text style={styles.toolTitle}>工具授权</Text>
+                <ToolChevron size={18} color={theme.colors.text.tertiary} />
+              </TouchableOpacity>
+              {toolGrantsExpanded && <>
+                <Text style={[styles.hint, styles.toolHint]}>新发现的工具默认允许 AI 使用，可按需关闭。</Text>
+                {toolGrants.map((grant, index) => (
+                  <ToggleDetailRow key={grant.localToolName} title={grant.remoteToolName}
+                    detail={<>
+                      {grant.description ? <Text style={styles.toolDescription} numberOfLines={2}>{grant.description}</Text> : null}
+                      {grant.stale ? <Text style={styles.staleText}>
+                        {grant.canAuthorize ? '工具定义已变化，请确认后重新授权' : '服务已不再提供此工具'}
+                      </Text> : null}
+                    </>}
+                    value={grant.enabled} toggleAccessibilityLabel={`允许 AI 请求：${grant.remoteToolName}`}
+                    onValueChange={(next) => { void handleToggleToolGrant(grant.remoteToolName, next); }}
+                    disabled={!grant.canAuthorize || busy} divider={index < toolGrants.length - 1} />
+                ))}
+              </>}
+            </ThemedSurface>
+          ) : null}
 
-        {serverId ? (
-          <TouchableOpacity
-            style={styles.deleteButton}
-            activeOpacity={0.7}
-            onPress={handleDelete}
-            disabled={saving || testing}
-          >
-            <Text style={styles.deleteButtonText}>删除 Server</Text>
-          </TouchableOpacity>
-        ) : null}
-      </ScrollView>
+          {serverId ? <Button title="删除服务" variant="text" textStyle={styles.deleteText}
+            disabled={busy} onPress={handleDelete} /> : null}
+        </ScrollView>
+      </KeyboardAvoidingContainer>
     </SafeAreaView>
   );
 }

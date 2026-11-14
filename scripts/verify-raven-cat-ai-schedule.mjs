@@ -19,10 +19,14 @@ async function importTypeScriptModule(relativePath, transform = (source) => sour
     fileName: sourcePath,
   });
   const target = path.join(tmpDir, `${path.basename(relativePath, '.ts')}.mjs`);
-  fs.writeFileSync(target, output.outputText, 'utf8');
+  fs.writeFileSync(target, output.outputText
+    .replaceAll("'./AIScheduleTiming'", "'./AIScheduleTiming.mjs'")
+    .replaceAll("'../domain/AIScheduleTiming'", "'./AIScheduleTiming.mjs'")
+    .replaceAll("'./AIScheduleTimingPersistence'", "'./AIScheduleTimingPersistence.mjs'"), 'utf8');
   return import(`${pathToFileURL(target).href}?v=${Date.now()}-${Math.random()}`);
 }
 
+await importTypeScriptModule('src/features/companion/domain/AIScheduleTiming.ts');
 const domain = await importTypeScriptModule('src/features/companion/domain/AISchedule.ts');
 const schema = await importTypeScriptModule(
   'src/platform/persistence/sqlite/ravenCatCompanionSchema.ts',
@@ -54,6 +58,8 @@ db.exec(schema.RAVEN_CAT_COMPANION_STATE_SCHEMA);
 db.exec("INSERT INTO raven_cat_companion_state (id, desired_enabled, activation_status, host_ai_id, created_at, updated_at) VALUES ('default', 1, 'enabled', 'host-ai', '2026-09-01', '2026-09-01')");
 db.exec(schema.RAVEN_CAT_AI_SCHEDULES_SCHEMA);
 db.exec(schema.RAVEN_CAT_AI_SCHEDULE_CONTEXT_SCHEMA);
+db.exec(schema.RAVEN_CAT_AI_SCHEDULE_WAIT_SCHEMA);
+db.exec("CREATE TABLE raven_cat_contact_settings(id TEXT PRIMARY KEY, follow_up_enabled INTEGER DEFAULT 0, follow_up_interval_minutes INTEGER DEFAULT 10); INSERT INTO raven_cat_contact_settings(id) VALUES ('default');");
 db.exec(schema.RAVEN_CAT_AI_SCHEDULES_OWNER_STATUS_TIME_INDEX);
 db.exec(schema.RAVEN_CAT_AI_SCHEDULES_OWNER_TIME_INDEX);
 // fresh schema 与 upgrade migration 复用的语句可重复执行，不能损坏已有 truth。
@@ -103,6 +109,8 @@ fs.writeFileSync(path.join(tmpDir, 'TestCompanionRuntime.mjs'), `
   }
 `, 'utf8');
 
+await importTypeScriptModule('src/features/companion/infrastructure/AIScheduleTimingPersistence.ts', source => source
+  .replace("'../domain/AISchedule'", "'./AISchedule.mjs'"));
 const repositoryModule = await importTypeScriptModule(
   'src/features/companion/infrastructure/SQLiteAIScheduleRepository.ts',
   (source) => source
@@ -160,7 +168,7 @@ const paused = await create({ summary: '暂停后保留' });
 db.exec("UPDATE raven_cat_companion_state SET desired_enabled = 0, activation_status = 'disabled'");
 assert.equal((await create()).code, 'companion_disabled');
 assert.equal((await application.update({ scheduleId: paused.schedule.scheduleId, ownerAIId: 'host-ai', summary: '关闭期间修改' })).code, 'companion_disabled');
-assert.equal((await application.claim({ scheduleId: paused.schedule.scheduleId, ownerAIId: 'host-ai', runId: 'late-callback', claimedAt: '2026-09-10T09:01:00.000Z', expectedRemindAt: paused.schedule.remindAt, projectionToken: paused.schedule.updatedAt })).code, 'companion_disabled');
+assert.equal((await application.claim({ conversationId: 'test-chat', scheduleId: paused.schedule.scheduleId, ownerAIId: 'host-ai', runId: 'late-callback', claimedAt: '2026-09-10T09:01:00.000Z', expectedRemindAt: paused.schedule.remindAt, projectionToken: paused.schedule.updatedAt })).code, 'companion_disabled');
 assert.equal((await repository.getByScheduleId(paused.schedule.scheduleId)).status, 'scheduled');
 assert.equal((await application.cancel({ scheduleId: paused.schedule.scheduleId, ownerAIId: 'host-ai' })).status, 'cancelled');
 db.exec("UPDATE raven_cat_companion_state SET desired_enabled = 1, activation_status = 'enabled'");
@@ -230,7 +238,7 @@ assert.equal((await application.update({
 // H/I/J/K/L：claim 单 winner；consume 绑定 claim run；consumed 不可修改/取消。
 const claimable = await create({ remindAt: '2026-09-13T09:00:00.000Z' });
 const claimableToken = claimable.schedule.updatedAt;
-const claimed = await application.claim({
+const claimed = await application.claim({ conversationId: 'test-chat',
   scheduleId: claimable.schedule.scheduleId,
   ownerAIId: 'host-ai',
   runId: 'run-a',
@@ -240,7 +248,7 @@ const claimed = await application.claim({
 });
 assert.equal(claimed.status, 'claimed');
 assert.equal(claimed.schedule.claimedByRunId, 'run-a');
-assert.equal((await application.claim({
+assert.equal((await application.claim({ conversationId: 'test-chat',
   scheduleId: claimable.schedule.scheduleId,
   ownerAIId: 'host-ai',
   runId: 'run-b',
@@ -316,7 +324,7 @@ const interrupted = await create({
   remindAt: '2026-09-15T09:00:00.000Z',
   summary: '进程中断日程',
 });
-const interruptedClaim = await application.claim({
+const interruptedClaim = await application.claim({ conversationId: 'test-chat',
   scheduleId: interrupted.schedule.scheduleId,
   ownerAIId: 'host-ai',
   runId: 'run-interrupted',
@@ -329,7 +337,7 @@ const interruptedMidRun = await create({
   remindAt: '2026-09-15T09:10:00.000Z',
   summary: '运行中断日程',
 });
-const interruptedMidRunClaim = await application.claim({
+const interruptedMidRunClaim = await application.claim({ conversationId: 'test-chat',
   scheduleId: interruptedMidRun.schedule.scheduleId,
   ownerAIId: 'host-ai',
   runId: 'run-interrupted-mid-run',
@@ -358,7 +366,7 @@ assert.equal((await recovery.recover('foreground')).examined, 0);
 // 同一 runtime 内 active claim 必须被 recovery 跳过；终态 transaction 完成后
 // 才释放 active 标记，随后才允许下一次 recovery 观察到 consumed。
 const active = await create({ remindAt: '2026-09-16T09:00:00.000Z', summary: '活动运行日程' });
-const activeClaim = await recovery.claimAndTrack('run-active', () => application.claim({
+const activeClaim = await recovery.claimAndTrack('run-active', () => application.claim({ conversationId: 'test-chat',
   scheduleId: active.schedule.scheduleId,
   ownerAIId: 'host-ai',
   runId: 'run-active',
@@ -386,7 +394,7 @@ assert.equal((await repository.getByScheduleId(active.schedule.scheduleId)).stat
 // recovery 与正常 consume 并发：正常 consume 先赢时，recovery 只能得到
 // already_terminal；两条路径都不重复执行，也不覆盖先提交的 disposition。
 const race = await create({ remindAt: '2026-09-17T09:00:00.000Z', summary: '并发收口日程' });
-const raceClaim = await application.claim({
+const raceClaim = await application.claim({ conversationId: 'test-chat',
   scheduleId: race.schedule.scheduleId,
   ownerAIId: 'host-ai',
   runId: 'run-race',
@@ -438,7 +446,7 @@ const recoveryWins = await create({
   remindAt: '2026-09-18T09:00:00.000Z',
   summary: '恢复先赢日程',
 });
-const recoveryWinsClaim = await application.claim({
+const recoveryWinsClaim = await application.claim({ conversationId: 'test-chat',
   scheduleId: recoveryWins.schedule.scheduleId,
   ownerAIId: 'host-ai',
   runId: 'run-recovery-wins',
@@ -468,7 +476,7 @@ const pendingTerminal = await create({
   remindAt: '2026-09-19T09:00:00.000Z',
   summary: 'terminal pending 日程',
 });
-const pendingClaim = await recovery.claimAndTrack('run-pending-terminal', () => application.claim({
+const pendingClaim = await recovery.claimAndTrack('run-pending-terminal', () => application.claim({ conversationId: 'test-chat',
   scheduleId: pendingTerminal.schedule.scheduleId,
   ownerAIId: 'host-ai',
   runId: 'run-pending-terminal',

@@ -5,7 +5,9 @@ import { createChatMessageMutationFixture, load } from './helpers/chat-message-m
 
 const require = createRequire(import.meta.url);
 const { db, metadata, persistence, messages, groups } = createChatMessageMutationFixture();
-const policy = load('src/features/chat/messages/domain/ChatMessageEditing.ts', { './chatMessageMetadata': metadata });
+const policy = load('src/features/chat/messages/domain/ChatMessageEditing.ts', {
+  './chatMessageMetadata': metadata, './ChatCodeBlock': load('src/features/chat/messages/domain/ChatCodeBlock.ts'),
+});
 const patches = [];
 const { editChatMessage } = load('src/features/chat/messages/application/EditChatMessage.ts', {
   '@platform/persistence': persistence,

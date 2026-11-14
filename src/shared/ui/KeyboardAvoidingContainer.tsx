@@ -5,14 +5,11 @@ import { Keyboard, StyleSheet, View, type LayoutChangeEvent, type ViewProps } fr
 export interface KeyboardAvoidingContainerProps extends ViewProps {
   enabled?: boolean;
   keyboardVerticalOffset?: number;
-  /** 铺满独立原生窗口时直接使用屏幕键盘顶边，不读取会被系统平移污染的窗口原点。 */
-  fillsNativeWindow?: boolean;
 }
 
 export default function KeyboardAvoidingContainer({
   enabled = true,
   keyboardVerticalOffset = 0,
-  fillsNativeWindow = false,
   style,
   onLayout,
   ...props
@@ -34,18 +31,13 @@ export default function KeyboardAvoidingContainer({
       setAvailableHeight(null);
       return;
     }
-    // 容器底边直接落在键盘顶边；原生窗口是否同时缩放不再参与第二次高度计算。
-    if (fillsNativeWindow) {
-      setAvailableHeight(Math.max(0, keyboard.screenY - keyboardVerticalOffset));
-      return;
-    }
     const view = viewRef.current;
     if (view === null) return;
     view.measureInWindow((_x, y) => {
       if (revision !== measurementState.revision) return;
       setAvailableHeight(Math.max(0, keyboard.screenY - y - keyboardVerticalOffset));
     });
-  }, [enabled, fillsNativeWindow, keyboardVerticalOffset, measurementState]);
+  }, [enabled, keyboardVerticalOffset, measurementState]);
 
   useEffect(() => {
     keyboardFrameRef.current = Keyboard.metrics();

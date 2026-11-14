@@ -50,6 +50,15 @@ function removeModelServiceSchema() {
     database.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id;`);
   }
   database.exec('DROP TABLE model_service_configs; DROP TABLE model_service_settings;');
+  // 旧版本夹具不能保留 170 新增的列，否则重跑迁移会重复建列。
+  database.exec(`ALTER TABLE raven_cat_contact_settings DROP COLUMN follow_up_enabled;
+    ALTER TABLE raven_cat_contact_settings DROP COLUMN follow_up_interval_minutes;`);
+  for (const column of ['recurrence_json', 'series_id', 'trigger_kind', 'conversation_id', 'reply_revision', 'next_follow_up_minutes']) {
+    database.exec(`ALTER TABLE raven_cat_ai_schedules DROP COLUMN ${column};`);
+  }
+  // 两处旧版本夹具都早于 175，不能保留朋友圈编辑迁移新增的列。
+  database.exec(`ALTER TABLE moments DROP COLUMN edited_at;
+    ALTER TABLE moments DROP COLUMN edit_revision;`);
 }
 // 还原 133 的真实结构，保留既有资料，新配置只由 bootstrap 创建。
 removeModelServiceSchema();
@@ -95,17 +104,27 @@ const searchConfiguration = load('src/features/webTools/application/SearchConfig
   '../domain/SearchSettings': searchDomain, './WebToolsRuntime': { getWebToolsRuntime: () => searchRuntime },
 });
 const schema = load('src/shared/aiTools/AgentToolInputSchema.ts', agentToolSchemaDependencies);
-const endpoint = load('src/platform/ai/moonshotEndpoint.ts');
+const endpoint = load('src/platform/ai/officialToolsEndpoint.ts');
 let officialResponse = () => new Response(JSON.stringify({ search_results: [] }));
 const officialRequests = [];
-const { MoonshotToolsClient } = load('src/platform/ai/MoonshotToolsClient.ts', {
-  './moonshotEndpoint': endpoint,
+const officialHttp = load('src/platform/ai/OfficialToolsHttpClient.ts', {
+  './officialToolsEndpoint': endpoint,
   '@shared/aiTools': schema,
   '@shared/runtime/abortSignal': load('src/shared/runtime/abortSignal.ts'),
   'expo/fetch': { fetch: async (url, options) => { officialRequests.push({ url, options }); return officialResponse(url, options); } },
 });
-const kimiTools = load('src/features/webTools/application/KimiOfficialTools.ts', { '@platform/ai': { MoonshotToolsClient } });
-const tools = { ...load('src/features/webTools/application/WebAgentTools.ts', { '@platform/web': web, './SearchConfiguration': searchConfiguration }), ...kimiTools };
+const { MoonshotToolsClient } = load('src/platform/ai/MoonshotToolsClient.ts', {
+  './OfficialToolsHttpClient': officialHttp, '@shared/aiTools': schema,
+});
+const { DeepSeekToolsClient } = load('src/platform/ai/DeepSeekToolsClient.ts', { './OfficialToolsHttpClient': officialHttp });
+const officialObservation = load('src/features/webTools/application/OfficialToolObservation.ts');
+const kimiTools = load('src/features/webTools/application/KimiOfficialTools.ts', {
+  '@platform/ai': { MoonshotToolsClient }, './OfficialToolObservation': officialObservation,
+});
+const deepseekTools = load('src/features/webTools/application/DeepSeekOfficialTools.ts', {
+  '@platform/ai': { DeepSeekToolsClient }, './OfficialToolObservation': officialObservation,
+});
+const tools = { ...load('src/features/webTools/application/WebAgentTools.ts', { '@platform/web': web, './SearchConfiguration': searchConfiguration }), ...kimiTools, ...deepseekTools };
 const { AgentToolRegistry } = load('src/platform/agentRuntime/AgentToolRegistry.ts');
 const { AgentToolExecutor } = load('src/platform/agentRuntime/AgentToolExecutor.ts', {
   '@shared/aiTools': schema, './AgentRunState': load('src/platform/agentRuntime/AgentRunState.ts'),
@@ -122,6 +141,7 @@ const registration = load('src/host/composition/agent/createAgentToolRegistry.ts
   '@features/moments/composition': {},
   './ApplicationSettingsTools': { applicationSettingsTools: [] },
   './GroupManagementTools': { groupManagementTools: [] },
+  './ChatCodeWorkTools': proxy,
   './ShareMomentTool': { ShareMomentTool: placeholder('share_moment') },
   ...Object.fromEntries(featureNames.map((name) => [`@features/${name}`, proxy])),
   '@features/phoneTools': new Proxy(load('src/features/phoneTools/toolPackages/ToolPackageCatalog.ts'), {
@@ -369,15 +389,15 @@ await bootstrapSqlite(createSqliteExecutor(database));
 assert.deepEqual(await searchRuntime.settings.read(), savedProxySettings, '再次启动不覆盖代理或来源配置');
 assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
 // 官方工具走相同权限、拆包与 Executor；协议响应在 Provider 边界验证。
-const kimiNames = ['kimi_web_search', 'kimi_web_fetch', 'kimi_mew'];
+const kimiNames = ['kimi_web_search', 'kimi_web_fetch', 'kimi_mew', 'kimi_convert', 'kimi_rethink', 'kimi_random_choice', 'kimi_excel', 'kimi_date', 'kimi_base64'];
 for (const address of ['https://api.moonshot.cn', 'https://api.moonshot.ai/v1/', ' https://API.MOONSHOT.CN/v1 ']) {
-  assert.ok(endpoint.resolveMoonshotAPIBaseURL(address));
+  assert.ok(endpoint.resolveOfficialToolsAPIBaseURL('moonshot', address));
   assert.deepEqual(registration.getRuntimeAllowedToolNamesForAI({ ...config, apiBaseUrl: address, allowedToolNames: kimiNames }), kimiNames);
 }
 for (const address of ['https://api.moonshot.cn.evil.test/v1', 'https://evil.test/kimi', 'http://api.moonshot.cn',
   'https://api.moonshot.cn:8443/v1', 'https://user@api.moonshot.cn/v1', 'https://api.moonshot.cn/proxy/v1',
   'https://api.moonshot.cn/v1?proxy=yes', 'https://api.moonshot.cn/v1#proxy', undefined, 'invalid']) {
-  assert.equal(endpoint.resolveMoonshotAPIBaseURL(address), null);
+  assert.equal(endpoint.resolveOfficialToolsAPIBaseURL('moonshot', address), null);
   assert.deepEqual(registration.getRuntimeAllowedToolNamesForAI({ ...config, apiBaseUrl: address, allowedToolNames: kimiNames }), []);
 }
 assert.throws(() => new MoonshotToolsClient({ baseURL: 'https://evil.test/kimi', apiKey: 'secret-test-key' }));
@@ -475,11 +495,122 @@ const encryptedMew = '----MOONSHOT ENCRYPTED BEGIN----example----MOONSHOT ENCRYP
 mewFiber = { status: 'succeeded', context: { encrypted_output: encryptedMew } };
 assert.equal((await runOfficialTool('kimi_mew', {})).modelContent, encryptedMew, 'protected 输出原样回灌');
 mewFiber = { status: 'failed', context: { output: '不能作为成功结果' } };
-assert.equal((await runOfficialTool('kimi_mew', {})).code, 'KIMI_MEW_EXECUTION_FAILED');
+assert.equal((await runOfficialTool('kimi_mew', {})).code, 'KIMI_FORMULA_EXECUTION_FAILED');
 mewFunctions = [{ type: 'function', function: { name: 'bad', description: '', parameters: { type: 'object', properties: { invalid: { type: 'nonsense' } } } } }];
 const beforeBadMewSchema = officialRequests.length;
 assert.equal((await runOfficialTool('kimi_mew', {})).code, 'KIMI_TOOLS_INVALID_SCHEMA');
 assert.equal(officialRequests.length, beforeBadMewSchema + 1);
+
+// 六个新增 Formula 均从官方声明发现参数，固定映射不能跨到 memory 或其他 URI。
+for (const [name, formula] of [['kimi_convert', 'convert'], ['kimi_rethink', 'rethink'],
+  ['kimi_random_choice', 'random-choice'], ['kimi_excel', 'excel'], ['kimi_date', 'date'], ['kimi_base64', 'base64']]) {
+  const functions = ['first', 'second'].map(fn => ({ type: 'function', function: { name: fn, description: fn,
+    parameters: { type: 'object', properties: { value: { type: 'string' } }, required: ['value'], additionalProperties: false } } }));
+  const output = `----MOONSHOT ENCRYPTED BEGIN----${formula}----MOONSHOT ENCRYPTED END----`;
+  officialResponse = (url, options) => {
+    assert.ok(url.startsWith(`https://api.moonshot.cn/v1/formulas/moonshot/${formula}:latest/`));
+    if (options.method === 'GET') return new Response(JSON.stringify({ tools: functions }));
+    assert.deepEqual(JSON.parse(options.body), { name: 'second', arguments: '{"value":"数据"}' });
+    return new Response(JSON.stringify({ status: 'succeeded', context: { encrypted_output: output } }));
+  };
+  const before = officialRequests.length;
+  assert.equal((await runOfficialTool(name, {})).data.kind, 'input_required');
+  assert.equal((await runOfficialTool(name, { function_name: 'second', arguments: { value: 1 } })).data.kind, 'input_required');
+  assert.equal((await runOfficialTool(name, { function_name: 'memory', arguments: { value: '数据' } })).data.kind, 'input_required');
+  assert.equal(officialRequests.length, before + 3, '选择或参数不符合声明时不得提交 fiber');
+  assert.equal((await runOfficialTool(name, { function_name: 'second', arguments: { value: '数据' } })).modelContent, output);
+  assert.equal(officialRegistry.get(name).descriptor.idempotency, 'not_idempotent');
+}
+assert.ok(!registration.getToolPermissionDescriptors().some(tool => tool.name === 'kimi_memory'));
+
+const deepseekNames = ['deepseek_web_search', 'deepseek_web_fetch'];
+for (const address of ['https://api.deepseek.com', 'https://api.deepseek.com/v1/', ' https://API.DEEPSEEK.COM/v1 ']) {
+  assert.equal(endpoint.resolveOfficialToolsAPIBaseURL('deepseek', address), 'https://api.deepseek.com/v1');
+  assert.deepEqual(registration.getRuntimeAllowedToolNamesForAI({ ...config, apiBaseUrl: address, allowedToolNames: [...kimiNames, ...deepseekNames] }), deepseekNames);
+}
+for (const address of ['https://api.deepseek.com.evil.test/v1', 'http://api.deepseek.com',
+  'https://api.deepseek.com:8443', 'https://user:password@api.deepseek.com', 'https://api.deepseek.com/proxy/v1',
+  'https://api.deepseek.com/v1?proxy=yes', 'https://api.deepseek.com/v1#proxy', 'https://api.moonshot.cn/v1', undefined]) {
+  assert.equal(endpoint.resolveOfficialToolsAPIBaseURL('deepseek', address), null);
+  assert.deepEqual(registration.getRuntimeAllowedToolNamesForAI({ ...config, apiBaseUrl: address, allowedToolNames: deepseekNames }), []);
+}
+assert.throws(() => new DeepSeekToolsClient({ baseURL: 'https://api.moonshot.cn', apiKey: 'deepseek-test-key' }));
+for (const name of deepseekNames) {
+  assert.equal(registration.getToolPermissionDescriptors().find(tool => tool.name === name).defaultEnabled, false);
+  assert.ok(!(await registration.resolveAllowedToolNames('ordinary-ai')).includes(name));
+}
+defaults = { deepseek_web_search: true, deepseek_web_fetch: true };
+overrides = [{ toolName: 'deepseek_web_fetch', enabled: false }];
+assert.deepEqual(registration.getRuntimeAllowedToolNamesForAI({ ...config, apiBaseUrl: 'https://api.deepseek.com',
+  allowedToolNames: await registration.resolveAllowedToolNames('ordinary-ai') }).filter(name => deepseekNames.includes(name)), ['deepseek_web_search']);
+const deepseekController = new AbortController();
+const deepseekRegistry = registration.createAgentToolRegistry({ createLegacyContext: context => ({
+  aiConfig: { apiBaseUrl: 'https://api.deepseek.com', apiKey: 'deepseek-test-key' }, abortSignal: context.abortSignal,
+}) });
+const deepseekExecutor = new AgentToolExecutor(deepseekRegistry);
+const deepseekTask = { allowedToolNames: [...deepseekNames, 'open_tool_package'] };
+const deepseekContext = { ...context, task: deepseekTask, abortSignal: deepseekController.signal };
+const deepseekExposure = registerToolPackagesForHostRun({ registry: deepseekRegistry, allowedToolNames: deepseekNames,
+  bindings: registration.getToolPackageRuntimeBindings(deepseekRegistry), openPackageIds: [], directToolNames: ['deepseek_web_search'] });
+assert.deepEqual(deepseekExposure.visibleToolNames(), ['deepseek_web_search']);
+await deepseekRegistry.get('open_tool_package').execute({ package_id: 'deepseekOfficial' }, deepseekContext);
+assert.deepEqual(deepseekExposure.visibleToolNames(), deepseekNames);
+const blockedDeepseek = registerToolPackagesForHostRun({ registry: registration.createAgentToolRegistry({ createLegacyContext: () => ({}) }),
+  allowedToolNames: [], bindings: registration.getToolPackageRuntimeBindings(deepseekRegistry),
+  openPackageIds: ['deepseekOfficial'], directToolNames: deepseekNames });
+assert.deepEqual(blockedDeepseek.visibleToolNames(), []);
+for (const input of [{ query: ' ' }, { query: '字'.repeat(129) }, { query: '新闻', limit: 51 }]) {
+  assert.equal(deepseekExecutor.prepare({ name: 'deepseek_web_search', arguments: JSON.stringify(input) }, deepseekTask).status, 'rejected');
+}
+const runDeepseek = async (name, input) => {
+  const prepared = deepseekExecutor.prepare({ name, arguments: JSON.stringify(input) }, deepseekTask);
+  assert.equal(prepared.status, 'ready');
+  return deepseekExecutor.execute(prepared, deepseekContext);
+};
+officialResponse = () => new Response(JSON.stringify({ results: [{ title: '文档', url: 'https://example.com',
+  snippet: '片段', summary: '详细摘要', site_name: null, date: null }] }));
+const deepseekSearch = await runDeepseek('deepseek_web_search', { query: '新闻 site:example.com', limit: 10 });
+assert.equal(deepseekSearch.status, 'success');
+assert.ok(deepseekSearch.modelContent.includes('详细摘要'));
+assert.equal(deepseekSearch.data.results[0].date, null, '官方未知日期合法，不伪造日期');
+assert.equal(officialRequests.at(-1).url, 'https://api.deepseek.com/v1/tools/search');
+assert.deepEqual(JSON.parse(officialRequests.at(-1).options.body), { query: '新闻 site:example.com', count: 10, need_content: false });
+assert.equal(officialRequests.at(-1).options.headers.Authorization, 'Bearer deepseek-test-key');
+assert.equal(officialRequests.at(-1).options.redirect, 'error');
+assert.equal(officialRequests.at(-1).options.credentials, 'omit');
+officialResponse = () => new Response(JSON.stringify({ results: [] }));
+assert.deepEqual((await runDeepseek('deepseek_web_search', { query: '没有结果' })).data.results, []);
+assert.equal(JSON.parse(officialRequests.at(-1).options.body).count, 5);
+officialResponse = () => new Response(JSON.stringify({ title: '文档', content: '文'.repeat(20001) }));
+const deepseekFetch = await runDeepseek('deepseek_web_fetch', { url: 'https://example.com/article' });
+assert.equal(deepseekFetch.status, 'success');
+assert.equal(deepseekFetch.data.url, 'https://example.com/article');
+assert.equal(deepseekFetch.data.markdown.length, 20000);
+assert.equal(deepseekFetch.data.truncated, true);
+assert.equal(deepseekFetch.data.totalCharacters, 20001);
+assert.equal(officialRequests.at(-1).url, 'https://api.deepseek.com/v1/tools/fetch');
+assert.deepEqual(JSON.parse(officialRequests.at(-1).options.body), { url: 'https://example.com/article' });
+for (const payload of [{ results: [{}] }, { results: [{ title: '文档', url: 'url', snippet: '', summary: '', site_name: 1, date: null }] }]) {
+  officialResponse = () => new Response(JSON.stringify(payload));
+  assert.equal((await runDeepseek('deepseek_web_search', { query: '新闻' })).code, 'DEEPSEEK_TOOLS_INVALID_RESPONSE');
+}
+officialResponse = () => new Response(JSON.stringify({ title: '文档', content: 1 }));
+assert.equal((await runDeepseek('deepseek_web_fetch', { url: 'https://example.com' })).code, 'DEEPSEEK_TOOLS_INVALID_RESPONSE');
+officialResponse = () => new Response('deepseek-test-key', { status: 402 });
+const noBalance = await runDeepseek('deepseek_web_search', { query: '新闻' });
+assert.equal(noBalance.code, 'DEEPSEEK_TOOLS_HTTP_402');
+assert.ok(!noBalance.modelContent.includes('deepseek-test-key'));
+officialResponse = () => { throw new Error('deepseek-test-key'); };
+assert.equal((await runDeepseek('deepseek_web_search', { query: '新闻' })).code, 'DEEPSEEK_TOOLS_NETWORK_ERROR');
+officialResponse = () => new Response('x'.repeat(2 * 1024 * 1024 + 1));
+assert.equal((await runDeepseek('deepseek_web_fetch', { url: 'https://example.com' })).code, 'DEEPSEEK_TOOLS_RESPONSE_TOO_LARGE');
+officialResponse = (_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }));
+const pendingDeepseek = runDeepseek('deepseek_web_search', { query: '新闻' });
+deepseekController.abort();
+await assert.rejects(pendingDeepseek);
+const beforeCancelledDeepseek = officialRequests.length;
+await assert.rejects(runDeepseek('deepseek_web_search', { query: '新闻' }));
+assert.equal(officialRequests.length, beforeCancelledDeepseek);
 officialResponse = (_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }));
 const pendingOfficial = runOfficialTool('kimi_web_search', { query: '新闻' });
 officialController.abort();
@@ -522,8 +653,15 @@ assert.equal(officialRequests.length, requestsBeforeCancel, '取消后不得继�
   });
   const { ApplicationBackupSourceGateway } = load('src/features/backup/infrastructure/ApplicationBackupSourceGateway.ts', {
     '@platform/persistence': {},
+    '@platform/ai': { aiHttpDiagnostics: {
+      exportBackupState: async () => ({ version: 1, enabled: false, records: [] }),
+      validateBackupState: () => {}, restoreBackupState: async () => {},
+    } },
     '@platform/device': { getPersistentMediaRootUri: () => 'file:///source/persistent-media/' },
-    '@platform/device/DeviceMediaService': {},
+    '@platform/device/DeviceMediaService': {
+      PERSISTENT_IMAGE_CATEGORY: { chatCodeCover: 'chatCodeCover' },
+      getPersistentImageCategoryPrefix: () => 'covers/chat-code/',
+    },
     '@features/media': {},
     '@shared/theme': {
       loadStoredThemeBackupState: async () => ({}),
@@ -542,7 +680,15 @@ assert.equal(officialRequests.length, requestsBeforeCancel, '取消后不得继�
     '@features/backup/composition': { ApplicationBackupSourceGateway },
     '@features/media/composition': { SQLiteMediaAssetRepository: class { async listBackupAssets() { return []; } } },
     '@features/calls/composition': { CALL_SNAPSHOT_BACKUP_EXCLUSIONS: [], callRepository: { assertBackupSnapshotHasNoFiles: async () => {} } },
+    // 本用例验证搜索凭据备份，数据库快照没有作品封面引用。
+    '@features/chat/composition': { readChatCodeCoverFileReferences: async () => [] },
     '@features/webTools/composition': { ...credentialRepository, ...backupCredentials },
+    '@features/mcpTools/composition': {
+      readMcpCredentialReferences: async () => [],
+      readMcpCredentialsBackup: async () => [],
+      validateMcpCredentialsBackup: () => {},
+      restoreMcpCredentialsBackup: async () => {},
+    },
   });
   const gateway = createBackupSourceGateway();
   const incoming = await gateway.readNonDatabaseSources('file:///snapshot.db');
@@ -603,4 +749,4 @@ assert.equal(officialRequests.length, requestsBeforeCancel, '取消后不得继�
 }
 
 database.close();
-console.log('联网工具权限、取消、多来源切换、网页读取、密钥隔离、配置竞态、数据库升级、搜索凭据备份恢复与回滚，以及 Kimi 官方地址识别、拆包特批、REST 与 mew Formula 协议边界验证通过。');
+console.log('联网工具权限、取消、多来源切换、网页读取、密钥隔离、配置竞态、数据库升级、搜索凭据备份恢复与回滚，以及 Kimi / DeepSeek 官方地址、拆包特批、REST 与七项 Formula 协议边界验证通过。');

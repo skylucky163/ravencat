@@ -2,6 +2,8 @@
 
 export type MomentDomainErrorCode =
   | 'empty_content'
+  | 'empty_edit'
+  | 'edit_conflict'
   | 'empty_audience'
   | 'malformed_audience_agent_id'
   | 'unknown_audience_agent_id'

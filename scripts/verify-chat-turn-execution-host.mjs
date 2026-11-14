@@ -776,7 +776,29 @@ function autonomousScenario() {
     userInput() { const old = active?.runId ?? null; active = null; pendingUser = true; return old; } };
 }
 
-const priority = (minute, scheduleId) => ({ plannedAt: `2026-10-28T09:${minute}:00.000Z`, updatedAt: '2026-10-28T08:00:00.000Z', scheduleId });
+const priority = (minute, scheduleId, triggerKind = 'scheduled') => ({ plannedAt: `2026-10-28T09:${minute}:00.000Z`, updatedAt: '2026-10-28T08:00:00.000Z', scheduleId, triggerKind });
+{
+  const state = autonomousScenario();
+  const gate = deferred(); let continuationContext;
+  const continuation = state.coordinator.runAutonomousFromHost('schedule-chat','continuation',priority('02','continuation','unanswered'),async context => {
+    continuationContext = context; await gate.promise; return 'continuation';
+  });
+  await flush();
+  const schedule = await state.coordinator.runAutonomousFromHost('schedule-chat','late-schedule',priority('01','late-schedule'),async context => {
+    assert.equal(context.displacedRunId,'continuation'); return 'schedule';
+  });
+  assert.equal(continuationContext.signal.aborted,true,'迟到的正常日程仍优先于正在执行的续轮');
+  assert.deepEqual(schedule,{status:'ran',value:'schedule'});
+  gate.resolve(); await continuation;
+}
+{
+  const state = autonomousScenario(); const gate = deferred();
+  const schedule = state.coordinator.runAutonomousFromHost('schedule-chat','normal',priority('01','normal'),async () => { await gate.promise; });
+  await flush();
+  const continuation = await state.coordinator.runAutonomousFromHost('schedule-chat','late-continuation',priority('02','late-continuation','unanswered'),async () => assert.fail('续轮不能抢占正常日程'));
+  assert.deepEqual(continuation,{status:'superseded',scheduleId:'normal'});
+  gate.resolve(); await schedule;
+}
 {
   const state = autonomousScenario();
   state.userInput();

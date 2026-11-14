@@ -59,6 +59,7 @@ const presentation = loadModule(
     if (specifier === '@features/chat/messages/domain') {
       return metadata;
     }
+    if (specifier === '../../../messages/domain/ChatCodeBlock') return loadModule('src/features/chat/messages/domain/ChatCodeBlock.ts');
     throw new Error(`未预期的 chatMessagePresentation 运行时依赖：${specifier}`);
   },
 );

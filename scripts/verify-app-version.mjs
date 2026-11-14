@@ -38,7 +38,7 @@ const mocks = {
   react: { useMemo: (factory) => factory() },
   'react/jsx-runtime': require('react/jsx-runtime'),
   'react-native': { Text: 'Text', TouchableOpacity: 'TouchableOpacity', View: 'View' },
-  'lucide-react-native': { ArchiveRestore: 'ArchiveRestore', Trash2: 'Trash2', UserRound: 'UserRound' },
+  'lucide-react-native': { Database: 'Database', UserRound: 'UserRound' },
   '@shared/ui': { UserAvatar: 'UserAvatar' },
   '@shared/theme': { ThemedSurface: 'ThemedSurface', useTheme: () => ({}) },
   '@platform/device/DeviceStatus': { getInstalledApplicationInfo: () => installedInfo },

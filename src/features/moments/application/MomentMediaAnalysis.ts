@@ -1,5 +1,4 @@
 /** 已提交 Moment 图片的 one-shot 分析、手动重试与用户描述编辑。 */
-import { SELF_USER_PROFILE_ID } from '@features/profile';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { MomentDomainError } from '../domain/MomentErrors';
 import {
@@ -134,12 +133,19 @@ async function analyze(
     : { success: false, mediaId: media.id, errorCode: 'stale_analysis_attempt', errorMessage: '图片描述已更新，本次识别未覆盖当前描述。' };
 }
 
+/** 用户与 AI 发布共用提交后分析；启动失败只记录，不能撤销已成立的发布事实。 */
+export function startNewMomentMediaAnalysis(momentId: string, mediaIds?: readonly string[]): void {
+  void analyzeNewMomentMediaOneShot(momentId, mediaIds).catch((error) => {
+    console.warn('[Moments] 已提交 Moment 的图片 one-shot 分析未能启动：', { momentId, error });
+  });
+}
+
 /** 仅处理这次刚提交、仍为 pending 的图片；顺序执行，单图失败不阻断下一张。 */
-export async function analyzeNewMomentMediaOneShot(momentId: string): Promise<void> {
+export async function analyzeNewMomentMediaOneShot(momentId: string, mediaIds?: readonly string[]): Promise<void> {
   const runtime = getMomentMediaRuntime();
   const media = await runtime.repository.listMedia(momentId);
   for (const item of media) {
-    if (item.analysisStatus !== 'pending') continue;
+    if (item.analysisStatus !== 'pending' || (mediaIds && !mediaIds.includes(item.id))) continue;
     try {
       await analyze(item, { initial: true });
     } catch (error) {
@@ -148,15 +154,11 @@ export async function analyzeNewMomentMediaOneShot(momentId: string): Promise<vo
   }
 }
 
-async function requireOwnedMedia(mediaId: string): Promise<MomentMedia> {
+/** 本机用户可管理所有时刻的图片描述；作者身份不限制用户侧的语义校正。 */
+async function requireMomentMedia(mediaId: string): Promise<MomentMedia> {
   const runtime = getMomentMediaRuntime();
   const media = await runtime.repository.getMedia(mediaId);
   if (!media) throw new MomentDomainError('media_not_found', '时刻图片不存在', mediaId);
-  const moment = await runtime.repository.getMomentForUser(media.momentId);
-  if (!moment) throw new MomentDomainError('moment_not_found', '时刻不存在', media.momentId);
-  if (moment.authorType !== 'user' || moment.authorId !== SELF_USER_PROFILE_ID) {
-    throw new MomentDomainError('not_moment_owner', '只能管理自己发布的时刻图片', media.momentId);
-  }
   return media;
 }
 
@@ -164,12 +166,12 @@ export async function reanalyzeMomentMedia(
   mediaId: string,
   signal?: AbortSignal
 ): Promise<MomentMediaAnalysisAttemptResult> {
-  const media = await requireOwnedMedia(mediaId);
+  const media = await requireMomentMedia(mediaId);
   return analyze(media, { initial: false, signal });
 }
 
 export async function editMomentMediaAnalysis(mediaId: string, text: string): Promise<MomentMedia> {
-  await requireOwnedMedia(mediaId);
+  await requireMomentMedia(mediaId);
   const normalized = typeof text === 'string' ? text.trim() : '';
   if (!normalized || normalized.length > MAX_MOMENT_MEDIA_ANALYSIS_LENGTH) {
     throw new MomentDomainError(

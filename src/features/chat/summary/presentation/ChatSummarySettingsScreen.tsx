@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { KeyboardAvoidingContainer, NavigationHeader, ConfiguredModelPicker } from '@shared/ui';
+import { KeyboardAvoidingContainer, NavigationHeader, ConfiguredModelPicker, useModelManagementNavigation } from '@shared/ui';
 import { aiAssistantRepository, getAuxiliaryModelSelection, requireAuxiliaryModel, subscribeAuxiliaryModelsChanged } from '@features/assistants';
 import { useAutoSaveNavigation } from '@shared/ui/useAutoSaveDraft';
 import { useTheme, useThemedStyles } from '@shared/theme';
@@ -15,6 +15,7 @@ import { useChatSummarySnapshot } from './useChatSummarySnapshot';
 import { createChatSummaryStyles } from './chatSummaryStyles';
 
 export default function ChatSummarySettingsScreen({ conversationId, onBack, group = false, assistantId }: { conversationId: string; onBack(): void; group?: boolean; assistantId?: string }) {
+  const manageModels = useModelManagementNavigation();
   const theme = useTheme(), styles = useThemedStyles(createChatSummaryStyles);
   const { snapshot, error } = useChatSummarySnapshot(conversationId);
   const editor = useRef<ChatSummarySettingsEditor>(null);
@@ -63,7 +64,8 @@ export default function ChatSummarySettingsScreen({ conversationId, onBack, grou
       {!snapshot && !error && <ActivityIndicator color={theme.colors.brand.primary} />}
       {snapshot && <ConfiguredModelPicker title="摘要模型"
         unconfiguredLabel={group ? '群聊管理员' : '当前聊天模型'} clearSelectionLabel={group ? '使用群聊管理员' : '使用当前聊天模型'}
-        getSettings={getModels} onSelect={selectModel} subscribeChanged={subscribeModels} />}
+        getSettings={getModels} onSelect={selectModel} subscribeChanged={subscribeModels}
+        onManageModels={() => manageModels('summary')} />}
       {snapshot && <ChatSummarySettingsPanel ref={editor} settings={snapshot.settings} busy={busy} onSave={save} group={group}
         followPrimaryLimit={followPrimaryLimit}
         pendingTokens={snapshot.segments.filter((segment) => segment.level === 'primary' && segment.compactionId === null).reduce((sum, segment) => sum + estimateTextTokens(segment.content), 0)} />}

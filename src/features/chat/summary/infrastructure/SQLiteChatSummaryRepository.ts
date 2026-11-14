@@ -408,6 +408,13 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
         : settings.generationEnabled ? parseChatContextCursor(state.processed_cursor) : null,
         ...(fixed ? { includeMessageId: fixed.messageId } : {}) });
       const protectedIds = new Set(protectedMessageIds);
+      // 未消费输入及其已封存的中断正文由固定输入组装器按原任务顺序提供，普通历史不再重复注入。
+      const protectedReplies = protectedMessageIds.length ? await tx.getAllAsync<{ id: number }>(`SELECT m.id FROM messages m
+        JOIN conversation_turn_runs r ON r.run_id = m.turn_run_id
+        JOIN chat_turn_presentations p ON p.run_id = r.run_id
+        WHERE r.session_id = ? AND p.state = 'interrupted' AND r.status <> 'committed'
+          AND r.input_high_watermark IN (SELECT value FROM json_each(?))`, [conversationId, JSON.stringify(protectedMessageIds)]) : [];
+      for (const message of protectedReplies) protectedIds.add(message.id);
       const visible = raw.filter((item) => !protectedIds.has(item.messageId));
       const boundary = await readCallBoundary(tx, conversationId);
       const calls = await this.readCalls(tx, conversationId, settings.generationEnabled ? boundary : { ...boundary, processedCallIds: [] });

@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
-import { bootstrapSqlite, createSqliteExecutor } from './helpers/sqlite-bootstrap-fixture.mjs';
+import { bootstrapSqlite, createSqliteExecutor, loadSqliteModule } from './helpers/sqlite-bootstrap-fixture.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const require = createRequire(import.meta.url);
@@ -36,14 +36,17 @@ function messageById(id) {
   const row = db.prepare('SELECT * FROM messages WHERE id=?').get(id);
   return row ? { id: row.id, sessionId: row.session_id, text: row.text, senderType: row.sender_type,
     status: row.status, deliveryStatus: row.delivery_status, createdAt: row.created_at,
-    metadataJson: row.metadata_json, agentId: row.agent_id, replyToText: row.reply_to_text } : null;
+    metadataJson: row.metadata_json, agentId: row.agent_id, replyToText: row.reply_to_text,
+    logicalMessageId: row.logical_message_id, segmentIndex: row.segment_index, segmentTotal: row.segment_total } : null;
 }
 const played = [], cleaned = [], preparedBatches = [];
 let prepareGate = null;
 let fileText = '';
 let mediaRepository;
+const currentUser = { name: '枫渡' };
 const boundaries = new Map([
   ['expo-crypto', { randomUUID }], ['@platform/persistence', { databaseCoordinator: database }],
+  ['@features/assistants', { getAssistantDisplayName: assistant => assistant.nickname ?? assistant.name }],
   ['@platform/device', { persistentMediaStore: { readAsText: async () => fileText }, localAudioPlaybackPort: {
     play: async () => ({ pause: async () => {}, resume: async () => {}, stop: async () => {}, subscribe: () => () => {} }),
   } }],
@@ -83,8 +86,13 @@ function load(relative) {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
     if (id.endsWith('/ChatMessageRuntime')) return { getChatMessageRuntimeDependencies: () => ({ messages: {
       getMessageById: async key => messageById(key), getMessageByIdInTransaction: async (_tx, key) => messageById(key),
+      getMessagesByLogicalMessageId: async (sessionId, logicalMessageId, transaction) => {
+        const rows = await transaction.getAllAsync('SELECT id FROM chat_visible_messages WHERE session_id = ? AND logical_message_id = ? ORDER BY segment_index, id', [sessionId, logicalMessageId]);
+        return rows.map(row => messageById(row.id));
+      },
     } }) };
-    if (id.endsWith('/ChatPresentation')) return { getChatDetailAvailableAssistants: async () => [{ id: 'a', agentId: 'agent-a', name: '测试 AI' }], getChatDetailCurrentUser: async () => ({ name: '枫渡' }) };
+    if (id.endsWith('/ChatPresentation')) return { getChatDetailAvailableAssistants: async () => db.prepare('SELECT id, agent_id AS agentId, name, nickname FROM ai_assistants').all(), getChatDetailCurrentUser: async () => ({ ...currentUser }) };
+    if (id.endsWith('/GroupChatManagement')) return { listGroupChats: async () => db.prepare('SELECT id, name FROM group_chats').all() };
     if (id === './MarkVoiceMessagePlayed') return { markVoiceMessagePlayed: async key => { played.push(key); } };
     if (id.endsWith('.json')) return JSON.parse(fs.readFileSync(path.resolve(path.dirname(filename), id), 'utf8'));
     if (id.startsWith('.')) return load(path.relative(root, path.resolve(path.dirname(filename), `${id}.ts`)));
@@ -139,9 +147,64 @@ const groupUser = insert('群聊用户正文', { groupChat: { actorName: '当时
 const groupAI = insert('群聊 AI 正文', { actorName: '当时的群 AI 名称' }, 'assistant');
 db.prepare("UPDATE messages SET session_id='g' WHERE id IN (?,?)").run(groupUser, groupAI);
 const groupSaved = await Promise.all([groupUser, groupAI].map(messageId => favorites.createChatFavorite({ messageId, sourceName: '测试群聊' })));
-assert.deepEqual(groupSaved.map(item => item.snapshot.authorName), ['当时的群用户名称', '当时的群 AI 名称']);
+assert.deepEqual(groupSaved.map(item => item.snapshot.authorName), ['当时的群用户名称', '测试 AI']);
 assert.deepEqual(groupSaved.map(item => item.category), ['text', 'text'], '表情收藏不得污染之后的纯文本消息');
 assert.ok(groupSaved.every(item => item.snapshot.sourceName === '测试群聊'));
+
+// 从上一版仅存名称的收藏升级；只凭原消息恢复身份，找不到原消息的快照仍独立保留。
+const orphan = { ...saved[0], id: 'orphan', sourceMessageId: 90000 };
+await repository.createInTransaction(executor, orphan);
+db.exec(`UPDATE chat_favorites SET snapshot_json = json_remove(snapshot_json,
+  '$.sourceAssistantId', '$.sourceGroupId', '$.authorAgentId');`);
+// 此处验证收藏身份补齐；完整版本升级由数据库基线用例覆盖，不伪标当前库版本。
+await loadSqliteModule('chatFavoriteSchema').migrateChatFavoriteIdentities(executor);
+assert.equal((await repository.getBySource(ids[1])).snapshot.authorAgentId, 'agent-a');
+assert.equal((await repository.getBySource(ids[0])).snapshot.sourceAssistantId, 'a');
+assert.equal((await repository.getBySource(groupAI)).snapshot.sourceGroupId, 'g');
+assert.equal((await repository.getBySource(90000)).snapshot.sourceAssistantId, null);
+const snapshotBeforeRename = (await repository.getBySource(ids[1])).snapshot;
+db.prepare('DELETE FROM messages WHERE id=?').run(ids[1]);
+db.prepare("UPDATE ai_assistants SET name='新的公开名称', nickname='专属昵称' WHERE id='a'").run();
+db.prepare("UPDATE group_chats SET name='改名后的群聊' WHERE id='g'").run();
+let namedPage = await favorites.listChatFavorites(null);
+assert.equal(namedPage.items.find(item => item.id === saved[1].id).authorName, '专属昵称', '原消息删除后仍按保存的角色身份读取当前名称');
+assert.equal(namedPage.items.find(item => item.id === saved[0].id).sourceName, '专属昵称');
+assert.equal(namedPage.items.find(item => item.id === groupSaved[1].id).sourceName, '改名后的群聊');
+assert.equal(namedPage.items.find(item => item.id === groupSaved[1].id).authorName, '专属昵称');
+assert.deepEqual((await repository.getBySource(ids[1])).snapshot, snapshotBeforeRename, '展示新名称不应改写历史内容快照');
+assert.equal(namedPage.items.find(item => item.id === orphan.id).sourceName, orphan.snapshot.sourceName);
+await favorites.removeChatFavorite(orphan.id);
+const searchIds = async (query, category = null) => (await favorites.listChatFavorites(category, null, query)).items.map(item => item.id).sort();
+assert.deepEqual(await searchIds('专属昵称'), [...saved, groupSaved[1]].map(item => item.id).sort(), '角色昵称也能找到该角色的图片及群聊发言');
+assert.deepEqual(await searchIds('新的公开名称', 'image'), [saved[2].id, saved[5].id].sort(), '设置昵称后仍可搜索公开名称');
+assert.deepEqual(await searchIds('改名后的群聊'), groupSaved.map(item => item.id).sort());
+assert.deepEqual(await searchIds('  文件正文  '), [saved[4].id], '匹配文件内部正文，不要求文件名或配文命中');
+assert.deepEqual(await searchIds('a.MD'), [saved[4].id], '文件名搜索忽略英文大小写');
+assert.deepEqual(await searchIds('语音转写'), [saved[3].id]);
+assert.deepEqual(await searchIds('AI 文字'), [saved[1].id]);
+assert.deepEqual(await searchIds('图片配文'), [], '图片不通过内容关键词或文件元数据命中');
+assert.deepEqual(await searchIds('picture'), []);
+assert.deepEqual(await searchIds('不存在的关键词'), []);
+db.prepare("UPDATE ai_assistants SET nickname=NULL WHERE id='a'").run();
+namedPage = await favorites.listChatFavorites(null);
+assert.equal(namedPage.items.find(item => item.id === saved[1].id).authorName, '新的公开名称');
+db.prepare("UPDATE ai_assistants SET name='测试 AI' WHERE id='a'").run();
+
+// 本机用户身份由 authorKind 确定，单聊和群聊历史均展示当前资料名，快照仍保留原名与原文。
+const userSnapshots = await Promise.all([ids[0], groupUser].map(id => repository.getBySource(id)));
+currentUser.name = '改名后的用户 Maple';
+const renamedUserPage = await favorites.listChatFavorites(null);
+const userFavorites = [...saved, ...groupSaved].filter(item => item.snapshot.authorKind === 'user');
+for (const favorite of userFavorites) {
+  assert.equal(renamedUserPage.items.find(item => item.id === favorite.id).authorName, currentUser.name);
+}
+assert.equal(renamedUserPage.items.find(item => item.id === saved[1].id).authorName, '测试 AI', '用户改名不改变 AI 作者名');
+assert.deepEqual(await searchIds('MAPLE'), userFavorites.map(item => item.id).sort(), '按当前用户名匹配用户作品，不连带匹配 AI 作品');
+assert.deepEqual(await searchIds('maple', 'image'), [saved[2].id, saved[5].id].sort(), '用户名称搜索覆盖图片，并保留分类筛选');
+assert.deepEqual(await searchIds('maple', 'audio'), [saved[3].id]);
+assert.deepEqual(await searchIds('maple', 'file'), [saved[4].id]);
+assert.deepEqual(await Promise.all([ids[0], groupUser].map(id => repository.getBySource(id))), userSnapshots);
+currentUser.name = '枫渡';
 
 // 状态卡、通话来源、临时消息与不支持的旧文件不参与收藏；表情名字不能作为可翻译文本。
 const rejected = [insert('通话状态', { type: 'callStatus' }), insert('通话 AI 文字', { triggerSource: 'call' }, 'assistant'),
@@ -173,6 +236,13 @@ for (const asset of preparedBatches.at(-1).assets) assert.equal(db.prepare('SELE
 
 // 删掉原消息与角色，收藏仍持有全部资产；备份枚举从快照库发现这些长期引用。
 db.exec("DELETE FROM messages; DELETE FROM sessions; DELETE FROM ai_assistants; DELETE FROM group_chats; DELETE FROM chat_conversations;");
+currentUser.name = '删除来源后改的新用户名';
+const sourceDeletedPage = await favorites.listChatFavorites(null);
+const sourceDeletedUserItems = sourceDeletedPage.items.filter(item => item.snapshot.authorKind === 'user');
+assert.ok(sourceDeletedUserItems.every(item => item.authorName === currentUser.name), '原消息、会话与群聊删除不影响当前用户名称展示');
+assert.deepEqual(await searchIds(currentUser.name), sourceDeletedUserItems.map(item => item.id).sort());
+assert.equal((await repository.getBySource(ids[0])).snapshot.authorName, '枫渡');
+currentUser.name = '枫渡';
 const referencedAssets = ['picture', 'thumb', 'audio', 'file', 'sticker', legacyFavorite.snapshot.attachments[0].mediaAssetId];
 await boundaries.get('@features/media').releaseMediaAssetCandidates(referencedAssets);
 assert.equal(cleaned.length, 0);
@@ -203,12 +273,30 @@ assert.ok(db.prepare("SELECT id FROM media_assets WHERE id='audio'").get());
 // 稳定收藏时间游标跨分页不会重复或漏项。
 for (let index = 0; index < 85; index++) await repository.createInTransaction(executor, {
   id: `page-${String(index).padStart(3, '0')}`, sourceMessageId: 1000 + index, category: 'text', savedAt: t,
-  snapshot: { sourceName: '分页', authorName: '用户', authorKind: 'user', messageCreatedAt: t, text: `分页 ${index}`, replyToText: null, attachments: [], voice: null },
+  snapshot: { sourceAssistantId: null, sourceGroupId: null, authorAgentId: null,
+    sourceName: '分页', authorName: '用户', authorKind: 'user', messageCreatedAt: t, text: `分页 ${index}`, replyToText: null, attachments: [], voice: null },
 });
 const seen = []; let cursor = null;
 do { const page = await favorites.listChatFavorites(null, cursor); seen.push(...page.items); cursor = page.nextCursor; } while (cursor);
 assert.equal(seen.length, 93); assert.equal(new Set(seen.map(item => item.id)).size, 93);
 assert.deepEqual(seen, [...seen].sort((a, b) => b.savedAt.localeCompare(a.savedAt) || b.id.localeCompare(a.id)));
+const matchingPages = []; cursor = null;
+do {
+  const page = await favorites.listChatFavorites('text', cursor, '分页');
+  matchingPages.push(...page.items); cursor = page.nextCursor;
+} while (cursor);
+assert.equal(matchingPages.length, 85, '搜索覆盖全部分页，保留稳定游标');
+assert.equal(new Set(matchingPages.map(item => item.id)).size, 85);
+assert.deepEqual(await searchIds('分页 0'), ['page-000'], '命中第一页之外的历史收藏');
+assert.deepEqual(await searchIds('%'), [], '搜索中的 SQL 通配符按字面处理');
+currentUser.name = '跨页用户新名';
+const userSearchItems = []; cursor = null;
+do {
+  const page = await favorites.listChatFavorites(null, cursor, currentUser.name);
+  userSearchItems.push(...page.items); cursor = page.nextCursor;
+} while (cursor);
+assert.deepEqual(userSearchItems.map(item => item.id).sort(), seen.filter(item => item.snapshot.authorKind === 'user').map(item => item.id).sort(), '按新用户名搜索在全量收藏中分页，不漏掉旧名作者的收藏');
+currentUser.name = '枫渡';
 
 const parser = load('src/features/chat/messages/application/AttachmentParser.ts');
 for (const extension of ['csv', 'json', 'pdf', 'docx', 'xlsx']) assert.equal(parser.isChatAttachmentFileSupported({ fileName: `a.${extension}` }), false);
@@ -237,19 +325,19 @@ const native = {
   ScrollView: 'Scroll', Pressable: 'Pressable', Text: 'Text', TouchableOpacity: 'Button', TouchableWithoutFeedback: 'Touchable', View: 'View',
   StyleSheet: { create: styles => styles, hairlineWidth: 1 }, useWindowDimensions: () => ({ width: 360, height: 780 }),
   Modal: ({ visible, children }) => visible ? React.createElement('Modal', null, children) : null,
-  ToastAndroid: { SHORT: 0, show() {} },
+  ToastAndroid: { SHORT: 0, show() {} }, Keyboard: { dismiss() {} },
 };
 boundaries.set('react-native', native);
 boundaries.set('@shared/theme', { useTheme: () => theme, useThemedStyles: create => create(theme), ThemedSurface: 'Surface' });
-boundaries.set('@shared/ui', { UserAvatar: 'Avatar', showAppDialog: options => { dialog = options; } });
-boundaries.set('@shared/ui/NavigationHeader', { __esModule: true, default: 'Header' });
+boundaries.set('@shared/ui', { UserAvatar: 'Avatar', AppTextInput: 'Input', KeyboardAvoidingContainer: 'KeyboardAvoiding', showAppDialog: options => { dialog = options; } });
+boundaries.set('@shared/ui/NavigationHeader', { __esModule: true, default: props => React.createElement('Header', props, props.rightButton) });
 boundaries.set('react-native-safe-area-context', { SafeAreaView: 'SafeArea' });
 let focused = true;
 boundaries.set('@react-navigation/native', { useFocusEffect: callback => {
   const isFocused = focused;
   React.useEffect(() => isFocused ? callback() : undefined, [callback, isFocused]);
 } });
-boundaries.set('lucide-react-native', { StarOff: 'StarOff', Star: 'Star', Pin: 'Pin', PinOff: 'PinOff', History: 'History', TextSelect: 'TextSelect', UserRound: 'UserRound', ArchiveRestore: 'ArchiveRestore', RefreshCw: 'RefreshCw', Trash2: 'Trash2' });
+boundaries.set('lucide-react-native', { ChevronDown: 'ChevronDown', ChevronUp: 'ChevronUp', Database: 'Database', Search: 'Search', X: 'X', StarOff: 'StarOff', Star: 'Star', Pin: 'Pin', PinOff: 'PinOff', History: 'History', TextSelect: 'TextSelect', UserRound: 'UserRound', ArchiveRestore: 'ArchiveRestore', RefreshCw: 'RefreshCw', Trash2: 'Trash2' });
 boundaries.set('@expo/vector-icons', { Ionicons: 'Icon' });
 for (const [id, name] of [['../messages/MessageBubble/ImageAttachmentCard', 'ImagePreview'], ['../messages/MessageBubble/AttachmentCard', 'AttachmentPreview'],
   ['../messages/MessageBubble/VoiceMessageCard', 'AudioPlayer'], ['../messages/FilePreview', 'FilePreview']]) boundaries.set(id, { __esModule: true, default: name });
@@ -257,10 +345,36 @@ const Screen = load('src/features/chat/presentation/favorites/ChatFavoritesScree
 let rendered;
 await renderer.act(async () => { rendered = renderer.create(React.createElement(Screen, { onBack() {} })); });
 assert.equal(rendered.root.findAllByProps({ accessibilityRole: 'tab' }).length, 5);
+const searchInput = () => rendered.root.findByType('Input');
+assert.equal(searchInput().props.value, '', '进入收藏页即可使用顶部搜索框');
+assert.notEqual(searchInput().props.autoFocus, true, '进入收藏页不自动弹出键盘');
+await renderer.act(async () => searchInput().props.onChangeText('文件正文'));
+assert.equal(rendered.root.findAllByProps({ accessibilityLabel: '查看收藏内容' }).length, 1);
+await renderer.act(async () => rendered.root.findAllByProps({ accessibilityRole: 'tab' })[1].props.onPress());
+assert.equal(searchInput().props.value, '文件正文', '切换分类保留搜索词');
+assert.ok(rendered.root.findAllByType('Text').some(node => node.props.children === '没有找到匹配的收藏'));
+await renderer.act(async () => rendered.root.findAllByProps({ accessibilityRole: 'tab' })[0].props.onPress());
+const listFavorites = repository.list.bind(repository);
+let finishSlowSearch;
+repository.list = async (category, cursor, search) => search?.text === '慢请求'
+  ? new Promise(resolve => { finishSlowSearch = resolve; }) : listFavorites(category, cursor, search);
+await renderer.act(async () => searchInput().props.onChangeText('慢请求'));
+await renderer.act(async () => searchInput().props.onChangeText('文件正文'));
+await renderer.act(async () => finishSlowSearch({ items: [], nextCursor: null }));
+assert.equal(rendered.root.findAllByProps({ accessibilityLabel: '查看收藏内容' }).length, 1, '迟到的旧搜索不能覆盖新结果');
+repository.list = listFavorites;
+await renderer.act(async () => rendered.root.findByProps({ accessibilityLabel: '清空收藏搜索' }).props.onPress());
+assert.equal(searchInput().props.value, '');
+assert.equal(rendered.root.findAllByType('Input').length, 1, '清空搜索后搜索框仍固定显示');
+assert.equal(rendered.root.findAllByProps({ accessibilityLabel: '查看收藏内容' }).length, 40, '清空搜索后恢复列表');
+currentUser.name = '收藏展示新名';
 await renderer.act(async () => rendered.root.findAllByProps({ accessibilityRole: 'tab' })[3].props.onPress());
 assert.equal(rendered.root.findAllByType('ImagePreview').length, 2);
+assert.equal(rendered.root.findAllByType('Text').filter(node => Array.isArray(node.props.children) && node.props.children.includes(currentUser.name)).length, 2, '列表中的用户作者展示当前用户名');
 await renderer.act(async () => rendered.root.findAllByProps({ accessibilityLabel: '查看收藏内容' })[0].props.onPress());
 assert.ok(rendered.root.findAllByType('Header').some(node => node.props.title === '收藏详情'));
+assert.ok(rendered.root.findByType('Modal').findAllByType('Text').some(node => Array.isArray(node.props.children) && node.props.children.includes(currentUser.name)), '详情中的用户作者展示当前用户名');
+currentUser.name = '枫渡';
 await renderer.act(async () => rendered.root.findAllByType('Header').find(node => node.props.title === '收藏详情').props.onGoBack());
 assert.equal(rendered.root.findAllByType('Modal').length, 0);
 await renderer.act(async () => rendered.root.findAllByProps({ accessibilityLabel: '取消收藏' })[0].props.onPress());
@@ -276,7 +390,7 @@ const { ProfileContent } = load('src/features/profile/presentation/ProfileConten
 let opened = 0;
 await renderer.act(async () => { rendered = renderer.create(React.createElement(ProfileContent, {
   profile: { name: '枫渡', avatar: null }, hasLoadedProfile: true, onOpenProfile() {}, onOpenFavorites: () => { opened++; },
-  onBackupPress() {}, onClearAllData() {}, checkingUpdates: false, availableUpdateVersion: null, updateProgress: null, updateDownloaded: false, onCheckUpdates() {},
+  onOpenDataManagement() {}, checkingUpdates: false, availableUpdateVersion: null, updateProgress: null, updateDownloaded: false, onCheckUpdates() {},
 })); });
 assert.deepEqual(rendered.root.findAllByProps({ accessibilityRole: 'button' }).slice(0, 2).map(node => node.props.accessibilityLabel), ['个人', '收藏']);
 await renderer.act(async () => rendered.root.findByProps({ accessibilityLabel: '收藏' }).props.onPress());
@@ -378,9 +492,75 @@ assert.equal(dialog.title, '收藏失败');
 assert.ok(rendered.root.findByProps({ accessibilityLabel: '收藏' }), '写入失败不能显示已收藏');
 await renderer.act(async () => rendered.unmount());
 db.exec("DELETE FROM messages; DELETE FROM sessions; DELETE FROM ai_assistants; DELETE FROM chat_conversations;");
+// 二级气泡只附同一逻辑消息的思考，不把整轮的其他模型步骤或其他会话拼进来。
+db.prepare("INSERT INTO ai_assistants(id,agent_id,name,model,created_at,updated_at) VALUES ('a','agent-a','测试 AI','test',?,?)").run(t, t);
+db.prepare("INSERT INTO sessions(id,ai_assistant_id,name,created_at,updated_at) VALUES ('s','a','测试聊天',?,?)").run(t, t);
+db.exec("INSERT INTO chat_conversations VALUES ('s','direct')");
+db.prepare("INSERT INTO group_chats(id,name,created_at,updated_at) VALUES ('g','思维链测试群',?,?)").run(t, t);
+db.exec("INSERT INTO chat_conversations VALUES ('g','group')");
+const firstThought = insert('第一步思考：先查资料', { replyRunId: 'favorite-run', stepIndex: 1 }, 'reasoning');
+const firstReply = insert('步骤一正文', { replyRunId: 'favorite-run', stepIndex: 1 }, 'assistant');
+const secondThought = insert('第二步思考：独有检索词', { replyRunId: 'favorite-run', stepIndex: 2 }, 'reasoning');
+const secondReplies = ['收藏二级正文A', '收藏二级正文B'].map(text => insert(text, { replyRunId: 'favorite-run', stepIndex: 2 }, 'assistant'));
+const mediaReplies = [
+  insert('图片配文', { attachments: [image('sticker')] }, 'assistant'),
+  insert('语音转写', { kind: 'voice', voice }, 'assistant'),
+  insert('文件配文', { attachments: saved[4].snapshot.attachments }, 'assistant'),
+];
+const userWithLogicalId = insert('用户也有逻辑分段');
+const streamingThought = insert('仍在生成的思考', null, 'reasoning', { status: 'streaming' });
+const cancelledThought = insert('被取消的思考', null, 'reasoning');
+db.prepare("UPDATE messages SET delivery_status='cancelled' WHERE id=?").run(cancelledThought);
+for (const id of [firstThought, firstReply]) db.prepare('UPDATE messages SET logical_message_id=? WHERE id=?').run('favorite-run:step:1', id);
+for (const id of [secondThought, ...secondReplies, ...mediaReplies, userWithLogicalId, streamingThought, cancelledThought]) {
+  db.prepare('UPDATE messages SET logical_message_id=? WHERE id=?').run('favorite-run:step:2', id);
+}
+for (const [index, id] of secondReplies.entries()) db.prepare('UPDATE messages SET segment_index=?, segment_total=2 WHERE id=?').run(index, id);
+const groupThought = insert('群里单独的思考', null, 'reasoning');
+const groupReply = insert('群聊收藏二级正文', null, 'assistant');
+db.prepare("UPDATE messages SET session_id='g', logical_message_id='favorite-run:step:2' WHERE id IN (?,?)").run(groupThought, groupReply);
+const firstFavorite = await save(firstReply);
+const secondFavorites = await Promise.all(secondReplies.map(save));
+assert.equal(firstFavorite.snapshot.reasoningText, '第一步思考：先查资料');
+assert.ok(secondFavorites.every(item => item.snapshot.reasoningText === '第二步思考：独有检索词'));
+assert.deepEqual(secondFavorites.map(item => item.snapshot.text), ['收藏二级正文A', '收藏二级正文B'], '收藏仍只保留选中的单个二级气泡正文');
+const groupFavorite = await favorites.createChatFavorite({ messageId: groupReply, sourceName: '思维链测试群' });
+assert.equal(groupFavorite.snapshot.reasoningText, '群里单独的思考');
+for (const id of [...mediaReplies, userWithLogicalId, insert('附近有思考但没有归属的文字', null, 'assistant')]) {
+  assert.equal((await save(id)).snapshot.reasoningText, undefined, '媒体、用户消息和没有关联身份的正文不附加思维链');
+}
+const toolsOnlyReply = insert('只有工具步骤的正文', { replyRunId: 'favorite-run', stepIndex: 3 }, 'assistant');
+const toolSteps = [insert('正在搜索', { type: 'toolStatus' }, 'system'), insert('工具返回结果', null, 'tool')];
+for (const id of [toolsOnlyReply, ...toolSteps]) db.prepare('UPDATE messages SET logical_message_id=? WHERE id=?').run('favorite-run:step:3', id);
+assert.equal((await save(toolsOnlyReply)).snapshot.reasoningText, undefined, '同轮其他步骤有思考，但当前回复只有工具步骤时不附思维链');
+assert.deepEqual(await searchIds('独有检索词'), secondFavorites.map(item => item.id).sort(), '搜索包含收藏的思维链正文');
+db.prepare('UPDATE messages SET text=? WHERE id=?').run('后来被修改的思考', secondThought);
+assert.equal((await save(secondReplies[1])).snapshot.reasoningText, '第二步思考：独有检索词', '重复收藏不改写原快照');
+db.prepare("DELETE FROM messages WHERE logical_message_id IN ('favorite-run:step:1', 'favorite-run:step:2')").run();
+assert.equal((await favorites.getChatFavoriteByMessage(secondReplies[1])).snapshot.reasoningText, '第二步思考：独有检索词', '原文和思维链删除后收藏仍独立保留');
+
+focused = true;
+await renderer.act(async () => { rendered = renderer.create(React.createElement(Screen, { onBack() {} })); });
+await renderer.act(async () => searchInput().props.onChangeText('收藏二级正文B'));
+assert.ok(rendered.root.findAllByType('Text').some(node => node.props.children === '含思维链'));
+await renderer.act(async () => rendered.root.findByProps({ accessibilityLabel: '查看收藏内容' }).props.onPress());
+const thoughtIsVisible = () => rendered.root.findAllByType('Text').some(node => node.props.children === '第二步思考：独有检索词' && node.props.selectable);
+assert.equal(thoughtIsVisible(), false, '收藏详情默认折叠思维链');
+await renderer.act(async () => rendered.root.findByProps({ accessibilityLabel: '展开思维链' }).props.onPress());
+assert.equal(thoughtIsVisible(), true, '思维链可展开并选择复制');
+await renderer.act(async () => rendered.root.findByProps({ accessibilityLabel: '收起思维链' }).props.onPress());
+assert.equal(thoughtIsVisible(), false);
+await renderer.act(async () => rendered.root.findByProps({ accessibilityLabel: '展开思维链' }).props.onPress());
+await renderer.act(async () => rendered.root.findAllByType('Header').find(node => node.props.title === '收藏详情').props.onGoBack());
+await renderer.act(async () => rendered.root.findByProps({ accessibilityLabel: '查看收藏内容' }).props.onPress());
+assert.equal(thoughtIsVisible(), false, '重新打开详情从折叠状态开始');
+await renderer.act(async () => rendered.unmount());
+db.prepare("UPDATE chat_favorites SET snapshot_json=json_set(snapshot_json, '$.reasoningText', 123) WHERE id=?").run(secondFavorites[0].id);
+await assert.rejects(favorites.getChatFavoriteByMessage(secondReplies[0]), /收藏记录损坏/);
+db.prepare('UPDATE chat_favorites SET snapshot_json=? WHERE id=?').run(JSON.stringify(secondFavorites[0].snapshot), secondFavorites[0].id);
 const countBeforeDamage = db.prepare('SELECT COUNT(*) n FROM chat_favorites').get().n;
 db.prepare('UPDATE chat_favorites SET snapshot_json=? WHERE id=?').run('{"text":123}', saved[0].id);
 await assert.rejects(favorites.listChatFavorites('text'), /收藏记录损坏/);
 assert.equal(db.prepare('SELECT COUNT(*) n FROM chat_favorites').get().n, countBeforeDamage, '损坏快照明确报告，不静默删除收藏');
 db.close();
-console.log('verify-chat-favorites: 快照、分类、幂等、菜单状态切换与异步竞态、删除竞态、媒体保留/释放、备份恢复、语音播放和文件上传策略通过。');
+console.log('verify-chat-favorites: 归属身份升级、名称与昵称更新、正文/语音/角色搜索及分页、搜索交互与异步竞态、快照、分类、幂等、菜单、删除竞态、媒体、备份恢复和文件策略通过。');

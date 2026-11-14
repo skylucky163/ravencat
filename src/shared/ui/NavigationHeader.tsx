@@ -18,6 +18,8 @@ interface NavigationHeaderProps {
   title: string;
   onGoBack?: (() => void) | null;
   rightButton?: ReactNode;
+  /** 两侧等宽预留，容纳多个操作时保持标题居中且不与按钮重叠。 */
+  sideWidth?: number;
   help?: {
     sections: readonly { title: string; body: string }[];
   };
@@ -29,6 +31,7 @@ const createStyles = (theme: PresentationTheme) =>
   StyleSheet.create({
     titleRow: {
       flex: 1,
+      minWidth: 0,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
@@ -45,12 +48,12 @@ const createStyles = (theme: PresentationTheme) =>
       backgroundColor: theme.components.navigation.backgroundColor,
     },
     headerLeft: {
-      width: 70,
+      flexShrink: 0,
       flexDirection: 'row',
       alignItems: 'center',
     },
     headerRight: {
-      width: 70,
+      flexShrink: 0,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
@@ -82,6 +85,7 @@ export default function NavigationHeader({
   title,
   onGoBack,
   rightButton,
+  sideWidth = 70,
   help,
   includeTopInset = false,
 }: NavigationHeaderProps) {
@@ -96,7 +100,7 @@ export default function NavigationHeader({
       variant="navigation"
     >
       {/* 左侧返回区域 */}
-      <View style={styles.headerLeft}>
+      <View style={[styles.headerLeft, { width: sideWidth }]}>
         {onGoBack ? (
           <TouchableOpacity onPress={onGoBack} style={styles.backBtn}>
             <View style={styles.backBtnContent}>
@@ -110,14 +114,14 @@ export default function NavigationHeader({
       <View style={styles.titleRow}>
         {/* 左右预留相同宽度，让标题保持居中，问号只附在标题后。 */}
         {help && <View style={styles.helpSpacer} />}
-        <Text style={styles.headerTitle} numberOfLines={1}>
+        <Text style={styles.headerTitle} numberOfLines={1} ellipsizeMode="tail">
           {title}
         </Text>
         {help && <NavigationHeaderHelp title={title} sections={help.sections} />}
       </View>
 
       {/* 右侧按钮区域 */}
-      <View style={styles.headerRight}>
+      <View style={[styles.headerRight, { width: sideWidth }]}>
         {rightButton}
       </View>
     </ThemedSurface>

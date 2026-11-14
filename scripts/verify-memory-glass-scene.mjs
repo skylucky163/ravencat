@@ -66,7 +66,7 @@ native.Modal = function Modal(props) {
 };
 const ModalSheet = load('src/shared/ui/ModalSheet.tsx', {
   'react-native': native, '@shared/theme': themed, 'react-native-safe-area-context': safeArea,
-  './KeyboardAvoidingContainer': { default: 'KeyboardAvoidingContainer' },
+  '../../../modules/modal-window': { ModalWindow: 'ModalWindow' },
 }).default;
 const styles = load('src/features/memory/presentation/memoryGalaxyStyles.ts', { 'react-native': native, '@shared/theme': themed });
 const icons = Object.fromEntries(['Check', 'ChevronRight', 'Plus', 'Search', 'X', 'ChevronLeft', 'Settings2'].map(name => [name, name]));
@@ -149,25 +149,26 @@ for (theme of Object.values(themes)) {
   }
   await act(async () => { renderer.unmount(); });
 }
-// 每条记忆的请求按钮只提交自己的 ID，等待中的任务不提供重复请求入口。
+// 列表进入所选记忆的详情，向量请求由详情页负责。
 {
   const entry = { id: 'single-vector', content: '逐条向量化', summary: null, rememberedAt: '2026-11-01T00:00:00Z', embeddingStatus: 'not_requested' };
   let panel, row;
+  const opened = [];
   const panelProps = { visible: true, snapshot: { ...snapshot, embeddingEnabled: true, entries: [entry] },
-    onClose() {}, onCreateMemory() {}, onEditMemory() {}, onOpenTrigger() {}, refresh() {}, run: operation => operation() };
+    onClose() {}, onCreateMemory() {}, onEditMemory: (...args) => opened.push(args), onOpenTrigger() {}, refresh() {}, run: operation => operation() };
   await act(async () => { panel = create(React.createElement(Panel, panelProps)); });
   const renderItem = panel.root.findByType('FlatList').props.renderItem;
   for (const status of ['not_requested', 'ready', 'failed', 'pending', 'retry_wait']) {
     await act(async () => { row = create(renderItem({ item: { ...entry, embeddingStatus: status } })); });
-    const button = row.root.findByProps({ accessibilityLabel: '请求这条记忆的向量化：逐条向量化' });
-    assert.equal(button.props.disabled, status === 'pending' || status === 'retry_wait');
-    if (status === 'not_requested') await act(async () => { await button.props.onPress(); });
+    await act(async () => { row.root.findByType('Pressable').props.onPress(); });
     await act(async () => { row.unmount(); });
   }
-  assert.deepEqual(vectorRequests, [['assistant-1', 'single-vector']]);
+  assert.deepEqual(opened, Array.from({ length: 5 }, () => ['assistant-1', 'single-vector']));
+  assert.deepEqual(vectorRequests, [], '打开详情不请求模型');
   await act(async () => { panel.update(React.createElement(Panel, { ...panelProps, snapshot: { ...panelProps.snapshot, embeddingEnabled: false } })); });
   await act(async () => { row = create(panel.root.findByType('FlatList').props.renderItem({ item: entry })); });
-  assert.equal(row.root.findByProps({ accessibilityLabel: '请求这条记忆的向量化：逐条向量化' }).props.disabled, true);
+  await act(async () => { row.root.findByType('Pressable').props.onPress(); });
+  assert.deepEqual(opened.at(-1), ['assistant-1', 'single-vector'], '关闭向量化仍可编辑记忆');
   await act(async () => { row.unmount(); panel.unmount(); });
 
   // 详情请求只处理已保存条目，不提交当前草稿，也不强制返回列表。
@@ -183,7 +184,7 @@ for (theme of Object.values(themes)) {
   await act(async () => { row = create(React.createElement(Editor, { assistantId: 'assistant-1', memoryId: entry.id, onBack: () => { backCount++; } })); });
   await act(async () => { row.root.findByProps({ placeholder: '写下值得记住的内容…' }).props.onChangeText('尚未保存的草稿'); });
   await act(async () => { row.root.findByProps({ accessibilityLabel: '向量化这条记忆' }).props.onPress(); });
-  assert.deepEqual(vectorRequests, [['assistant-1', 'single-vector'], ['assistant-1', 'single-vector']]);
+  assert.deepEqual(vectorRequests, [['assistant-1', 'single-vector']]);
   assert.equal(row.root.findByProps({ placeholder: '写下值得记住的内容…' }).props.value, '尚未保存的草稿');
   assert.equal(backCount, 0);
   await act(async () => { row.unmount(); });

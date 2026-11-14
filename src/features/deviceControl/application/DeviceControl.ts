@@ -35,10 +35,6 @@ export function releaseAiSoftLock(input: {
   return getFacade().releaseAiSoftLock(input, abortSignal);
 }
 
-export function expireDueSoftLocks() {
-  return getFacade().expireDueSoftLocks();
-}
-
 export function reconcileDeviceControl() {
   return getFacade().reconcileDeviceControl();
 }

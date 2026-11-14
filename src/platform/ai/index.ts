@@ -2,7 +2,6 @@
 export { BaseAIClient } from './BaseAIClient';
 export { aiHttpDiagnostics } from './HttpExchangeDiagnostics';
 export type { AIHttpExchange, AIHttpDiagnosticsSnapshot } from './HttpExchangeDiagnostics';
-export { KimiClient } from './KimiClient';
 export { OpenAIClient, createAIClient } from './OpenAIClient';
 export { fetchModelList } from './modelDiscovery';
 export { testAPIConnection } from './connectionTest';
@@ -13,9 +12,13 @@ export {
   getErrorDisplayInfo,
 } from './errorMapping';
 export { normalizeAIBaseURL } from './baseUrl';
-export { resolveMoonshotAPIBaseURL } from './moonshotEndpoint';
+export { resolveOfficialToolsAPIBaseURL } from './officialToolsEndpoint';
+export type { OfficialToolProvider } from './officialToolsEndpoint';
+export type { OfficialToolResult } from './OfficialToolsHttpClient';
+export { DeepSeekToolsClient } from './DeepSeekToolsClient';
+export type { DeepSeekSearchInput, DeepSeekSearchResult, DeepSeekFetchResult } from './DeepSeekToolsClient';
 export { MoonshotToolsClient } from './MoonshotToolsClient';
-export type { MoonshotToolResult, MoonshotSearchInput, MoonshotSearchResult, MoonshotFetchResult, MoonshotMewInput, MoonshotMewResult } from './MoonshotToolsClient';
+export type { MoonshotToolResult, MoonshotSearchInput, MoonshotSearchResult, MoonshotFetchResult, MoonshotFormulaName, MoonshotFormulaInput, MoonshotFormulaResult } from './MoonshotToolsClient';
 export { AgentModelGateway } from './agent/AgentModelGateway';
 export { CompleteModelTurnAdapter } from './agent/CompleteModelTurnAdapter';
 export { StreamingModelTurnAdapter } from './agent/StreamingModelTurnAdapter';
@@ -43,3 +46,8 @@ export type {
   ModelTurnResult,
   ModelUsage,
 } from './agent/ModelEvent';
+export { generateImage } from './ImageGenerationClient';
+export { IMAGE_GENERATION_PROVIDERS, IMAGE_ASPECT_RATIOS, readImageGenerationProfile, getImageGenerationCapabilities, validateImageGenerationParameters } from './imageGenerationConfig';
+export type { ImageGenerationProfile, ImageGenerationProvider, ImageAspectRatio, ImageResolution, ImageGenerationParameters, ImageGenerationCapabilities } from './imageGenerationConfig';
+export type { ImageGenerationPreview } from './ImageGenerationStream';
+export type { GeneratedImageContent, ImageGenerationResult } from './ImageGenerationClient';

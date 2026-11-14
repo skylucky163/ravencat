@@ -75,6 +75,9 @@ exports.ChatReplyRunCancelledError = class extends Error {};
 `);
 
 for (const relativePath of [
+  'src/features/chat/messages/domain/ChatCodeBlock.ts',
+  'src/features/chat/messages/domain/ChatCodePreview.ts',
+  'src/features/chat/messages/infrastructure/SQLiteChatCodePreviewRepository.ts',
   'src/features/chat/messages/domain/MessageTimeSeparator.ts',
   'src/features/chat/messages/domain/ChatMessage.ts',
   'src/features/chat/messages/domain/MessageRepository.ts',

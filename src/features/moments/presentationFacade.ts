@@ -32,6 +32,7 @@ import {
 } from './application/UserMomentCommands';
 import type { MomentAudienceCandidate } from './presentation/MomentAudienceDraft';
 import { createMomentShareSnapshot } from './application/ShareMoment';
+import { editOwnMomentAsUser, loadUserMomentEditDraft, type MomentEditDraft } from './application/EditMoment';
 
 export function createUserMomentShare(momentId: string) {
   return createMomentShareSnapshot(momentRepository, momentId);
@@ -80,7 +81,8 @@ export interface MomentRecord extends MomentRecordActor {
   /** 用户手填的显示地点；没有地点时是 null，UI 不占空间也不制造伪位置。 */
   locationLabel: string | null;
   createdAt: string;
-  /** AI audience；用户 UI 只用来显示轻量可见范围提示，不提供编辑入口。 */
+  editedAt: string | null;
+  /** AI audience 的轻量可见范围提示。 */
   audienceMode: MomentAudienceMode;
   media: MomentRecordMedia[];
   comments: MomentRecordComment[];
@@ -142,6 +144,7 @@ function projectMomentRecords(moments: import('./domain/MomentRepository').Momen
       content: moment.content,
       locationLabel: moment.locationLabel,
       createdAt: moment.createdAt,
+      editedAt: moment.editedAt,
       audienceMode: moment.audienceMode,
       media: recordMedia,
       comments: comments.map((comment) => {
@@ -185,6 +188,14 @@ export interface CreateUserMomentRecordInput {
   audience?: MomentAudience;
   media?: readonly MomentMediaDraft[];
   locationLabel?: string | null;
+}
+
+export function getUserMomentEditDraft(momentId: string) {
+  return loadUserMomentEditDraft(momentRepository, momentId);
+}
+
+export function editUserMomentRecord(momentId: string, expectedRevision: number, draft: MomentEditDraft) {
+  return editOwnMomentAsUser(momentRepository, { listAgentIds: listKnownAudienceAgentIds }, { ...draft, momentId, expectedRevision });
 }
 
 /** 用户发布：作者固定为当前用户资料身份，可见范围默认对全部 AI。 */

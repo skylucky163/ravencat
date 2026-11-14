@@ -11,7 +11,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Check, History, Pin, PinOff, Star, Sticker, TextSelect } from 'lucide-react-native';
+import { Check, Download, History, Pin, PinOff, Star, Sticker, TextSelect } from 'lucide-react-native';
 import { useTheme } from '@shared/theme';
 import type { ChatStickerAction } from './useChatStickerAction';
 
@@ -20,6 +20,7 @@ interface ChatMessageActionMenuProps {
   onClose: () => void;
   position?: { x: number; y: number } | null;
   onCopy?: () => void;
+  onSaveImages?: () => void;
   onSelectText?: () => void;
   onForward?: () => void;
   onRewrite?: () => void;
@@ -54,6 +55,7 @@ function ChatMessageActionMenu({
   onClose,
   position,
   onCopy,
+  onSaveImages,
   onSelectText,
   onForward,
   onRewrite,
@@ -95,6 +97,8 @@ function ChatMessageActionMenu({
     { key: 'forward', label: '分享', icon: 'arrow-redo-outline', onPress: onForward },
     { key: 'favorite', label: isFavorited ? '已收藏' : '收藏', icon: 'star-outline', onPress: onFavorite },
   ];
+
+  if (onSaveImages) actions.push({ key: 'saveImages', label: '保存图片', icon: 'download-outline', onPress: onSaveImages });
 
   if (stickerAction) actions.push({
     key: 'addSticker', label: stickerAction.isAdded ? '已添加' : '添加表情包',
@@ -154,7 +158,7 @@ function ChatMessageActionMenu({
         disabled={!action}
         onPress={action ? () => { action(); onClose(); } : undefined}
       >
-        {item.key === 'addSticker'
+        {item.key === 'saveImages' ? <Download size={22} color={theme.colors.brand.onPrimary} /> : item.key === 'addSticker'
           ? (stickerAction!.isAdded
             ? <Check size={22} color={theme.colors.brand.onPrimary} />
             : <Sticker size={22} color={theme.colors.brand.onPrimary} />)

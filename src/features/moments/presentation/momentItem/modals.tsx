@@ -160,6 +160,7 @@ interface MoreMenuModalProps {
   isOwnMoment: boolean;
   aiCommentsCount: number;
   onDeleteMoment: () => void;
+  onEditMoment: () => void;
   onOpenAIManager: () => void;
 }
 
@@ -169,6 +170,7 @@ export function MoreMenuModal({
   isOwnMoment,
   aiCommentsCount,
   onDeleteMoment,
+  onEditMoment,
   onOpenAIManager,
 }: MoreMenuModalProps) {
   const theme = useTheme();
@@ -178,6 +180,11 @@ export function MoreMenuModal({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
         <TouchableOpacity style={modalStyles.modalOverlay} activeOpacity={1} onPress={onClose}>
         <ThemedSurface variant="modal" style={modalStyles.menuContainer}>
+          {isOwnMoment && (
+            <TouchableOpacity style={modalStyles.menuItem} onPress={onEditMoment} activeOpacity={0.7}>
+              <Text style={modalStyles.menuItemText}>编辑时刻</Text>
+            </TouchableOpacity>
+          )}
           {isOwnMoment && (
             <TouchableOpacity style={modalStyles.menuItem} onPress={onDeleteMoment} activeOpacity={0.7}>
               <Text style={modalStyles.menuItemTextDanger}>删除时刻</Text>

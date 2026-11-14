@@ -27,6 +27,10 @@ import type {
   MomentQueryEntry,
   MomentTimelineEntry,
   CreateMomentInput,
+  EditMomentInput,
+  EditMomentResult,
+  MomentAudience,
+  MomentEditSnapshot,
   InsertMomentCommentInput,
   InsertMomentLikeInput,
 } from '../domain/MomentRepository';
@@ -41,6 +45,8 @@ interface MomentRow {
   location_label: string | null;
   audience_mode: string;
   created_at: string;
+  edited_at: string | null;
+  edit_revision: number;
 }
 
 interface MomentCommentRow {
@@ -101,7 +107,7 @@ interface MomentSettingsRow {
 }
 
 const MOMENT_COLUMNS =
-  'id, author_type, author_id, author_name_snapshot, content, location_label, audience_mode, created_at';
+  'id, author_type, author_id, author_name_snapshot, content, location_label, audience_mode, created_at, edited_at, edit_revision';
 /** 带 `moments` 别名的同一份列清单，供带 JOIN/EXISTS 条件的可见性查询使用。 */
 const MOMENT_COLUMNS_QUALIFIED = MOMENT_COLUMNS
   .split(', ')
@@ -153,6 +159,8 @@ function toMoment(row: MomentRow): Moment {
     content: row.content,
     locationLabel: row.location_label,
     createdAt: row.created_at,
+    editedAt: row.edited_at,
+    editRevision: row.edit_revision,
     audienceMode: row.audience_mode as MomentAudienceMode,
   };
 }
@@ -510,9 +518,9 @@ export class SQLiteMomentRepository implements IMomentRepository {
     const createdAt = new Date().toISOString();
     const audienceMode: MomentAudienceMode = input.audience.mode;
     const viewerAgentIds = input.audience.mode === 'all' ? [] : input.audience.viewerAgentIds;
-    // 地点与正文同属发布瞬间的不可变事实，必须与 Moment 行一起提交，不能先建后 UPDATE。
+    // 首次发布与后续编辑各自拥有完整事务，不能先建半条事实再补字段。
     await transaction.runAsync(
-      `INSERT INTO moments (${MOMENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO moments (${MOMENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
       [input.id, input.authorType, input.authorId, input.authorNameSnapshot,
         input.content, input.locationLabel, audienceMode, createdAt]
     );
@@ -551,6 +559,8 @@ export class SQLiteMomentRepository implements IMomentRepository {
       content: input.content,
       locationLabel: input.locationLabel,
       createdAt,
+      editedAt: null,
+      editRevision: 0,
       audienceMode,
     };
   }
@@ -559,6 +569,105 @@ export class SQLiteMomentRepository implements IMomentRepository {
     const database = this.#executor('moments.deleteMoment', 'runtime');
     const result = await database.runAsync('DELETE FROM moments WHERE id = ?', [momentId]);
     return result.changes > 0;
+  }
+
+  private async readAudience(database: DatabaseReadExecutor, moment: Moment): Promise<MomentAudience> {
+    if (moment.audienceMode === 'all') return { mode: 'all' };
+    const rows = await database.getAllAsync<{ viewer_agent_id: string }>(
+      'SELECT viewer_agent_id FROM moment_audience_ai WHERE moment_id = ? ORDER BY viewer_agent_id', [moment.id],
+    );
+    return { mode: moment.audienceMode, viewerAgentIds: rows.map(row => row.viewer_agent_id) };
+  }
+
+  async getMomentEditSnapshotForUser(momentId: string): Promise<MomentEditSnapshot | null> {
+    return this.#executor('moments.getMomentEditSnapshotForUser', 'surface').withExclusiveTransactionAsync(async transaction => {
+      const row = await transaction.getFirstAsync<MomentRow>(`SELECT ${MOMENT_COLUMNS} FROM moments WHERE id = ?`, [momentId]);
+      if (!row) return null;
+      const moment = toMoment(row);
+      const media = await transaction.getAllAsync<MomentMediaRow>(`SELECT ${MEDIA_COLUMNS} FROM moment_media WHERE moment_id = ? ORDER BY sort_order`, [momentId]);
+      return { moment, media: media.map(toMedia), audience: await this.readAudience(transaction, moment) };
+    });
+  }
+
+  async editMoment(input: EditMomentInput): Promise<EditMomentResult> {
+    return this.#executor('moments.editMoment', 'runtime').withExclusiveTransactionAsync(transaction => this.editMomentInTransaction(transaction, input)).catch((error: unknown) => {
+      if (error instanceof CoordinatedDatabaseError && error.cause instanceof MomentDomainError) throw error.cause;
+      throw error;
+    });
+  }
+
+  async editMomentInTransaction(transaction: DatabaseTransactionExecutor, input: EditMomentInput): Promise<EditMomentResult> {
+    const row = input.actorType === 'ai'
+      ? await transaction.getFirstAsync<MomentRow>(`SELECT ${MOMENT_COLUMNS_QUALIFIED} FROM moments m WHERE m.id = ? AND ${AGENT_VISIBILITY_PREDICATE}`,
+        [input.momentId, input.actorId, input.actorId, input.actorId])
+      : await transaction.getFirstAsync<MomentRow>(`SELECT ${MOMENT_COLUMNS} FROM moments WHERE id = ?`, [input.momentId]);
+    if (!row) throw new MomentDomainError(input.actorType === 'ai' ? 'moment_not_visible' : 'moment_not_found', '该时刻不存在或对你不可见');
+    const moment = toMoment(row);
+    // 作者权限、表单版本与写入处于同一个事务，不能依赖事务外读到的旧状态。
+    if (moment.authorType !== input.actorType || moment.authorId !== input.actorId) {
+      throw new MomentDomainError('not_moment_owner', '只能编辑自己发布的时刻');
+    }
+    if (input.expectedRevision !== undefined && input.expectedRevision !== moment.editRevision) {
+      throw new MomentDomainError('edit_conflict', '这条时刻已被修改，请重新打开编辑页后再保存。');
+    }
+    const content = input.content ?? moment.content;
+    const locationLabel = input.locationLabel === undefined ? moment.locationLabel : input.locationLabel;
+    const oldMedia = await transaction.getAllAsync<MomentMediaRow>(`SELECT ${MEDIA_COLUMNS} FROM moment_media WHERE moment_id = ? ORDER BY sort_order`, [moment.id]);
+    const mediaChanged = input.media !== undefined && (input.media.length !== oldMedia.length
+      || input.media.some((media, index) => media.mediaAssetId !== oldMedia[index].media_asset_id));
+    let audienceChanged = false;
+    if (input.audience !== undefined) {
+      const oldAudience = await this.readAudience(transaction, moment);
+      const oldIds = oldAudience.mode === 'all' ? [] : oldAudience.viewerAgentIds;
+      const newIds = input.audience.mode === 'all' ? [] : input.audience.viewerAgentIds;
+      audienceChanged = oldAudience.mode !== input.audience.mode || oldIds.length !== newIds.length
+        || newIds.some(id => !oldIds.includes(id));
+    }
+    if (content === moment.content && locationLabel === moment.locationLabel && !mediaChanged && !audienceChanged) {
+      return { moment, changed: false, removedMediaAssetIds: [], addedMediaIds: [] };
+    }
+    const editedAt = new Date().toISOString();
+    const removedMediaAssetIds: string[] = [];
+    const addedMediaIds: string[] = [];
+    if (mediaChanged) {
+      const media = input.media!;
+      const retainedIds = new Set(media.map(item => item.mediaAssetId));
+      for (const old of oldMedia) {
+        if (!retainedIds.has(old.media_asset_id)) {
+          await transaction.runAsync('DELETE FROM moment_media WHERE id = ?', [old.id]);
+          removedMediaAssetIds.push(old.media_asset_id);
+        }
+      }
+      const oldByAssetId = new Map(oldMedia.map(item => [item.media_asset_id, item]));
+      for (const item of media) {
+        const old = oldByAssetId.get(item.mediaAssetId);
+        if (old) {
+          await transaction.runAsync('UPDATE moment_media SET sort_order = ? WHERE id = ?', [item.sortOrder, old.id]);
+        } else {
+          await transaction.runAsync(`INSERT INTO moment_media (${MEDIA_COLUMNS}) VALUES (?, ?, ?, ?, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, 0, ?, ?)`,
+            [item.id, moment.id, item.mediaAssetId, item.sortOrder, editedAt, editedAt]);
+          addedMediaIds.push(item.id);
+        }
+      }
+    }
+    if (audienceChanged) {
+      await transaction.runAsync('DELETE FROM moment_audience_ai WHERE moment_id = ?', [moment.id]);
+      if (input.audience!.mode !== 'all') {
+        for (const id of input.audience!.viewerAgentIds) {
+          await transaction.runAsync('INSERT INTO moment_audience_ai (moment_id, viewer_agent_id) VALUES (?, ?)', [moment.id, id]);
+        }
+      }
+    }
+    const audienceMode = input.audience?.mode ?? moment.audienceMode;
+    await transaction.runAsync('UPDATE moments SET content = ?, location_label = ?, audience_mode = ?, edited_at = ?, edit_revision = edit_revision + 1 WHERE id = ?',
+      [content, locationLabel, audienceMode, editedAt, moment.id]);
+    // 编辑不制造新发布事件；已有未读仍需遵守最新 ACL，撤回权限不能留下事件侧漏。
+    if (audienceChanged) {
+      await transaction.runAsync(`DELETE FROM moment_social_inbox_deliveries AS d WHERE source_moment_id = ?
+        AND NOT EXISTS (SELECT 1 FROM moments m WHERE m.id = d.source_moment_id
+          AND ${AGENT_VISIBILITY_PREDICATE.replaceAll('?', 'd.recipient_agent_id')})`, [moment.id]);
+    }
+    return { moment: { ...moment, content, locationLabel, audienceMode, editedAt, editRevision: moment.editRevision + 1 }, changed: true, removedMediaAssetIds, addedMediaIds };
   }
 
   // ==================== 正文图片与语义快照 ====================

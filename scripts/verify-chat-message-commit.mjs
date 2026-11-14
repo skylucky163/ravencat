@@ -59,6 +59,7 @@ export function getChatMessageRuntimeDependencies() { return {}; }
 const timelineMetadataStubUrl = transpileToModuleUrl(`
 export function buildAttachmentMessageMetadata() { return null; }
 export function buildStickerMessageMetadata() { return null; }
+export function parseMessageMetadata(message) { return message.metadataJson ? JSON.parse(message.metadataJson) : null; }
 `);
 globalThis.__TEST_TIMELINE_EVENT_BUS__ = null;
 const timelineEventsStubUrl = transpileToModuleUrl(`
@@ -375,6 +376,10 @@ const messageMetadata = loadTypeScriptModule('src/features/chat/messages/domain/
   ...chatSharingDependencies,
 });
 const { MessageRepository } = loadTypeScriptModule('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts', {
+  '../domain/ChatCodeBlock': loadTypeScriptModule('src/features/chat/messages/domain/ChatCodeBlock.ts'),
+  './SQLiteChatCodePreviewRepository': loadTypeScriptModule('src/features/chat/messages/infrastructure/SQLiteChatCodePreviewRepository.ts', {
+    '@platform/persistence': {}, '../domain/ChatCodePreview': loadTypeScriptModule('src/features/chat/messages/domain/ChatCodePreview.ts'),
+  }),
   '@platform/persistence': { databaseCoordinator: {
     openTaskExecutor() {
       assert.ok(globalThis.__TEST_COORDINATOR_HOLDER__, '事务方法不得在缺少测试协调器时打开任务执行器');
@@ -888,6 +893,10 @@ export function getChatMessageRuntimeDependencies() {
 `);
   const commitCanonicalModuleUrl = transpileToModuleUrl(
     read('src/features/chat/messages/application/CommitCanonicalUserMessage.ts')
+      .replace("from '../domain/SubstantiveUserMessage'", `from '${transpileToModuleUrl(
+        read('src/features/chat/messages/domain/SubstantiveUserMessage.ts')
+          .replace("from './chatMessageMetadata'", `from '${timelineMetadataStubUrl}'`)
+      )}'`)
       .replace("from '../events/ChatEvents'", `from '${transpileToModuleUrl(read('src/features/chat/messages/events/ChatEvents.ts'))}'`)
       .replace(
         /from\s*['"]@platform\/persistence['"]/,

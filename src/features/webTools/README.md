@@ -2,15 +2,21 @@
 
 ## Kimi 官方工具
 
-提示词中心另列「Kimi 官方工具」包，包含 `kimi_web_search`（官方 Basic 搜索）、`kimi_web_fetch`（官方网页抓取）与 `kimi_mew`（猫叫与祝福），默认禁用、未设特批。沿用普通工具的逐 AI 权限、全局默认、拆包与星标；不会替换用户配置的普通搜索来源。搜索返回标题、链接、站点、日期和摘要；网页正文最多提供 20000 字符，并返回截断标记及原始字符数。
+提示词中心另列「Kimi 官方工具」包，包含 `kimi_web_search`（官方 Basic 搜索）、`kimi_web_fetch`（官方网页抓取）、`kimi_mew`（猫叫与祝福）、`kimi_convert`（单位及货币换算）、`kimi_rethink`（整理想法）、`kimi_random_choice`（随机选择）、`kimi_excel`（Excel / CSV 分析）、`kimi_date`（日期时间）和 `kimi_base64`（编解码）。全部默认禁用、未设特批。沿用普通工具的逐 AI 权限、全局默认、拆包与星标；不会替换用户配置的普通搜索来源。搜索返回标题、链接、站点、日期和摘要；网页正文最多提供 20000 字符，并返回截断标记及原始字符数。
 
 仅当前 AI 使用 `https://api.moonshot.cn` 或 `https://api.moonshot.ai` 的根地址／`/v1` 时可用。第三方模型渠道、代理路径、HTTP、自定义端口、含认证信息或查询参数的地址均不启用。非官方接口仍能查看工具说明，但开关和星标灰显并说明原因；既有偏好保留，换回官方接口后恢复。全局默认只对支持的接口生效，识别到官方地址不会自动授予权限。
 
-Host 在正常授权解析时裁决接口可用性，再把同一 allowlist 交给拆包和 Runtime；特批与已展开包均不能扩大权限。协议请求由 `platform/ai` 的 `MoonshotToolsClient` 负责，使用当前运行的 AI 配置与密钥，调用 `/v1/tools/search`、`/v1/tools/fetch`，禁止认证重定向；响应上限 2 MiB、请求上限 60 秒，取消传给原生网络请求。外部响应在协议边界验证，正文仅作资料 observation；错误不回显服务端正文、密钥或原始网络异常。
+Host 在正常授权解析时按 `officialToolProvider` 裁决接口可用性，再把同一 allowlist 交给拆包和 Runtime；特批与已展开包均不能扩大权限。协议映射由 `platform/ai` 的 `MoonshotToolsClient`、`DeepSeekToolsClient` 分别负责，认证、响应读取与取消共用 `OfficialToolsHttpClient`。使用当前运行的 AI 配置与密钥，禁止认证重定向；响应上限 2 MiB、请求上限 60 秒，取消传给原生网络请求。外部响应在协议边界验证，网页正文仅作资料 observation；错误不回显服务端正文、密钥或原始网络异常。
 
-`kimi_mew` 在调用时读取 `moonshot/mew:latest` 的官方函数声明，单一函数自动选择，多函数时由模型按返回的声明指定 `function_name`；`arguments` 必须符合该官方 schema 才提交 fiber。缺少参数时明确返回「尚未执行」及官方声明，交回同一模型循环补充，不猜函数名或参数。只允许该 Formula 的已声明函数，不开放任意 Formula 执行。成功输出与 protected 密文原样回灌，不套用搜索资料前缀，也不自动播放音频；随机结果不声明幂等。
+七个 Formula 工具沿用同一执行入口，每个工具固定对应 `moonshot/<工具名>:latest`。调用时读取官方函数声明，单一函数自动选择，多函数时由模型按返回的声明指定 `function_name`；`arguments` 必须符合该官方 schema 才提交 fiber。缺少参数时明确返回「尚未执行」及官方声明，交回同一模型循环补充，不猜函数名或参数。只允许该 Formula 的已声明函数，不开放任意 Formula URI。成功输出与 protected 密文原样回灌，不套用搜索资料前缀，不自动播放音频。Formula 不承诺幂等；日期、随机和货币结果可能随调用变化。
 
-搜索与抓取消耗当前 Moonshot 账号的服务额度，不另存一份密钥。未接入旧 `$web_search` 或云端 memory、Excel 等能力。接口依据：[搜索](https://platform.kimi.com/docs/api/tools-search)、[网页抓取](https://platform.kimi.com/docs/api/tools-fetch)、[Formula 官方工具](https://platform.kimi.com/docs/guide/use-official-tools)。
+Excel / CSV 仅支持官方声明接受的数据与参数，不自动上传或读取手机本地文件。云端 memory 不接入，继续使用 RavenCat 记忆库；也不接入旧 `$web_search`。搜索与抓取消耗当前 Moonshot 账号的服务额度，不另存一份密钥。接口依据：[搜索](https://platform.kimi.com/docs/api/tools-search)、[网页抓取](https://platform.kimi.com/docs/api/tools-fetch)、[Formula 官方工具](https://platform.kimi.com/docs/guide/use-official-tools)。
+
+## DeepSeek 官方工具
+
+提示词中心独立提供「DeepSeek 官方工具」包，包含默认关闭的 `deepseek_web_search` 与 `deepseek_web_fetch`。仅 `https://api.deepseek.com` 根地址或 `/v1` 可用；接口校验、偏好保留和权限流程与 Kimi 共用。切换接口不会把一家账号的密钥发送到另一家。
+
+搜索映射到 `POST /v1/tools/search` 的 `query`、`count`、`need_content: false`；查询最多 128 个 Unicode 字符，默认 5 条、最多 50 条。返回标题、链接、片段、详细摘要与允许为空的站点和日期。抓取映射到 `POST /v1/tools/fetch`，把官方 `content` 转为 Markdown 正文，最多提供 20000 字符并保留来源链接、截断标记和原始字符数。使用当前 DeepSeek API key 与账号额度，无额外搜索配置。接口依据：[DeepSeek Search & Fetch](https://api-docs.deepseek.com/guides/search/)。
 
 ## 通用联网工具
 

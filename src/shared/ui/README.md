@@ -6,7 +6,7 @@
 长列表显式传入 `nativeGlass={false}`，输入框与卡片内部的小控件使用主题的轻量染色，
 避免逐项模糊或白色底层堆叠。同一玻璃表面里的嵌套卡片不再重复开启原生效果。
 `ModalSheet`、全局提示和问号说明气泡统一使用弹窗材质；普通主题保持自己的表面颜色。
-`ModalSheet` 与主窗口表单共用统一的键盘边界容器，Feature 不重复监听键盘或添加避让留白。
+`ModalSheet` 的独立窗口由 Android 原生模块负责键盘边界，主窗口表单使用 `KeyboardAvoidingContainer`；Feature 不重复监听键盘或添加避让留白。
 
 ## 组件列表
 
@@ -25,11 +25,13 @@
 | `DropdownField` | 通用下拉字段（提供方、模型与参数选择） |
 | `HeaderAddButton` | 导航头右上角新增入口：统一品牌色加号 |
 | `InputField` | 通用输入框（带 label / hint） |
+| `ImageViewerModal` | 全屏看图：单击退出、双击缩放、多图翻页，业务操作由 `footer` 注入 |
 | `AppTextInput` | 不带字段外壳的输入基础控件，供聊天、通话等输入区复用 |
 | `KeyboardAvoidingContainer` | 当前原生窗口内的统一键盘避让容器 |
 | `ListItem` | 通用列表项 |
 | `ModalSheet` | 底部弹窗 |
-| `ModelPickerModal` | 模型、用途配置和服务共用的选择弹窗；支持忙碌、重读、列表底部取消选择和标题旁问号说明，统一不带管理跳转 |
+| `ModelPickerModal` | 模型与用途配置共用的选择弹窗；支持忙碌、重读和标题问号说明，固定底栏并列取消选择与可选管理入口；关窗完成后才执行管理回调 |
+| `ModelManagementNavigationProvider` | 宿主注入按用途打开模型管理的能力；Feature 只传用途，shared 不持有 App 路径 |
 | `NavigationHeader` | 通用页面导航头，可在标题后显示主题主色问号并打开锚定悬浮说明 |
 | `Toggle` | 统一的二元开关，包含读屏状态及原生动画 |
 | `ToggleField` | 带标题和说明的开关字段，支持页面注入布局、字体、编号和自定义内容，内部使用 `Toggle` |
@@ -40,11 +42,17 @@
 
 `HeaderAddButton` 默认自带导航头右侧的点击区内边距；与设置等其他头部按钮并排、由页面提供按钮容器时传 `variant="inline"`，并用 `style` 给出尺寸。
 
+模型管理导航通过 `node --no-warnings scripts/verify-model-picker-navigation.mjs` 验证：覆盖七种用途、业务入口映射、同页不重复压栈、弹层移除后跳转、空列表与读取失败入口，以及返回刷新和保留选择。
+
 开关设置项统一使用 `ToggleField`：`layout="stacked"` 将说明放在行下方，`layout="inline"` 将说明放在开关左侧。页面通过 `rowStyle` 提供完整行布局时，组件直接使用该布局；未提供时保留默认表单容器。`contentStyle`、`labelStyle`、`hintStyle` 可替换各部分的默认样式，`style` 和 `toggleStyle` 分别补充外层与开关样式。编号或图标通过 `leading` 传入，状态标签和操作按钮等复杂内容可作为 `children` 保留原有结构。卡片材质与分组由页面负责，组件不保存业务状态；已有列表插槽中的独立开关仍使用 `Toggle`。
+
+`ImageViewerModal` 是聊天图片、收藏图片/表情、时刻图片以及用户与 AI 空间封面共用的唯一看图容器：`sources` 只接受已解析的图片源，`null` 表示该页仍在解析；`footer(index)` 只承载调用方业务操作（例如时刻的图片描述管理），不复制容器、手势或关闭逻辑。关闭后内容卸载，缩放与翻页状态不跨次继承；各场景自行负责把媒体身份解析为图片源。
 
 卡片内的「开关 + 说明跳转」行使用 `ToggleDetailRow`：标题与开关在第一行，灰色描述与箭头在第二行；`icon` 可选，不传时不保留图标列宽度；`divider` 由最后一项以外的列表成员开启。需要多行元信息时用 `detail` 替换描述区内容，箭头仍只由 `onOpenDetail` 决定。卡片材质与分组仍由页面负责，组件只接收当前值并回传变更。
 
 页面只通过 `help.sections` 提供自己拥有的小标题和正文。导航头内部的 `NavigationHeaderHelp` 负责测量问号位置、打开带尖角的悬浮气泡，以及点击外部、系统返回和页面失焦时关闭；页面无需维护提示状态或监听根容器触摸。气泡以透明原生 `Modal` 显示，不占据页面布局，外部点击只关闭气泡，正文内部可滚动阅读。
+
+`NavigationHeader` 的 `sideWidth` 控制左右侧栏等宽预留，默认 70；右侧需要容纳多个操作时由页面声明所需宽度。标题占据剩余空间并保持单行省略，操作按钮不参与收缩。
 
 主窗口和 Modal 的位置都经原生测量，再换算为浮层坐标，避免系统栏和多窗口偏移。气泡宽度受当前窗口限制，小尖角指向问号；页面离开或锚点重新布局后，迟到的测量不能重新打开气泡。问号两侧的布局占位对称，保持页面标题居中；不传 `help` 时不占用说明入口的空间。
 
@@ -65,8 +73,9 @@
 隐藏键盘后恢复原始布局，迟到的测量不能恢复旧状态。原生 View 的 ref 接入/脱离定义测量有效期：脱离后忽略键盘事件，并立即失效尚未返回的测量，不依赖 React effect 稍后的清理顺序。
 关闭但仍挂载的弹窗传 `enabled={visible}`，避免监听其他窗口的输入。
 
-`ModalSheet` 也复用这个容器，并传 `fillsNativeWindow`：它已经铺满独立原生窗口，直接使用屏幕键盘顶边，
-不再读取会被系统平移和 edge-to-edge 坐标问题污染的 `measureInWindow.y`。长表单由 Feature 在弹窗内提供可收缩的 `ScrollView`，
+`ModalSheet` 使用 `modules/modal-window` 的原生容器：所属窗口关闭系统自动顶移，直接根据本窗口 IME insets 与窗口高度向 Fabric 提交可用高度，
+不再订阅 JS 键盘事件、读取屏幕坐标或嵌套 `KeyboardAvoidingContainer`。原生容器随 Modal 销毁，不改动 Activity 的窗口策略；新增原生能力需要更新客户端后使用。
+长表单由 Feature 在弹窗内提供可收缩的 `ScrollView`，
 需要始终可见的操作按钮放在滚动区外；原生滚动容器负责把获得焦点的输入框滚入可见区域，不在调用点增加延时或另一套焦点测量。
 
 需要打开即编辑的 `ModalSheet` 在 `onOpened` 中通过输入 ref 请求焦点。回调等待原生窗口
@@ -90,6 +99,7 @@
 视觉采用柔和圆角、简洁图标和纵向按钮，颜色跟随当前主题。长正文可滚动、选择复制，
 按钮不随正文滚动。`tone` 可用 `info`、`success`、`warning`、`error`，默认 `info`。
 不提供 `buttons` 时显示“知道了”；操作按钮的 `style` 可用 `default`、`cancel`、`destructive`。
+`destructive` 按钮可传 `emphasis: 'strong'`，以红底白字强调不可恢复的操作；默认保持浅底红字。
 危险操作保持显式确认，返回键或点击遮罩只关闭提示并调用 `onDismiss`，不会执行按钮回调。
 必须让用户选择按钮时可传 `dismissible: false`。
 

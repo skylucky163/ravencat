@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, EmptyState, NavigationHeader, showAppDialog } from '@shared/ui';
 import { useThemedStyles, type PresentationTheme } from '@shared/theme';
 import { subscribeMomentMediaAnalysisUpdated } from '../application/MomentMediaAnalysis';
+import { subscribeMomentEdited } from '../application/EditMoment';
 import { getMomentRecord, createUserMomentComment, createUserMomentLike, removeUserMomentLike, removeMomentRecord, removeMomentCommentById, type MomentRecord } from '../presentationFacade';
 import MomentItem from './MomentItem';
 
@@ -23,6 +24,7 @@ export default function MomentDetailScreen({ momentId, onBack }: { momentId: str
     return () => { active = false; };
   }, [momentId, revision]);
   useEffect(() => subscribeMomentMediaAnalysisUpdated(reload), [reload]);
+  useEffect(() => subscribeMomentEdited(id => { if (id === momentId) reload(); }), [reload, momentId]);
   const mutate = async (work: () => Promise<unknown>) => { await work(); reload(); };
   const like = (id: string, remove = false) => {
     void mutate(() => remove ? removeUserMomentLike(id) : createUserMomentLike(id)).catch(failure => {

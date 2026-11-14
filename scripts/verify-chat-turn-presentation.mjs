@@ -23,13 +23,20 @@ const coordinator = {
   read: (_meta, operation) => operation(executor),
   openTaskExecutor: () => executor,
 };
+const modules = new Map();
 function load(file) {
+  if (modules.has(file)) return modules.get(file).exports;
   const module = { exports: {} };
+  modules.set(file, module);
   const compiled = ts.transpileModule(fs.readFileSync(path.join(root, file), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   new Function('require', 'module', 'exports', compiled)(name => {
     if (name === '@platform/persistence') return { databaseCoordinator: coordinator };
+    if (name.startsWith('.')) {
+      const relative = path.join(path.dirname(file), name);
+      return load(fs.existsSync(path.join(root, relative + '.ts')) ? relative + '.ts' : path.join(relative, 'index.ts'));
+    }
     throw new Error(`未预期依赖 ${name}`);
   }, module, module.exports);
   return module.exports;
@@ -44,7 +51,7 @@ try {
   database.exec(`PRAGMA foreign_keys = ON;
     CREATE TABLE chat_conversations(id TEXT PRIMARY KEY);
     CREATE TABLE sessions(id TEXT PRIMARY KEY, visible_after_message_id INTEGER);
-    CREATE TABLE messages(id INTEGER PRIMARY KEY, session_id TEXT, client_message_id TEXT);
+    CREATE TABLE messages(id INTEGER PRIMARY KEY, session_id TEXT, client_message_id TEXT, created_at TEXT);
     CREATE TABLE conversation_turn_runs(run_id TEXT PRIMARY KEY, session_id TEXT, status TEXT,
       revision_at_claim INTEGER, input_high_watermark INTEGER, created_at TEXT, kind TEXT DEFAULT 'user_reply');
     CREATE TABLE conversation_turn_state(session_id TEXT PRIMARY KEY, active_run_id TEXT, revision INTEGER, reply_cursor INTEGER);

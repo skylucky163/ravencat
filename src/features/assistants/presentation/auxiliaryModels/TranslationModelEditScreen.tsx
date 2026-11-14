@@ -5,14 +5,16 @@ import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { TRANSLATION_PROVIDERS, testTranslationModelConnection, type TranslationProvider } from '@features/integrations';
 import { fetchModelList, type ModelInfo } from '@platform/ai';
-import { KeyboardAvoidingContainer, Button, DropdownField, InputField, ModelPickerModal, NavigationHeader, showAppDialog } from '@shared/ui';
-import { useTheme } from '@shared/theme';
+import { KeyboardAvoidingContainer, Button, DropdownField, InputField, ModelPickerField, ModelPickerModal, NavigationHeader, showAppDialog } from '@shared/ui';
+import { ThemedSurface, useTheme } from '@shared/theme';
+import { createCommonStyles } from '@shared/ui/commonStyles';
 import { useAutoSaveDraft, useAutoSaveNavigation } from '@shared/ui/useAutoSaveDraft';
 import { useAutoSaveFeedback } from '@shared/ui/useAutoSaveFeedback';
 import { AutoSaveErrors } from '@shared/ui/AutoSaveErrors';
-import { buildTranslationConfiguration, getTranslationModelDraft, parseTranslationModelDraft, switchTranslationProvider, type TranslationModelDraft } from './translationModelDraft';
+import { buildTranslationConfiguration, getTranslationModelDraft, parseTranslationModelDraft, createTranslationProviderDraft, type TranslationModelDraft } from './translationModelDraft';
 import type { AuxiliaryModelConfig, UpdateAuxiliaryModelConfigInput } from '../../domain/AuxiliaryModel';
 import type { AuxiliaryModelFormData } from './types';
+import ModelFormSection from './ModelFormSection';
 
 interface Props {
   modelId?: string;
@@ -25,6 +27,7 @@ interface Props {
 }
 export default function TranslationModelEditScreen({ modelId, initialData, saving, onSave, onCreate, onDelete, onBack }: Props) {
   const theme = useTheme();
+  const commonStyles = useMemo(() => createCommonStyles(theme), [theme]);
   const initial = useMemo(() => getTranslationModelDraft(initialData), [initialData]);
   const editor = useAutoSaveDraft({ initial, parse: parseTranslationModelDraft, save: onSave, enabled: !!modelId });
   const { draft, errors, change, commit, flush, restore, validateAll } = editor;
@@ -50,10 +53,10 @@ export default function TranslationModelEditScreen({ modelId, initialData, savin
     setRequestError(null);
     change({ [key]: value, ...(['baseUrl', 'apiKey', 'secretId'].includes(key) ? { serviceConfigId: '' } : {}) } as Pick<TranslationModelDraft, K>, immediate);
   }, [change]);
-  const field = (key: keyof TranslationModelDraft, label: string, placeholder = '', hint?: string) => (
+  const field = (key: keyof TranslationModelDraft, label: string, placeholder = '', editable = true) => (
     <View key={key} onLayout={feedback.fieldLayout([key])}>
       <InputField label={label} value={String(draft[key])} onChangeText={(value) => set(key, value)} onBlur={blur}
-        error={errors[key]} placeholder={placeholder} hint={hint} autoGrow autoCapitalize="none" autoCorrect={false} />
+        error={errors[key]} placeholder={placeholder} editable={editable} autoGrow autoCapitalize="none" autoCorrect={false} />
     </View>
   );
   const validatedConfiguration = () => {
@@ -67,7 +70,7 @@ export default function TranslationModelEditScreen({ modelId, initialData, savin
     setLoadingModels(true); setRequestError(null);
     try {
       const result = await fetchModelList(draft.baseUrl.trim(), draft.apiKey.trim());
-      if (revision === requestRevision.current) { setModels(result); setShowModelPicker(true); }
+      if (revision === requestRevision.current) setModels(result);
     } catch (error) {
       if (revision === requestRevision.current) setRequestError(error instanceof Error ? error.message : '获取模型列表失败');
     } finally { if (revision === requestRevision.current) setLoadingModels(false); }
@@ -100,41 +103,56 @@ export default function TranslationModelEditScreen({ modelId, initialData, savin
   ] });
   const rightButton = modelId ? feedback.blocked ? <Button title="恢复" variant="text" onPress={reset} /> : undefined
     : <Button title={saving ? '创建中…' : '创建'} variant="text" disabled={saving} onPress={() => { void create(); }} />;
-  return <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background.app }} edges={['top', 'left', 'right']}>
+  return <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background.screen }} edges={['top', 'left', 'right']}>
     <KeyboardAvoidingContainer style={{ flex: 1 }}>
       <NavigationHeader title={`${modelId ? '编辑' : '新建'}翻译模型`} onGoBack={back} rightButton={rightButton} />
       <AutoSaveErrors error={editor.saveError || creationError} blocked={!!modelId && feedback.blocked}
         retry={modelId ? blur : () => { void create(); }} restore={modelId ? reset : undefined} />
-      <ScrollView ref={feedback.scrollRef} contentContainerStyle={{ padding: theme.spacing.lg, paddingBottom: theme.spacing.xl }}
+      <ScrollView ref={feedback.scrollRef}
         keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-        <View onLayout={feedback.fieldLayout(['provider'])}><DropdownField label="翻译方式" value={draft.provider}
+        <ThemedSurface variant="card" style={[commonStyles.formSurface, { padding: theme.spacing.lg, paddingBottom: theme.spacing.xl }]}>
+        <ModelFormSection title="配置">
+        <View onLayout={feedback.fieldLayout(['provider'])}><DropdownField label="提供方" value={draft.provider}
+          disabled={!!modelId}
           options={TRANSLATION_PROVIDERS.map((entry) => ({ value: entry.provider, label: entry.label }))} error={errors.provider}
-          onChange={(value) => { if (value !== draft.provider) change(switchTranslationProvider(value as TranslationProvider), true); }} /></View>
+          onChange={(value) => { if (value !== draft.provider) change(createTranslationProviderDraft(value as TranslationProvider), true); }} /></View>
         {field('name', '配置名称', `例如：${provider.label}`)}
-        {ai ? field('baseUrl', 'API 地址', 'https://你的服务地址/v1', '填写服务商提供的 OpenAI 兼容接口地址') : field('secretId', 'SecretId', 'AKID...')}
+        </ModelFormSection>
+        <ModelFormSection title="连接">
+        {field('baseUrl', 'API 地址', 'https://api.example.com/v1', ai)}
+        {!ai && field('secretId', 'SecretId', 'AKID...')}
         {field('apiKey', ai ? 'API Key' : 'SecretKey', ai ? '填写服务商提供的 API Key' : 'SecretKey')}
-        {ai && <ServiceConnectionPicker baseUrl={draft.baseUrl} apiKey={draft.apiKey} disabled={testing || loadingModels}
+        {ai && <ServiceConnectionPicker baseUrl={draft.baseUrl} apiKey={draft.apiKey} serviceConfigId={draft.serviceConfigId} disabled={testing || loadingModels}
           onFill={service => change({ serviceConfigId: service.id, baseUrl: service.baseUrl, apiKey: service.apiKey }, true)} />}
+        </ModelFormSection>
         {ai && <>
-          <Button title={loadingModels ? '获取中…' : models.length ? '重新获取模型列表' : '获取模型列表'} variant="text"
-            disabled={loadingModels || testing} onPress={() => { void loadModels(); }} />
-          {field('model', '模型名称', '填写模型 ID，或从模型列表选择')}
-          {models.length > 0 && <Button title="从已获取的列表选择" variant="text" onPress={() => setShowModelPicker(true)} />}
+          <ModelFormSection title="模型">
+          <View onLayout={feedback.fieldLayout(['model'])}><ModelPickerField label="模型名称" value={draft.model} placeholder="模型 ID"
+            onChangeText={value => set('model', value)} onBlur={blur} error={errors.model} loading={loadingModels} disabled={testing}
+            onPress={() => { setShowModelPicker(true); setRequestError(null); if (!models.length) void loadModels(); }} /></View>
+          </ModelFormSection>
         </>}
+        <ModelFormSection title="参数">
         {provider.optionFields.filter((entry) => !entry.advanced || advanced)
-          .map((entry) => field(entry.key as keyof TranslationModelDraft, entry.label, entry.placeholder, entry.hint))}
+          .map((entry) => field(entry.key as keyof TranslationModelDraft, entry.label, entry.placeholder))}
         {provider.optionFields.some((entry) => entry.advanced) && <TouchableOpacity accessibilityRole="button"
           accessibilityState={{ expanded: advanced }} onPress={() => setAdvanced(!advanced)}>
-          <Text style={{ color: theme.colors.text.secondary, paddingVertical: theme.spacing.md }}>{advanced ? '收起高级参数' : '展开高级参数'}</Text>
+          <Text style={{ color: theme.colors.text.secondary, paddingVertical: theme.spacing.md }}>{advanced ? '收起' : '高级参数'}</Text>
         </TouchableOpacity>}
+        </ModelFormSection>
+        <ModelFormSection title="测试">
         {requestError && <Text accessibilityRole="alert" style={{ color: theme.colors.feedback.error }}>{requestError}</Text>}
         <Button title={testing ? '测试中…' : '测试翻译'} variant="secondary" disabled={testing || loadingModels}
           onPress={() => { void test(); }} />
-        {modelId && <Button title="删除配置" variant="danger" onPress={remove} />}
+        </ModelFormSection>
+        {modelId && <Button title="删除配置" variant="text" onPress={remove}
+          style={{ marginTop: theme.spacing.lg }} textStyle={{ color: theme.colors.feedback.error }} />}
+        </ThemedSurface>
       </ScrollView>
     </KeyboardAvoidingContainer>
     <ModelPickerModal visible={showModelPicker} models={models} selectedModel={draft.model}
       onSelect={(value) => { set('model', value, true); setShowModelPicker(false); }} onClose={() => setShowModelPicker(false)}
+      loading={loadingModels} error={requestError} onRefresh={() => { void loadModels(); }} onRetry={() => { void loadModels(); }}
       emptyText="服务商未返回模型，请直接填写模型 ID" />
   </SafeAreaView>;
 }

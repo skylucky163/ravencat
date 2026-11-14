@@ -1,5 +1,6 @@
 /** 用户资料功能公共出口，外部调用方只能从这里访问。 */
 export { ProfileTab } from './presentation';
+export { DataManagementScreen } from './presentation/DataManagementScreen';
 export { ProfileDetailsScreen, type ProfileNavigationState } from './presentation/ProfileDetailsScreen';
 export { ProfileFieldScreen } from './presentation/ProfileFieldScreen';
 export { isUserProfileField, type UserProfileField } from './domain/UserProfileField';

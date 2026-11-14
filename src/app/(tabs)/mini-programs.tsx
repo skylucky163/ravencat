@@ -4,6 +4,7 @@ import { MiniProgramsTab, type MiniProgramId } from '@features/miniPrograms';
 
 const MINI_PROGRAM_ROUTES: Record<MiniProgramId, Href> = {
   wallet: '/wallet',
+  imageGeneration: '/image-generation' as Href,
   auxiliaryModels: '/auxiliary-models',
   aiRequestDiagnostics: '/ai-request-diagnostics' as Href,
   mcpTools: '/mcp-tools',

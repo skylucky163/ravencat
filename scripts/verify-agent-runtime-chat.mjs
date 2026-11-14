@@ -89,6 +89,7 @@ const chatTaskModule = loadTypeScriptModule(
 );
 const assistantReplySegmentationModule = loadTypeScriptModule(
   'src/features/chat/reply/application/AssistantReplySegmentation.ts',
+  { '../../messages/domain/ChatCodeBlock': loadTypeScriptModule('src/features/chat/messages/domain/ChatCodeBlock.ts') },
 );
 
 let projectionLog;

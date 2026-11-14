@@ -4,7 +4,7 @@ import type {
   AISchedule,
   AIScheduleCompletionDisposition,
 } from '../domain/AISchedule';
-import type { AIScheduleRepository } from '../domain/AIScheduleRepository';
+import type { AIScheduleRepository, RemoveAIScheduleCalendarInput } from '../domain/AIScheduleRepository';
 import type { CompanionStateRepository } from '../domain/CompanionRepositories';
 import type { CompanionState } from '../domain/CompanionState';
 import type {
@@ -16,6 +16,7 @@ import {
   consumeAIScheduleCommand,
   createAIScheduleCommand,
   updateAIScheduleCommand,
+  removeAIScheduleCalendarLinksCommand,
 } from './AIScheduleApplication';
 import type {
   AIScheduleTriggerProjection,
@@ -26,6 +27,7 @@ import {
 } from './AIScheduleProjectionRepairCoordinator';
 import { getCompanionRuntimeDependencies } from './CompanionRuntimeDependencies';
 import { systemCalendar, type SystemCalendarPort } from '@platform/device/SystemCalendar';
+import type { AIScheduleRecurrence } from '../domain/AIScheduleTiming';
 
 export type AIScheduleCalendarOutcome = 'internal_only' | 'synced' | 'permission_required' | 'no_writable_calendar' | 'failed';
 type CalendarPreflightError = 'calendar_permission_required' | 'calendar_unavailable';
@@ -58,6 +60,7 @@ export interface CreateAIScheduleInput {
   summary: string;
   details: string;
   systemCalendar?: boolean;
+  recurrence?: AIScheduleRecurrence | null;
   sourceConversationId?: string;
   sourceMessageIds?: string[];
 }
@@ -69,6 +72,7 @@ export interface UpdateAIScheduleInput {
   summary?: string;
   details?: string;
   systemCalendar?: boolean;
+  recurrence?: AIScheduleRecurrence | null;
 }
 
 export type CreateAIScheduleWithProjectionOutcome =
@@ -86,6 +90,11 @@ export type CancelAIScheduleWithProjectionOutcome =
 export type ConsumeAIScheduleWithProjectionOutcome =
   | { status: 'consumed'; schedule: AISchedule; projection: AIScheduleProjectionOutcome }
   | { status: 'error'; code: AIScheduleApplicationErrorCode; projection: null };
+
+export type RemoveAIScheduleCalendarEventsOutcome =
+  | { status: 'updated'; matchedCount: number; updatedCount: number; removedCount: number;
+      pendingCount: number | null; calendar: 'synced' | 'permission_required' | 'failed' }
+  | { status: 'error'; code: AIScheduleApplicationErrorCode };
 
 export interface AIScheduleProjectionOwnerDependencies {
   calendar: SystemCalendarPort;
@@ -155,12 +164,46 @@ export class AIScheduleProjectionOwner {
     return this.enqueueOperation(() => this.commitAndProjectCancel(input));
   }
 
+  removeCalendarEvents(input: RemoveAIScheduleCalendarInput): Promise<RemoveAIScheduleCalendarEventsOutcome> {
+    return this.enqueueOperation(async () => {
+      // 先保存仅应用内的用户意图；缺权限也不能继续导出后续重复期次。
+      const outcome = await removeAIScheduleCalendarLinksCommand(input);
+      if (outcome.status === 'error') return outcome;
+      const result = { status: 'updated' as const, matchedCount: outcome.scheduleIds.length,
+        updatedCount: outcome.updatedCount, removedCount: 0 };
+      if (outcome.scheduleIds.length === 0) return { ...result, pendingCount: 0, calendar: 'synced' };
+      let keys: string[];
+      try {
+        if (await this.dependencies.calendar.prepare() === 'permission_required') {
+          return { ...result, pendingCount: null, calendar: 'permission_required' };
+        }
+        const selected = new Set(outcome.scheduleIds);
+        keys = [...new Set(await this.dependencies.calendar.listKeys())].filter(key => selected.has(key));
+      } catch (error) {
+        console.warn('[AISchedule] 读取待移除的系统日历关联失败：', error);
+        this.repairCoordinator.requestRepair();
+        return { ...result, pendingCount: null, calendar: 'failed' };
+      }
+      let pendingCount = 0;
+      for (const key of keys) {
+        try { await this.dependencies.calendar.remove(key); result.removedCount += 1; }
+        catch (error) {
+          pendingCount += 1;
+          console.warn('[AISchedule] 系统日历关联尚未移除：', { scheduleId: key, error });
+        }
+      }
+      if (pendingCount > 0) this.repairCoordinator.requestRepair();
+      return { ...result, pendingCount, calendar: pendingCount > 0 ? 'failed' : 'synced' };
+    });
+  }
+
   consume(input: {
     scheduleId: string;
     runId: string;
     consumedAt: string;
     completionDisposition: AIScheduleCompletionDisposition;
     failureCode?: string;
+    firstVisibleAt?: string | null;
   }): Promise<ConsumeAIScheduleWithProjectionOutcome> {
     return this.enqueueOperation(() => this.commitAndProjectConsume(input));
   }
@@ -234,17 +277,19 @@ export class AIScheduleProjectionOwner {
     consumedAt: string;
     completionDisposition: AIScheduleCompletionDisposition;
     failureCode?: string;
+    firstVisibleAt?: string | null;
   }): Promise<ConsumeAIScheduleWithProjectionOutcome> {
     const outcome = await consumeAIScheduleCommand(input);
     if (outcome.status === 'error') return { status: 'error', code: outcome.code, projection: null };
     const projection = await this.projectLatestSchedule(input.scheduleId);
     this.reportProjectionFailure(projection);
+    await this.reconcileCurrentTruth();
     return { status: 'consumed', schedule: outcome.schedule, projection };
   }
 
   /**
    * startup reconcile：用 durable scheduled truth 重建 / 收口 native keyed projections。
-   * 不创建或修改任何业务事实（除了 authority invalidation 的终结）。
+   * 过期收口、重复推进与身份失效由 Repository 裁决；本 owner 只投影提交后的事实。
    */
   reconcile(): Promise<AIScheduleProjectionReconcileOutcome> {
     return this.enqueueOperation(() => this.reconcileCurrentTruth());
@@ -600,25 +645,33 @@ export function cancelAIScheduleWithProjection(input: {
   return aiScheduleProjectionOwner.cancel(input);
 }
 
+export function removeAIScheduleCalendarEvents(input: RemoveAIScheduleCalendarInput): Promise<RemoveAIScheduleCalendarEventsOutcome> {
+  return aiScheduleProjectionOwner.removeCalendarEvents(input);
+}
+
 export function consumeAIScheduleWithProjection(input: {
   scheduleId: string;
   runId: string;
   consumedAt: string;
   completionDisposition: AIScheduleCompletionDisposition;
   failureCode?: string;
+  firstVisibleAt?: string | null;
 }): Promise<ConsumeAIScheduleWithProjectionOutcome> {
   return aiScheduleProjectionOwner.consume(input);
 }
 
-export function claimAIScheduleForHeadless(input: {
+export async function claimAIScheduleForHeadless(input: {
   scheduleId: string;
   ownerAIId: string;
   runId: string;
   claimedAt: string;
   expectedRemindAt: string;
   projectionToken: string;
+  conversationId: string;
 }) {
-  return claimAIScheduleCommand(input);
+  const outcome = await claimAIScheduleCommand(input);
+  if (outcome.status === 'claimed') await reconcileAIScheduleProjections();
+  return outcome;
 }
 
 /** 冷启动 / 前台生命周期恢复入口；会立即尝试一次并接管后续 bounded repair。 */

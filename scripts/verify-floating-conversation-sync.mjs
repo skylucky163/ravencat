@@ -1,3 +1,4 @@
+import { chatCodeDependencies } from './chat-timeline-fixture.mjs';
 import { chatSharingDependencies } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionSql, chatMessageMutations, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /** 验证有限 SQLite 查询及 Host 消息同步，不读取用户数据库，也不锁定源码形状。 */
@@ -28,6 +29,7 @@ const metadata = load(`${messagesRoot}domain/chatMessageMetadata.ts`, {
   './ChatSticker': load(`${messagesRoot}domain/ChatSticker.ts`),
 });
 const { MessageRepository } = load(`${messagesRoot}infrastructure/SQLiteMessageRepository.ts`, {
+  ...chatCodeDependencies,
   '@platform/persistence': { databaseCoordinator: { openTaskExecutor: () => ({
     getAllAsync: async (sql, params) => db.prepare(sql).all(...params),
     runAsync: async (sql, params) => db.prepare(sql).run(...params),

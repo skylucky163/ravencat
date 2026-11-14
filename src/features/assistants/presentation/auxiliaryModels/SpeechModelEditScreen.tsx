@@ -11,9 +11,10 @@ import {
   type SpeechConnectionConfig,
   type SpeechKind,
 } from '@features/speech';
-import { KeyboardAvoidingContainer, Button, DropdownField, InputField, ToggleField, ModelPickerModal, ListItem, showAppDialog } from '@shared/ui';
+import { KeyboardAvoidingContainer, Button, DropdownField, InputField, ToggleField, ModelPickerField, ModelPickerModal, showAppDialog } from '@shared/ui';
 import NavigationHeader from '@shared/ui/NavigationHeader';
-import { useTheme } from '@shared/theme';
+import { createCommonStyles } from '@shared/ui/commonStyles';
+import { ThemedSurface, useTheme } from '@shared/theme';
 import { useAutoSaveDraft, useAutoSaveNavigation } from '@shared/ui/useAutoSaveDraft';
 import { useAutoSaveFeedback } from '@shared/ui/useAutoSaveFeedback';
 import { AutoSaveErrors } from '@shared/ui/AutoSaveErrors';
@@ -21,11 +22,12 @@ import {
   buildSpeechDraftConfiguration,
   getSpeechModelDraft,
   parseSpeechModelDraft,
-  switchSpeechProvider,
+  createSpeechProviderDraft,
   type SpeechModelDraft,
 } from './speechModelDraft';
 import type { AuxiliaryModelConfig, UpdateAuxiliaryModelConfigInput } from '../../domain/AuxiliaryModel';
 import type { AuxiliaryModelFormData } from './types';
+import ModelFormSection from './ModelFormSection';
 
 export default function SpeechModelEditScreen({
   kind,
@@ -47,6 +49,7 @@ export default function SpeechModelEditScreen({
   onBack(): void;
 }) {
   const theme = useTheme();
+  const commonStyles = useMemo(() => createCommonStyles(theme), [theme]);
   const initial = useMemo(() => getSpeechModelDraft(kind, initialData), [kind, initialData]);
   const parse = useCallback(
     (draft: SpeechModelDraft, changed: (keyof SpeechModelDraft)[]) =>
@@ -80,7 +83,10 @@ export default function SpeechModelEditScreen({
     };
   }, [draft.provider, draft.apiKey, draft.baseUrl]);
   const provider = SPEECH_PROVIDERS.find((entry) => entry.id === draft.provider && entry.kind === kind);
-  const providerLocked = kind === 'tts' && !!modelId;
+  const configuration = provider ? buildSpeechDraftConfiguration(draft) : null;
+  const waitingForWorkspace = draft.provider === 'dashscopeRealtimeAsr' && !draft.preserveEndpoint && !draft.workspaceId;
+  const providerLocked = !!modelId;
+  const canLoadOptions = provider?.id === 'openrouter' || provider?.id === 'elevenlabs';
   const fields = provider ? getSpeechParameters(provider.id, draft.model) : [];
   const modelOptions = options?.models ?? provider?.models.map((value) => ({ value, label: provider.modelLabels?.[value] ?? value })) ?? [];
   const loadOptions = async () => {
@@ -192,7 +198,7 @@ export default function SpeechModelEditScreen({
   );
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.colors.background.app }}
+      style={{ flex: 1, backgroundColor: theme.colors.background.screen }}
       edges={['top', 'left', 'right']}
       onTouchEnd={dismissBackgroundInput}
     >
@@ -209,15 +215,16 @@ export default function SpeechModelEditScreen({
         />
         <ScrollView
           ref={feedback.scrollRef}
-          contentContainerStyle={{ flexGrow: 1 }}
           keyboardShouldPersistTaps="always"
           keyboardDismissMode="on-drag"
         >
+          <ThemedSurface variant="card" style={commonStyles.formSurface}>
           <View
             collapsable={false}
             style={{ flexGrow: 1, padding: theme.spacing.lg, paddingBottom: theme.spacing.xl }}
             onTouchEnd={dismissBackgroundInput}
           >
+            <ModelFormSection title="配置">
             <View onLayout={feedback.fieldLayout(['provider'])}>
               <DropdownField
                 label="提供方"
@@ -232,7 +239,7 @@ export default function SpeechModelEditScreen({
                   if (value === draft.provider) return;
                   const nextProvider = SPEECH_PROVIDERS.find((entry) => entry.id === value)!;
                   change({
-                    ...switchSpeechProvider(nextProvider.id),
+                    ...createSpeechProviderDraft(nextProvider.id),
                     ...(!draft.name.trim() || draft.name === provider?.label ? { name: nextProvider.label } : {}),
                   }, true);
                 }}
@@ -240,7 +247,7 @@ export default function SpeechModelEditScreen({
             </View>
             {!provider ? (
               <Text style={{ color: theme.colors.feedback.error }}>
-                {providerLocked ? '原配置的提供方无效，请删除后新建配置。' : '原配置的提供方无效，请重新选择。'}
+                {providerLocked ? '原配置的提供方无效，请新建配置。' : '请选择支持的语音提供方。'}
               </Text>
             ) : null}
             <InputField
@@ -251,18 +258,27 @@ export default function SpeechModelEditScreen({
               error={errors.name}
               placeholder={`例如：${provider?.label ?? '语音服务'}`}
             />
-            {draft.provider === 'openaiCompatible' ? (
+            </ModelFormSection>
+            <ModelFormSection title="连接">
+            {configuration && <View onLayout={feedback.fieldLayout(['baseUrl'])}>
               <InputField
                 label="API 地址"
-                value={draft.baseUrl}
+                value={waitingForWorkspace ? '' : configuration.baseURL}
+                editable={draft.provider === 'openaiCompatible'}
                 onChangeText={(value) => set('baseUrl', value)}
                 onBlur={blur}
                 error={errors.baseUrl}
                 autoCapitalize="none"
                 autoCorrect={false}
-                placeholder="https://example.com/v1"
+                autoGrow
+                placeholder={waitingForWorkspace ? '填写业务空间 ID 后显示地址' : 'https://api.example.com/v1'}
               />
-            ) : null}
+              {draft.preserveEndpoint && draft.provider !== 'openaiCompatible' && <Button
+                title="改用官方地址"
+                variant="text"
+                onPress={() => set('preserveEndpoint', false, true)}
+              />}
+            </View>}
             <InputField
               label={provider?.credentialLabel ?? 'API Key'}
               value={draft.apiKey}
@@ -272,61 +288,24 @@ export default function SpeechModelEditScreen({
               autoCapitalize="none"
               autoCorrect={false}
               autoGrow
+              placeholder={draft.provider === 'volcengineRealtimeAsr' ? '填写语音控制台的 API Key' : `填写服务商提供的 ${provider?.credentialLabel ?? 'API Key'}`}
+              rightAccessory={kind === 'tts' && configuration && draft.provider !== 'openaiCompatible' ? (
+                <ServiceConnectionPicker mode="key" baseUrl={configuration.baseURL} apiKey={draft.apiKey} disabled={saving || loadingOptions}
+                  onFill={service => set('apiKey', service.apiKey, true)} />
+              ) : undefined}
             />
             {kind === 'tts' && draft.provider === 'openaiCompatible' && (
-              <ServiceConnectionPicker baseUrl={draft.baseUrl} apiKey={draft.apiKey}
+              <ServiceConnectionPicker baseUrl={draft.baseUrl} apiKey={draft.apiKey} serviceConfigId={draft.serviceConfigId}
                 onFill={service => change({ serviceConfigId: service.id, baseUrl: service.baseUrl, apiKey: service.apiKey, preserveEndpoint: true }, true)} />
             )}
-            {draft.provider === 'volcengineRealtimeAsr' ? (
-              <Text style={{ color: theme.colors.text.secondary }}>
-                请从豆包语音控制台获取 API Key，并开通所选的流式语音识别服务。仅有方舟文本模型权限的 Key 无法调用。
-              </Text>
-            ) : null}
-            {provider && draft.preserveEndpoint && draft.provider !== 'openaiCompatible' ? (
-              <View>
-                <Text style={{ color: theme.colors.text.secondary }}>
-                  此配置保留原服务地址：{draft.baseUrl}
-                </Text>
-                <Button
-                  title="改用官方地址"
-                  variant="text"
-                  onPress={() => set('preserveEndpoint', false, true)}
-                />
-              </View>
-            ) : null}
-            {provider && ['openrouter', 'elevenlabs'].includes(provider.id) ? (
-              <Button
-                title={loadingOptions ? '加载官方目录…' : '加载官方模型与音色'}
-                disabled={loadingOptions}
-                variant="text"
-                onPress={() => {
-                  void loadOptions();
-                }}
-              />
-            ) : null}
-            {optionsError ? (
-              <Text accessibilityRole="alert" style={{ color: theme.colors.feedback.error }}>
-                {optionsError}
-              </Text>
-            ) : null}
-            {provider ? (
-              provider.models.length ? (
-                <>
-                  <ListItem title="模型" subtitle={modelOptions.find(option => option.value === draft.model)?.label ?? draft.model} showArrow onPress={() => setShowModelPicker(true)} />
-                  {errors.model && <Text style={{ color: theme.colors.feedback.error }}>{errors.model}</Text>}
-                </>
-              ) : (
-                <InputField
-                  label="模型"
-                  value={draft.model}
-                  onChangeText={setModel}
-                  onBlur={blur}
-                  error={errors.model}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              )
-            ) : null}
+            </ModelFormSection>
+            <ModelFormSection title="模型">
+            {provider && <ModelPickerField label="模型名称" value={draft.model} error={errors.model} placeholder="模型 ID"
+              displayValue={provider.models.length ? modelOptions.find(option => option.value === draft.model)?.label : undefined}
+              onPress={modelOptions.length || canLoadOptions ? () => { setShowModelPicker(true); if (canLoadOptions && !options && !modelOptions.length) void loadOptions(); } : undefined}
+              onChangeText={provider.models.length ? undefined : setModel} onBlur={blur} loading={loadingOptions} />}
+            </ModelFormSection>
+            <ModelFormSection title="参数">
             {options?.voices.length ? (
               <DropdownField
                 label="从官方音色库选择"
@@ -395,12 +374,7 @@ export default function SpeechModelEditScreen({
                       onChangeText={(value) => set(field.key, value)}
                       onBlur={blur}
                       error={errors[field.key]}
-                      hint={
-                        field.hint ??
-                        (field.type === 'number'
-                          ? `留空使用服务默认值；范围 ${field.min}～${field.max}`
-                          : undefined)
-                      }
+                      placeholder={field.type === 'number' ? `${field.min}–${field.max}` : field.key === 'hotwordList' ? '枫渡|10,RavenCat|5' : undefined}
                       keyboardType={field.type === 'number' ? 'numeric' : 'default'}
                       autoCapitalize="none"
                       autoCorrect={false}
@@ -412,25 +386,32 @@ export default function SpeechModelEditScreen({
             {fields.some((field) => field.advanced) ? (
               <TouchableOpacity onPress={() => setAdvanced(!advanced)}>
                 <Text style={{ color: theme.colors.text.secondary, paddingVertical: theme.spacing.md }}>
-                  {advanced ? '收起高级参数' : '展开高级参数'}
+                  {advanced ? '收起' : '高级参数'}
                 </Text>
               </TouchableOpacity>
             ) : null}
+            </ModelFormSection>
+            <ModelFormSection title="测试">
             <SpeechConfigurationTest
               kind={kind}
               getConfiguration={getConfiguration}
               configurationRevision={JSON.stringify(draft)}
             />
+            </ModelFormSection>
             {testError ? (
               <Text accessibilityRole="alert" style={{ color: theme.colors.feedback.error }}>
                 {testError}
               </Text>
             ) : null}
-            {modelId ? <Button title="删除配置" variant="danger" onPress={remove} /> : null}
+            {modelId ? <Button title="删除配置" variant="text" onPress={remove}
+              style={{ marginTop: theme.spacing.lg }} textStyle={{ color: theme.colors.feedback.error }} /> : null}
           </View>
+          </ThemedSurface>
         </ScrollView>
       </KeyboardAvoidingContainer>
       <ModelPickerModal visible={showModelPicker} onClose={() => setShowModelPicker(false)} models={modelOptions.map(option => ({ id: option.value, name: option.label }))}
+        loading={loadingOptions} error={optionsError} emptyText="暂无可用模型"
+        onRefresh={canLoadOptions ? () => { void loadOptions(); } : undefined} onRetry={canLoadOptions ? () => { void loadOptions(); } : undefined}
         selectedModel={draft.model} onSelect={value => { setModel(value, true); setShowModelPicker(false); }} />
     </SafeAreaView>
   );

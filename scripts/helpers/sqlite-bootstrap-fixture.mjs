@@ -33,6 +33,20 @@ export function createSqliteExecutor(database, statements = []) {
 export const { SCHEMAS, INDEXES } = loadSqliteModule('schema');
 export const { runMigrations: bootstrapSqlite, DATABASE_SCHEMA_VERSION } = loadSqliteModule('migrations');
 
+/** 还原分组迁移前的真实连接表，供旧版本升级夹具使用；保留已有连接及引用。 */
+export function restoreLegacyModelServicesFixture(db) {
+  db.exec(`ALTER TABLE model_service_configs ADD COLUMN base_url TEXT;
+    ALTER TABLE model_service_configs ADD COLUMN auth_type TEXT;
+    UPDATE model_service_configs SET name = (SELECT name FROM model_service_groups WHERE id = group_id),
+      base_url = (SELECT base_url FROM model_service_groups WHERE id = group_id),
+      auth_type = (SELECT auth_type FROM model_service_groups WHERE id = group_id);
+    DROP INDEX idx_model_service_key; DROP INDEX idx_model_service_key_ordinal;
+    ALTER TABLE model_service_configs DROP COLUMN ordinal;
+    ALTER TABLE model_service_configs DROP COLUMN group_id;
+    DROP TABLE model_service_groups;
+    CREATE UNIQUE INDEX idx_model_service_connection ON model_service_configs(base_url,api_key,auth_type,credentials_json);`);
+}
+
 /** 为回合行为用例准备“已消费历史”的明确起始状态；生产环境不执行此 fixture。 */
 export async function prepareConsumedTurnFixture(db) {
   await db.execAsync(SCHEMAS.conversationTurnRuns);

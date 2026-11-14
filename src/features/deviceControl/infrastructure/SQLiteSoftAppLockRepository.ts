@@ -7,7 +7,6 @@ import type {
   ISoftAppLockRepository,
   InsertAiSoftAppLockResult,
   ReleaseActiveAiSoftAppLockResult,
-  ReleaseSoftAppLockResult,
 } from '../domain/SoftAppLockRepository';
 
 const SOFT_APP_LOCK_COLUMNS = `
@@ -66,23 +65,6 @@ function requireLock(row: SoftAppLockRow | null): SoftAppLock {
 }
 
 export class SQLiteSoftAppLockRepository implements ISoftAppLockRepository {
-  async insert(lock: SoftAppLock): Promise<void> {
-    const db = openSoftAppLockExecutor('deviceControl.softAppLock.insert');
-    await db.runAsync(INSERT_SOFT_APP_LOCK_SQL, toInsertParams(lock));
-  }
-
-  async getById(id: string): Promise<SoftAppLock | null> {
-    const db = openSoftAppLockExecutor('deviceControl.softAppLock.getById');
-    const row = await db.getFirstAsync<SoftAppLockRow>(
-      `SELECT ${SOFT_APP_LOCK_COLUMNS}
-       FROM ${SOFT_APP_LOCK_TABLE}
-       WHERE id = ?
-       LIMIT 1`,
-      [id]
-    );
-    return createSoftAppLockFromRow(row);
-  }
-
   async listActive(nowEpochMs: number): Promise<SoftAppLock[]> {
     const db = openSoftAppLockExecutor('deviceControl.softAppLock.listActive');
     const rows = await db.getAllAsync<SoftAppLockRow>(
@@ -122,35 +104,6 @@ export class SQLiteSoftAppLockRepository implements ISoftAppLockRepository {
 
       await tx.runAsync(INSERT_SOFT_APP_LOCK_SQL, toInsertParams(lock));
       return { outcome: 'inserted' as const, lock };
-    });
-  }
-
-  async release(id: string): Promise<ReleaseSoftAppLockResult> {
-    const db = openSoftAppLockExecutor('deviceControl.softAppLock.release');
-    return db.withExclusiveTransactionAsync(async (tx) => {
-      const row = await tx.getFirstAsync<SoftAppLockRow>(
-        `SELECT ${SOFT_APP_LOCK_COLUMNS}
-         FROM ${SOFT_APP_LOCK_TABLE}
-         WHERE id = ?
-         LIMIT 1`,
-        [id]
-      );
-      if (!row) {
-        return { outcome: 'not_found' as const };
-      }
-      if (row.status !== 'active') {
-        return { outcome: 'unchanged' as const, lock: requireLock(row) };
-      }
-      await tx.runAsync(
-        `UPDATE ${SOFT_APP_LOCK_TABLE}
-         SET status = 'released'
-         WHERE id = ? AND status = 'active'`,
-        [id]
-      );
-      return {
-        outcome: 'released' as const,
-        lock: requireLock({ ...row, status: 'released' }),
-      };
     });
   }
 
@@ -217,10 +170,6 @@ export class SQLiteSoftAppLockRepository implements ISoftAppLockRepository {
     });
   }
 
-  async clearForFactoryReset(): Promise<void> {
-    const db = openSoftAppLockExecutor('deviceControl.softAppLock.clearForFactoryReset');
-    await db.runAsync(`DELETE FROM ${SOFT_APP_LOCK_TABLE}`);
-  }
 }
 
 export const softAppLockRepository = new SQLiteSoftAppLockRepository();

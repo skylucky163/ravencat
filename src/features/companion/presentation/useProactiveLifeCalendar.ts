@@ -4,6 +4,7 @@ import { loadCompanionProductState } from '../application/CompanionSettingsFacad
 import { listProactiveLifeDay, loadProactiveLifeCalendar } from '../application/ProactiveLifeReadQueries';
 import type { ProactiveLifeCalendarCursor, ProactiveLifeCalendarItem, ProactiveLifeDayCount } from '../application/ProactiveLifeReadQueries';
 import { calendarDayRange, calendarWindow } from './proactiveLifeCalendar';
+import { proactiveLifeCalendarItemKey } from './proactiveLifeViewModel';
 
 interface CalendarSnapshot {
   day: number;
@@ -64,8 +65,8 @@ export default function useProactiveLifeCalendar(day: number, active: boolean) {
     try {
       const page = await listProactiveLifeDay({ ownerAIId: snapshot.ownerAIId, now: new Date().toISOString(), day: calendarDayRange(day), after: snapshot.cursor, limit: 25 });
       if (generation.current !== current) return;
-      const items = new Map(snapshot.items.map(item => [item.item.sourceId, item]));
-      page.items.forEach(item => items.set(item.item.sourceId, item));
+      const items = new Map(snapshot.items.map(item => [proactiveLifeCalendarItemKey(item), item]));
+      page.items.forEach(item => items.set(proactiveLifeCalendarItemKey(item), item));
       setSnapshot({ ...snapshot, items: [...items.values()], cursor: page.nextCursor });
     } catch (failure) {
       if (generation.current === current) setError(failure instanceof Error ? failure.message : '无法读取更多日程。');

@@ -6,7 +6,7 @@ import type { AuxiliaryModelConfig } from '../domain/AuxiliaryModel';
 
 export async function initializeAuxiliaryModelInTransaction(transaction: DatabaseTransactionExecutor, model: AuxiliaryModelConfig): Promise<boolean> {
   // 摘要与角色 TTS 只由用户显式选择，不参与首次资产初始化。
-  if (model.capabilityKind === 'summary' || model.capabilityKind === 'tts') return false;
+  if (model.capabilityKind === 'summary' || model.capabilityKind === 'tts' || model.capabilityKind === 'image_generation') return false;
   await transaction.runAsync(`INSERT OR IGNORE INTO auxiliary_model_initial_defaults (capability_kind, model_config_id)
     VALUES (?, ?)`, [model.capabilityKind, model.id]);
   if (getAuxiliaryModelUnavailableReason(model, model.capabilityKind) !== null) return false;

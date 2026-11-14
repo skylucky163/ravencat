@@ -17,7 +17,8 @@ import {
   type DatabaseTransactionExecutor,
   type DatabaseReadExecutor,
 } from '@platform/persistence';
-import { cancelRegenerationInTransaction, interruptTurnPresentationsInTransaction } from '../../messages/infrastructure/ChatMessageMutationSql';
+import { cancelRegenerationInTransaction } from '../../messages/infrastructure/ChatMessageMutationSql';
+import { interruptTurnPresentationsInTransaction } from './ChatTurnPresentationSql';
 import { messageRepository } from '../../messages/infrastructure/SQLiteMessageRepository';
 import {
   ConversationTurnInvariantError,
@@ -199,14 +200,19 @@ export class ConversationTurnRepository implements IConversationTurnRepository {
       if (!candidate) throw new Error('这个回复版本已被删除');
       if (versionId === set.selected_version_id) return;
       const current = await messageRepository.listTurnMessagesInTransaction(tx, runId);
+      const anchor = await tx.getFirstAsync<{ id: number; created_at: string }>(
+        'SELECT id, created_at FROM chat_timeline_run_anchors WHERE session_id = ? AND turn_run_id = ?', [sessionId, runId]);
       await saveReplyVersion(tx, set.id, set.selected_version_id, current);
       await messageRepository.deleteMessagesWithMediaCandidatesInTransaction(tx, current.map(message => message.id), { preserveReplyVersions: true });
       await tx.runAsync('DELETE FROM chat_turn_display_items WHERE run_id = ?', [runId]);
-      await tx.runAsync('DELETE FROM chat_timeline_run_anchors WHERE turn_run_id = ? AND session_id = ?', [runId, sessionId]);
       // 采用只改变这一轮的正文，沿用当前槽位时间、已读状态和回合 owner，不制造一次新消息到达。
       const messages = decodeReplyVersion(candidate.snapshot_json).map(({ id: _id, ...message }, index) => ({
         ...message, sessionId, turnRunId: runId, turnItemIndex: index + 1,
         createdAt: current[current.length - 1].createdAt, time: current[current.length - 1].time, isRead: true,
+        // 截断版与完整候选可能来自不同提交时刻，采用版本不能改变当前轮的持久位置。
+        timelineAnchor: { id: anchor!.id, createdAt: anchor!.created_at },
+        metadataJson: JSON.stringify({ ...(message.metadataJson ? JSON.parse(message.metadataJson) : {}),
+          timelineAnchor: { id: anchor!.id, createdAt: anchor!.created_at } }),
       }));
       const lastAssistant = [...messages].reverse().find(message => message.senderType === 'assistant')!;
       await messageRepository.commitMessagesInTransaction(tx, {
@@ -257,7 +263,9 @@ export class ConversationTurnRepository implements IConversationTurnRepository {
       `SELECT r.* FROM conversation_turn_runs r
        JOIN conversation_turn_state s ON s.session_id = r.session_id
        JOIN sessions c ON c.id = r.session_id
-       WHERE r.session_id = ? AND r.status = 'committed' AND r.kind IN ('user_reply', 'regenerate')
+       WHERE r.session_id = ? AND (r.status = 'committed' OR (r.status IN ('failed', 'cancelled')
+           AND EXISTS (SELECT 1 FROM chat_turn_presentations p WHERE p.run_id = r.run_id AND p.state = 'interrupted')))
+         AND r.kind IN ('user_reply', 'regenerate')
          AND s.active_run_id IS NULL
          AND NOT EXISTS (SELECT 1 FROM chat_turn_presentations p WHERE p.session_id = r.session_id AND p.state = 'open')
          AND NOT EXISTS (SELECT 1 FROM agent_runs a WHERE a.session_id = r.session_id
@@ -270,11 +278,13 @@ export class ConversationTurnRepository implements IConversationTurnRepository {
              AND json_extract(t.metadata_json, '$.phase') = 'terminal'))
          AND NOT EXISTS (SELECT 1 FROM chat_regeneration_requests q WHERE q.session_id = r.session_id)
          AND NOT EXISTS (SELECT 1 FROM chat_reply_version_sets v WHERE v.current_run_id = r.run_id AND v.locked = 1)
-         AND r.input_high_watermark = s.reply_cursor
-         AND r.run_id = (SELECT m.turn_run_id FROM messages m
+         AND (r.input_high_watermark = s.reply_cursor OR (r.status IN ('failed', 'cancelled')
+           AND r.reply_cursor_at_claim = s.reply_cursor AND r.input_high_watermark > s.reply_cursor))
+         AND r.run_id = (SELECT m.turn_run_id FROM chat_visible_messages m
+           LEFT JOIN chat_timeline_run_anchors a ON a.session_id = m.session_id AND a.turn_run_id = m.turn_run_id
            WHERE m.session_id = r.session_id AND m.sender_type = 'assistant' AND m.status = 'sent'
              AND m.id > COALESCE(c.visible_after_message_id, 0)
-           ORDER BY m.id DESC LIMIT 1)
+           ORDER BY COALESCE(a.created_at, m.created_at) DESC, COALESCE(a.id, m.id) DESC, m.id DESC LIMIT 1)
          AND EXISTS (SELECT 1 FROM messages m WHERE m.turn_run_id = r.run_id
            AND m.turn_item_index IS NOT NULL AND m.sender_type = 'assistant')
          AND EXISTS (SELECT 1 FROM messages u WHERE u.session_id = r.session_id AND u.is_me = 1
@@ -620,13 +630,15 @@ export class ConversationTurnRepository implements IConversationTurnRepository {
            WHERE session_id = ?
              AND reply_cursor = ?
              AND revision = ?
-             AND active_run_id = ?`,
+             AND active_run_id = ?
+             AND NOT EXISTS (SELECT 1 FROM chat_turn_presentations p WHERE p.run_id = ? AND p.state = 'interrupted')`,
           [
             run.inputHighWatermark,
             now,
             run.sessionId,
             run.replyCursorAtClaim,
             run.revisionAtClaim,
+            run.runId,
             run.runId,
           ],
         );

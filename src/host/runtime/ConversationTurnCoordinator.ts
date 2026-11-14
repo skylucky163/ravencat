@@ -105,7 +105,7 @@ export interface ConversationTurnCoordinatorDeps {
 }
 
 export interface ConversationTurnCoordinator {
-  /** 聊天优先；自主机会按计划时间取最新，不等待旧任务形成补跑队列。 */
+  /** 聊天优先；正常日程优先于续轮，同类按计划时间取最新，不建立补跑队列。 */
   runAutonomousFromHost<T>(
     sessionId: string,
     runId: string,
@@ -151,7 +151,7 @@ export interface ConversationTurnCoordinator {
   abortInvalidatedTurn(sessionId: string): Promise<void>;
 }
 
-interface AutonomousPriority { plannedAt: string; updatedAt: string; scheduleId: string }
+interface AutonomousPriority { plannedAt: string; updatedAt: string; scheduleId: string; triggerKind: 'scheduled' | 'unanswered' }
 type AutonomousConversationResult<T> = { status: 'ran'; value: T }
   | { status: 'chat_busy' } | { status: 'superseded'; scheduleId: string };
 
@@ -391,9 +391,11 @@ export function createConversationTurnCoordinator(
         if (sessionFlights.has(sessionId) || (active && active.kind !== 'autonomous')) return { status: 'chat_busy' };
         if (active) {
           const previous = active.priority!;
+          const byKind = Number(priority.triggerKind === 'scheduled') - Number(previous.triggerKind === 'scheduled');
           const byTime = Date.parse(priority.plannedAt) - Date.parse(previous.plannedAt);
           const byVersion = priority.updatedAt.localeCompare(previous.updatedAt);
-          if (byTime < 0 || (byTime === 0 && (byVersion < 0 || (byVersion === 0 && priority.scheduleId <= previous.scheduleId)))) {
+          if (byKind < 0 || (byKind === 0 && (byTime < 0
+            || (byTime === 0 && (byVersion < 0 || (byVersion === 0 && priority.scheduleId <= previous.scheduleId)))))) {
             return { status: 'superseded', scheduleId: previous.scheduleId };
           }
         }

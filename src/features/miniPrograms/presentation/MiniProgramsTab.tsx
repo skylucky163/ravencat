@@ -9,6 +9,7 @@ import NavigationHeader from '@shared/ui/NavigationHeader';
 
 export type MiniProgramId =
   | 'wallet'
+  | 'imageGeneration'
   | 'auxiliaryModels'
   | 'aiRequestDiagnostics'
   | 'mcpTools'
@@ -36,6 +37,13 @@ const MINI_PROGRAMS: MiniProgramConfig[] = [
     name: '羽库',
     icon: 'wallet-outline',
     iconColor: '#FF9500',
+    category: '实用工具',
+  },
+  {
+    id: 'imageGeneration',
+    name: 'AI 生图',
+    icon: 'image-outline',
+    iconColor: '#AF52DE',
     category: '实用工具',
   },
   {

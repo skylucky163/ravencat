@@ -470,8 +470,7 @@ export class ChatAgentTimeline {
       if (this.finalAssistantPolicy === 'autonomous_reply' && item.kind === 'assistant'
         && AUTONOMOUS_SILENT_REPLY.startsWith(item.text.trim())) return [];
       if (item.kind === 'assistant' && item.status === 'streaming') snapshot = { ...snapshot, streamingDelivery: true };
-      if (!this.presentationPolicy || item.kind !== 'assistant'
-        || (item.status === 'streaming' && this.presentationPolicy.bubbleDeliveryMode === 'single-bubble')) return [snapshot];
+      if (!this.presentationPolicy || item.kind !== 'assistant') return [snapshot];
       const segments = segmentAssistantReplyProgress(item.text, this.presentationPolicy.bubbleDeliveryMode, item.status !== 'streaming');
       return segments.map((segment, segmentIndex) => ({ ...snapshot, text: segment.text, segmentIndex,
         status: item.status === 'streaming' && segment.completed ? 'sent' as const : item.status,

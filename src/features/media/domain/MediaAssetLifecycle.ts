@@ -20,6 +20,7 @@ export type MediaAssetReferenceKind =
   | 'moment_media'
   | 'sticker'
   | 'ai_download'
+  | 'ai_generated_image'
   | 'chat_attachment'
   | 'chat_thumbnail'
   | 'chat_voice'

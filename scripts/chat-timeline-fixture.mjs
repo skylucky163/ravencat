@@ -37,7 +37,29 @@ export function installChatTimelineSchema(database) {
   database.exec(SCHEMAS.chatReplyVersions);
   database.exec(SCHEMAS.agentRuns);
   database.exec(SCHEMAS.chatTurnPresentations);
+  database.exec(SCHEMAS.chatCodePreviews);
 }
+
+// 消息用例使用真实代码解析与快照 SQL；快照写入只消费用例自己的事务执行器。
+export const chatCodeBlock = loadSource(new URL('../src/features/chat/messages/domain/ChatCodeBlock.ts', import.meta.url));
+const codePreviewRepositoryUrl = new URL('../src/features/chat/messages/infrastructure/SQLiteChatCodePreviewRepository.ts', import.meta.url);
+const codePreviewModule = { exports: {} };
+new Function('require', 'module', 'exports', compile(codePreviewRepositoryUrl))(() => ({}), codePreviewModule, codePreviewModule.exports);
+export const chatCodeDependencies = {
+  '../domain/ChatCodeBlock': chatCodeBlock,
+  '../../messages/domain/ChatCodeBlock': chatCodeBlock,
+  '../../../messages/domain/ChatCodeBlock': chatCodeBlock,
+  './SQLiteChatCodePreviewRepository': codePreviewModule.exports,
+};
+const esmUrl = source => 'data:text/javascript;base64,' + Buffer.from(ts.transpileModule(source, {
+  compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+}).outputText).toString('base64');
+export const chatCodeBlockModuleUrl = esmUrl(fs.readFileSync(new URL('../src/features/chat/messages/domain/ChatCodeBlock.ts', import.meta.url), 'utf8'));
+const previewPersistenceUrl = esmUrl('export const databaseCoordinator = {};');
+const codePreviewDomainUrl = esmUrl(fs.readFileSync(new URL('../src/features/chat/messages/domain/ChatCodePreview.ts', import.meta.url), 'utf8'));
+export const chatCodePreviewRepositoryModuleUrl = esmUrl(fs.readFileSync(codePreviewRepositoryUrl, 'utf8')
+  .replaceAll("from '@platform/persistence'", `from '${previewPersistenceUrl}'`)
+  .replaceAll("from '../domain/ChatCodePreview'", `from '${codePreviewDomainUrl}'`));
 const timelineModule = ts.transpileModule(fs.readFileSync(new URL('../src/features/chat/messages/infrastructure/ChatTimelineSql.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -49,9 +71,7 @@ const replyVersionModule = ts.transpileModule(fs.readFileSync(new URL('../src/fe
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 export const chatReplyVersionModuleUrl = 'data:text/javascript;base64,' + Buffer.from(replyVersionModule).toString('base64');
-const presentationSql = ts.transpileModule(fs.readFileSync(new URL('../src/features/chat/reply/infrastructure/ChatTurnPresentationSql.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 } }).outputText;
-const presentationSqlUrl = 'data:text/javascript;base64,' + Buffer.from(presentationSql).toString('base64');
-const mutationModule = ts.transpileModule(fs.readFileSync(mutationSourceUrl, 'utf8').replace("from '../../reply/infrastructure/ChatTurnPresentationSql'", `from '${presentationSqlUrl}'`), {
+const mutationModule = ts.transpileModule(fs.readFileSync(mutationSourceUrl, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 export const chatMutationModuleUrl = 'data:text/javascript;base64,' + Buffer.from(mutationModule).toString('base64');

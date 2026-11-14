@@ -67,6 +67,7 @@ function load(relativePath) {
   return module.exports;
 }
 mocks['@shared/runtime/abortSignal'] = load('src/shared/runtime/abortSignal.ts');
+mocks['@shared/runtime/RuntimeSlot'] = load('src/shared/runtime/RuntimeSlot.ts');
 
 function executorFor(db) {
   const executor = {
@@ -111,6 +112,7 @@ function delivery({
   eventType = 'moment_published',
   actorId = 'agent-a',
   actorName = 'A',
+  createdAt = '2026-09-21T00:00:00.000Z',
 }) {
   return {
     deliverySeq: seq,
@@ -123,7 +125,7 @@ function delivery({
     actorType: 'ai',
     actorId,
     actorNameSnapshot: actorName,
-    createdAt: '2026-09-21T00:00:00.000Z',
+    createdAt,
     readAt: null,
   };
 }
@@ -147,13 +149,36 @@ assert.equal(
 );
 assert.equal(freshnessSummary.remainingUnreadCount, 2, 'remaining 必须统计未展开 delivery 数而非 group 数');
 
+// 摘要保留历史事件时间，展示设备本地日期、时分秒与时区，不能变成注入时刻。
+const eventTimes = [
+  ['moment_published', '2026-09-21T23:45:12.000Z', '发布时间'],
+  ['comment_on_your_moment', '2026-09-22T00:15:23.000Z', '评论时间'],
+  ['reply_to_your_comment', '2026-09-22T01:25:34.000Z', '回复时间'],
+];
+const timedSummary = await summaryModule.loadSocialInboxSummary({
+  listUnreadSocialDeliveries: async () => eventTimes.map(([eventType, createdAt], index) => delivery({
+    seq: index + 1, momentId: `timed-${index}`, eventType, createdAt,
+  })),
+}, 'agent-a', { groupLimit: 10 });
+for (const [eventType, createdAt, label] of eventTimes) {
+  const entry = timedSummary.entries.find((item) => item.eventType === eventType);
+  assert.equal(entry.createdAt, createdAt, '摘要必须保留原始事件时间');
+  const formatted = summaryModule.formatSocialInboxSummary({ ...timedSummary, entries: [entry] });
+  const local = new Date(createdAt);
+  assert.ok(formatted.includes(`${local.getFullYear()}/${local.getMonth() + 1}/${local.getDate()}`), '日期使用设备本地时区，包含年份');
+  assert.ok(formatted.includes(`${String(local.getHours()).padStart(2, '0')}:${String(local.getMinutes()).padStart(2, '0')}:${String(local.getSeconds()).padStart(2, '0')}`), '事件时间精确到秒');
+  assert.ok(formatted.includes(`${label}: `));
+  assert.match(formatted, /GMT(?:[+-]\d{2}:\d{2})?/u, '事件时间带 UTC 偏移');
+}
+
 // Like group 用 MAX(deliverySeq) 表示最近再次活跃，并保持全部 unread like 计数。
 const likeFreshnessSummary = await summaryModule.loadSocialInboxSummary(
   {
     listUnreadSocialDeliveries: async () => [
-      delivery({ seq: 5, momentId: 'moment-a', eventType: 'like_on_your_moment', actorId: 'agent-a', actorName: 'A' }),
+      delivery({ seq: 5, momentId: 'moment-a', eventType: 'like_on_your_moment', actorId: 'agent-a', actorName: 'A', createdAt: '2026-09-21T01:00:00.000Z' }),
       delivery({ seq: 100, momentId: 'moment-b', actorId: 'agent-b', actorName: 'B' }),
-      delivery({ seq: 200, momentId: 'moment-a', eventType: 'like_on_your_moment', actorId: 'agent-c', actorName: 'C' }),
+      delivery({ seq: 200, momentId: 'moment-a', eventType: 'like_on_your_moment', actorId: 'agent-c', actorName: 'C', createdAt: '2026-09-21T12:34:56.000Z' }),
+      delivery({ seq: 3, momentId: 'moment-a', eventType: 'like_on_your_moment', actorId: 'agent-b', actorName: 'B', createdAt: '2026-09-20T00:00:00.000Z' }),
     ],
   },
   'agent-a',
@@ -161,7 +186,9 @@ const likeFreshnessSummary = await summaryModule.loadSocialInboxSummary(
 );
 assert.equal(likeFreshnessSummary.entries[0].momentId, 'moment-a', '新 like 必须让旧 Moment 的 like group 重新浮到最前');
 assert.equal(likeFreshnessSummary.entries[0].eventType, 'like_on_your_moment');
-assert.equal(likeFreshnessSummary.entries[0].eventCount, 2, 'like group 必须聚合全部当前 unread delivery');
+assert.equal(likeFreshnessSummary.entries[0].eventCount, 3, 'like group 必须聚合全部当前 unread delivery');
+assert.equal(likeFreshnessSummary.entries[0].createdAt, '2026-09-21T12:34:56.000Z', '合并点赞必须保留最新事件的时间，不依赖输入顺序');
+assert.match(summaryModule.formatSocialInboxSummary(likeFreshnessSummary), /最近点赞时间:/u);
 assert.equal(likeFreshnessSummary.entries[1].momentId, 'moment-b');
 
 const db = new DatabaseSync(':memory:');
@@ -262,6 +289,8 @@ const inboxToolResult = await inboxTool.execute({ limit: 50 }, {
   getAIName: () => 'A', isBlocked: () => false,
 });
 assert.equal(inboxToolResult.success, true);
+assert.deepEqual(inboxToolResult.data, summary, '查询工具返回与自动注入相同的含时间摘要');
+assert.ok(inboxToolResult.message.includes(summaryModule.formatSocialInboxSummary(summary)), '模型可见的工具消息包含事件时间');
 assert.equal((await unread('agent-a')).length, beforeSummary, 'readSocialInbox 不得 mark read');
 
 const summaryPages = [];

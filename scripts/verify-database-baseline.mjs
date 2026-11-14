@@ -1,10 +1,19 @@
 /** 新建库、当前公开版升级、数据保留、失败回滚与恢复出厂后的基线验证。 */
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { bootstrapSqlite, createSqliteExecutor, DATABASE_SCHEMA_VERSION } from './helpers/sqlite-bootstrap-fixture.mjs';
+import { bootstrapSqlite, createSqliteExecutor, DATABASE_SCHEMA_VERSION, loadSqliteModule } from './helpers/sqlite-bootstrap-fixture.mjs';
 const tables = db => db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row=>row.name);
 // 这里只比较既有业务事实；服务设置默认行与新引用列由服务迁移专项验证。
-const data = db => tables(db).filter(name=>!['assistant_nickname_changes','model_service_settings'].includes(name)).map(name=>({name, rows:db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all().map(row=>{ if(row.service_config_id===null)delete row.service_config_id;return row; })})).filter(table=>table.rows.length>0);
+const data = db => tables(db).filter(name=>!['assistant_nickname_changes','model_service_settings'].includes(name)).map(name=>({name, rows:db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all().map(row=>{
+ if(row.service_config_id===null)delete row.service_config_id;
+ if(row.edited_at===null)delete row.edited_at;
+ if(row.edit_revision===0)delete row.edit_revision;
+ for(const key of ['recurrence_json','series_id','conversation_id','reply_revision','next_follow_up_minutes']) if(row[key]===null)delete row[key];
+ if(row.trigger_kind==='scheduled')delete row.trigger_kind;
+ if(row.follow_up_enabled===0)delete row.follow_up_enabled;
+ if(row.follow_up_interval_minutes===10)delete row.follow_up_interval_minutes;
+ return row;
+})})).filter(table=>table.rows.length>0);
 const structure = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all().map(row => row.type !== 'table' ? row : ({
  ...row, sql: undefined,
  columns: db.prepare(`PRAGMA table_info("${row.name}")`).all().map(({cid,...column}) => column).sort((a,b)=>a.name.localeCompare(b.name)),
@@ -17,10 +26,31 @@ function check(db){
 const create = () => {const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');return db;};
 // 旧版本没有用户备注列与修改历史，升级 fixture 必须还原真实旧结构。
 function removeServiceSchema(db) {
+ removeScheduleTimingSchema(db);
  for (const table of ['auxiliary_model_configs','ai_assistants','group_chat_admin_configs']) {
   if (db.prepare(`PRAGMA table_info(${table})`).all().some(column => column.name === 'service_config_id')) db.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id`);
  }
  db.exec('DROP TABLE IF EXISTS model_service_configs; DROP TABLE IF EXISTS model_service_settings;');
+}
+/** 旧版本 fixture 还原真实的单次日程和设置结构，不在产品迁移里兼容伪标版本。 */
+function removeScheduleTimingSchema(db) {
+ if(tables(db).includes('model_service_groups')) {
+  // 本夹具没有服务资产；旧版本应使用当时的单连接表，不能只改版本标记。
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM model_service_configs').get().n,0);
+  db.exec('DROP TABLE model_service_configs; DROP TABLE model_service_groups;');
+  db.exec(loadSqliteModule('modelServiceSchema').LEGACY_MODEL_SERVICE_SCHEMA);
+ }
+ // 旧版本还没有原帖编辑事实；恢复旧结构后再执行真实升级。
+ const momentColumns=new Set(db.prepare('PRAGMA table_info(moments)').all().map(row=>row.name));
+ for(const column of ['edited_at','edit_revision'])if(momentColumns.has(column))db.exec(`ALTER TABLE moments DROP COLUMN ${column}`);
+ db.exec('DROP TABLE IF EXISTS raven_cat_ai_schedule_unanswered; DROP TABLE IF EXISTS raven_cat_ai_schedule_wait;');
+ for(const [table,columns] of [
+  ['raven_cat_ai_schedules',['recurrence_json','series_id','trigger_kind','conversation_id','reply_revision','next_follow_up_minutes']],
+  ['raven_cat_contact_settings',['follow_up_enabled','follow_up_interval_minutes']],
+ ]) {
+  const existing=new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(row=>row.name));
+  for(const column of columns)if(existing.has(column))db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+ }
 }
 function removeNicknameSchema(db) {
  removeServiceSchema(db);
@@ -91,8 +121,25 @@ for(const retired of ['memories','memory_entries','capability_bindings','raven_c
 assert.ok(!tables(db).includes('call_background_legacy_migration'),'新库不创建旧文件迁移标记');
 seed(db);check(db);
 const before=data(db), schema=structure(db);
+// 169 → 170：新字段与等待表原子升级；旧计划仍为一次性，续轮默认关闭。
+const timingUpgrade=create();await bootstrapSqlite(createSqliteExecutor(timingUpgrade));seed(timingUpgrade);
+timingUpgrade.exec("INSERT INTO raven_cat_contact_settings(id,created_at,updated_at) VALUES('default','2026-11-01','2026-11-01')");
+removeScheduleTimingSchema(timingUpgrade);timingUpgrade.exec('PRAGMA user_version=169;');
+const timingBefore=data(timingUpgrade),timingRaw=createSqliteExecutor(timingUpgrade);
+await assert.rejects(bootstrapSqlite({ ...timingRaw,execAsync:async sql=>{
+ if(sql.includes('PRAGMA user_version ='))throw new Error('日程升级提交失败');
+ return timingRaw.execAsync(sql);
+} }),/日程升级提交失败/);
+assert.equal(timingUpgrade.prepare('PRAGMA user_version').get().user_version,169);
+assert.ok(!timingUpgrade.prepare('PRAGMA table_info(raven_cat_ai_schedules)').all().some(row=>row.name==='recurrence_json'));
+await bootstrapSqlite(timingRaw);check(timingUpgrade);
+assert.deepEqual(data(timingUpgrade),timingBefore);
+assert.equal(timingUpgrade.prepare('SELECT recurrence_json FROM raven_cat_ai_schedules').get().recurrence_json,null);
+assert.equal(timingUpgrade.prepare('SELECT follow_up_enabled FROM raven_cat_contact_settings').get().follow_up_enabled,0);
+timingUpgrade.close();
 // 164 的真实结构没有主页封面表；建表和版本必须一起提交，升级不改已有资料。
 const coverUpgrade=create(); await bootstrapSqlite(createSqliteExecutor(coverUpgrade)); seed(coverUpgrade);
+removeScheduleTimingSchema(coverUpgrade);
 coverUpgrade.exec('DROP TABLE assistant_profile_covers; PRAGMA user_version=164;');
 const coverRaw=createSqliteExecutor(coverUpgrade), coverBefore=data(coverUpgrade);
 await assert.rejects(bootstrapSqlite({ ...coverRaw, execAsync: async sql => {

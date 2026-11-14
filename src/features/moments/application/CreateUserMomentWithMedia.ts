@@ -6,12 +6,12 @@ import {
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { MomentDomainError } from '../domain/MomentErrors';
 import type { Moment, MomentAudience } from '../domain/MomentRepository';
-import { prepareUserMoment, type MomentAudienceDirectory } from './CreateMoment';
-import { analyzeNewMomentMediaOneShot } from './MomentMediaAnalysis';
+import { MAX_MOMENT_MEDIA_COUNT, prepareUserMoment, type MomentAudienceDirectory } from './CreateMoment';
+import { startNewMomentMediaAnalysis } from './MomentMediaAnalysis';
 import { getMomentMediaRuntime } from './MomentMediaRuntime';
 import { createMomentMediaId } from './MomentIds';
 
-export const MAX_MOMENT_MEDIA_COUNT = 9;
+export { MAX_MOMENT_MEDIA_COUNT } from './CreateMoment';
 
 export interface MomentMediaDraft {
   uri: string;
@@ -30,7 +30,7 @@ export interface CreateUserMomentWithMediaInput {
   abortSignal?: AbortSignal;
 }
 
-function toMediaAssetInput(draft: MomentMediaDraft): CreateMediaAssetInput {
+export function toMediaAssetInput(draft: MomentMediaDraft): CreateMediaAssetInput {
   const sourceUri = draft.uri?.trim();
   const mimeType = draft.mimeType?.trim().toLowerCase();
   if (!sourceUri || !mimeType.startsWith('image/')) {
@@ -108,14 +108,6 @@ export async function createUserMomentWithMedia(
     console.warn('[Moments] MediaAsset 提交后清理失败：', error);
   }
 
-  // Moment 已成立。分析是 commit 后 one-shot，不阻塞发布成功与 timeline 刷新。
-  // 逐图分析自身有 catch，这里兜住的是逐图之前的启动失败（例如 listMedia 读取失败）：
-  // 它只是 post-commit best-effort 分析没能启动，不是发布失败，因此只记录、不重试。
-  void analyzeNewMomentMediaOneShot(moment.id).catch((error) => {
-    console.warn('[Moments] 已提交 Moment 的图片 one-shot 分析未能启动：', {
-      momentId: moment.id,
-      error,
-    });
-  });
+  startNewMomentMediaAnalysis(moment.id);
   return moment;
 }

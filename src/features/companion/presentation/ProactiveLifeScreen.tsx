@@ -10,7 +10,8 @@ import { Button, InputField, ModalSheet } from '@shared/ui';
 import { GalaxyBackground, ShootingStars } from '@shared/ui/space';
 import type { ProactiveLifeCalendarItem } from '../application/ProactiveLifeReadQueries';
 import { calendarDate, calendarDay, calendarDayKey, parseCalendarDay } from './proactiveLifeCalendar';
-import { formatProactiveLifeClock, proactiveLifeCompletionDispositionLabel } from './proactiveLifeViewModel';
+import { formatProactiveLifeClock, proactiveLifeCompletionDispositionLabel,
+  proactiveLifeCalendarItemKey, proactiveLifeRecurrenceLabel } from './proactiveLifeViewModel';
 import ProactiveLifeCalendarArc from './ProactiveLifeCalendarArc';
 import AIScheduleDetailContent from './AIScheduleDetailContent';
 import useProactiveLifeCalendar from './useProactiveLifeCalendar';
@@ -28,7 +29,7 @@ export default function ProactiveLifeScreen({ onBack }: { onBack: () => void }) 
   const [today, setToday] = useState(() => calendarDay(new Date()));
   const [selectedDay, setSelectedDay] = useState(today);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{ scheduleId: string; occurrenceAt?: string } | null>(null);
   const [jumpOpen, setJumpOpen] = useState(false);
   const [jumpValue, setJumpValue] = useState('');
   const [jumpError, setJumpError] = useState<string | undefined>();
@@ -40,7 +41,7 @@ export default function ProactiveLifeScreen({ onBack }: { onBack: () => void }) 
   const calendar = useProactiveLifeCalendar(selectedDay, active);
   const { snapshot } = calendar;
   const chooseDay = useCallback((day: number) => setSelectedDay(day), []);
-  const closeDetail = useCallback(() => setDetailId(null), []);
+  const closeDetail = useCallback(() => setDetail(null), []);
   const updateArcVisibility = useCallback(() => {
     const bounds = arcVisibility.current;
     if (bounds.height === 0 || bounds.viewportHeight === 0) return;
@@ -72,7 +73,7 @@ export default function ProactiveLifeScreen({ onBack }: { onBack: () => void }) 
   const header = <>
     <View style={styles.intro}><Text style={styles.eyebrow}>COMPANION · FRAGMENTS OF TIME</Text><Text style={styles.title}>时间碎片</Text><Text style={styles.subtitle}>在时间深处，与你交汇</Text></View>
     <View onLayout={event => { arcVisibility.current.top = event.nativeEvent.layout.y; arcVisibility.current.height = event.nativeEvent.layout.height; updateArcVisibility(); }}>
-      <ProactiveLifeCalendarArc selectedDay={selectedDay} today={today} counts={calendar.counts} onSelect={chooseDay} enabled={active && detailId === null && !jumpOpen} inViewport={arcVisible} reducedMotion={reducedMotion} />
+      <ProactiveLifeCalendarArc selectedDay={selectedDay} today={today} counts={calendar.counts} onSelect={chooseDay} enabled={active && detail === null && !jumpOpen} inViewport={arcVisible} reducedMotion={reducedMotion} />
     </View>
     <View style={styles.section}><Text style={styles.sectionDate}>{date.getUTCMonth() + 1} 月 {date.getUTCDate()} 日</Text><Text style={styles.meta}>{dayCount === undefined ? '' : `${dayCount} 项日程`}</Text></View>
     {snapshot && !snapshot.enabled && snapshot.ownerAIId ? <Text style={styles.notice}>主动伴随已关闭，日程已暂停；错过的安排不会补跑。</Text> : null}
@@ -86,7 +87,7 @@ export default function ProactiveLifeScreen({ onBack }: { onBack: () => void }) 
     </View>
     <Text style={styles.note}>日程时间为计划时间，AI 会根据届时情况决定行动。</Text>
   </View>;
-  const ambientActive = active && detailId === null && !jumpOpen && !reducedMotion;
+  const ambientActive = active && detail === null && !jumpOpen && !reducedMotion;
   const sky = viewport.width > 0 ? <>
     <GalaxyBackground width={viewport.width} height={viewport.height} paused={!ambientActive} />
     <ShootingStars width={viewport.width} height={viewport.height} active={ambientActive} />
@@ -100,13 +101,16 @@ export default function ProactiveLifeScreen({ onBack }: { onBack: () => void }) 
       </View>
       {/* Android 下拉刷新容器会重新布局内部 ScrollView；可见范围由外层 Yoga 容器拥有。 */}
       <View style={styles.list} onLayout={event => { arcVisibility.current.viewportHeight = event.nativeEvent.layout.height; updateArcVisibility(); }}>
-      <FlatList style={styles.list} contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 28 }]}
+      <FlatList<ProactiveLifeCalendarItem> style={styles.list} contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 28 }]}
         onScroll={event => { arcVisibility.current.scrollY = event.nativeEvent.contentOffset.y; updateArcVisibility(); }} scrollEventThrottle={64}
-        data={snapshot?.items ?? []} keyExtractor={entry => entry.item.sourceId}
+        data={snapshot?.items ?? []} keyExtractor={proactiveLifeCalendarItemKey}
         ListHeaderComponent={header} ListFooterComponent={footer}
         ListEmptyComponent={calendar.loading ? <View style={styles.loading}><ActivityIndicator color={light} /><Text style={styles.meta}>正在读取时间碎片…</Text></View>
           : calendar.error ? null : <Text style={styles.empty}>{snapshot?.ownerAIId ? '这块时间碎片，还没有留下安排。' : '选择主理 AI 后，这里会留下你们的日程与足迹。'}</Text>}
-        renderItem={({ item, index }) => <CalendarEntry entry={item} featured={index === 0} styles={styles} onPress={() => setDetailId(item.item.sourceId)} />}
+        renderItem={({ item, index }) => <CalendarEntry entry={item} featured={index === 0} styles={styles} onPress={() => setDetail({
+          scheduleId: item.item.sourceId,
+          occurrenceAt: item.kind === 'future' && item.item.isProjected ? item.item.plannedAt : undefined,
+        })} />}
         refreshControl={<RefreshControl tintColor={light} colors={[light]} refreshing={calendar.loading && snapshot !== null} onRefresh={calendar.refresh} />}
         onEndReached={() => void calendar.loadMore()} onEndReachedThreshold={0.3}
       />
@@ -118,8 +122,8 @@ export default function ProactiveLifeScreen({ onBack }: { onBack: () => void }) 
       {/* 玻璃只采样不透明的星空；正文在源外正常绘制，不能被再次折射进弹层。 */}
       {theme.effects.glass.enabled ? <GlassBackdrop sceneId={sceneId} style={[styles.screen, StyleSheet.absoluteFill]}>{sky}</GlassBackdrop> : sky}
       {content}
-      <ModalSheet visible={detailId !== null && focused} onClose={closeDetail} title="日程" onDark={darkSheet}>
-        {detailId && snapshot?.ownerAIId ? <AIScheduleDetailContent key={`${snapshot.ownerAIId}:${detailId}`} scheduleId={detailId} ownerAIId={snapshot.ownerAIId} onClose={closeDetail} onCancelled={calendar.refresh} /> : null}
+      <ModalSheet visible={detail !== null && focused} onClose={closeDetail} title="日程" onDark={darkSheet}>
+        {detail && snapshot?.ownerAIId ? <AIScheduleDetailContent key={`${snapshot.ownerAIId}:${detail.scheduleId}:${detail.occurrenceAt}`} scheduleId={detail.scheduleId} occurrenceAt={detail.occurrenceAt} ownerAIId={snapshot.ownerAIId} onClose={closeDetail} onCancelled={calendar.refresh} /> : null}
       </ModalSheet>
       <ModalSheet visible={jumpOpen && focused} onClose={() => setJumpOpen(false)} title="跳转日期" onDark={darkSheet}>
         <View style={styles.modalBody}><InputField label="日期" value={jumpValue} onChangeText={setJumpValue} placeholder="YYYY-MM-DD" maxLength={10} autoCorrect={false} error={jumpError} onDark={darkSheet} /><Button title="前往这一天" onPress={jump} /></View>
@@ -132,14 +136,14 @@ function CalendarEntry({ entry, featured, styles, onPress }: {
   entry: ProactiveLifeCalendarItem; featured: boolean; styles: ReturnType<typeof createStyles>; onPress: () => void;
 }) {
   const at = entry.kind === 'future' ? entry.item.plannedAt : entry.kind === 'running' ? entry.item.startedAt : entry.item.occurredAt;
-  const status = entry.kind === 'future' ? '计划时间'
+  const status = entry.kind === 'future' ? entry.item.recurrence ? proactiveLifeRecurrenceLabel(entry.item.recurrence) : '计划时间'
     : entry.kind === 'running' ? entry.item.modelResponded ? 'AI 已响应 · 正在行动' : '等待 AI 响应'
     : proactiveLifeCompletionDispositionLabel(entry.item.completionDisposition, entry.item.modelResponded);
   if (featured) return <Pressable style={styles.featured} onPress={onPress} accessibilityRole="button" accessibilityLabel={`${formatProactiveLifeClock(at)}，${entry.item.summary}，${status}，查看日程详情`}>
-    <Text style={styles.featuredLabel}>{entry.kind === 'future' ? '下一次计划' : entry.kind === 'running' ? '正在发生' : '已留下的足迹'}</Text>
+    <Text style={styles.featuredLabel}>{entry.kind === 'future' ? entry.item.isProjected ? '重复安排' : '下一次计划' : entry.kind === 'running' ? '正在发生' : '已留下的足迹'}</Text>
     <Text style={styles.featuredTime}>{formatProactiveLifeClock(at)}</Text>
     <View style={styles.featuredRow}><Text style={styles.featuredTitle}>{entry.item.summary}</Text><Text style={styles.detailLink}>详情 ↗</Text></View>
-    {entry.kind !== 'future' ? <Text style={styles.entryStatus}>{status}</Text> : null}
+    {entry.kind !== 'future' || entry.item.recurrence ? <Text style={styles.entryStatus}>{status}</Text> : null}
   </Pressable>;
   return <Pressable style={styles.entry} onPress={onPress} accessibilityRole="button">
     <Text style={styles.entryTime}>{formatProactiveLifeClock(at)}</Text><View style={styles.entryBody}><Text style={styles.entryTitle}>{entry.item.summary}</Text><Text style={styles.entryStatus}>{status}</Text></View><Text style={styles.detailLink}>↗</Text>

@@ -2,6 +2,7 @@ import { databaseCoordinator } from '@platform/persistence';
 import type { ConversationTurnRun } from '../domain/ConversationTurn';
 import type { ChatTurnDisplayVersion, ChatTurnPresentationHistory, ChatTurnPresentationWindow, ChatTurnExecutionProgress, ChatTurnExecutionStatus, ChatTurnExecutionPhase, ChatInterruptedTurnContext, ChatTurnDisplaySnapshot } from '../domain/ChatTurnPresentation';
 import type { IChatTurnPresentationRepository } from '../domain/ChatTurnPresentationRepository';
+import { finalizeInterruptedTurnMessagesInTransaction } from './ChatTurnPresentationSql';
 
 const completePresentationSql = `UPDATE chat_turn_presentations SET state = 'completed', updated_at = ? WHERE run_id = ? AND state = 'open'
   AND EXISTS (SELECT 1 FROM conversation_turn_runs WHERE run_id = ? AND status = 'committed')
@@ -143,7 +144,7 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
     return rows.map(row => row.run_id);
   }
 
-  async listInterruptedContext(sessionId: string, fromInputId: number, toInputId?: number): Promise<ChatInterruptedTurnContext[]> {
+  async listInterruptedContext(sessionId: string, fromInputId: number, toInputId?: number, scope: 'pending_input' | 'history' = 'pending_input'): Promise<ChatInterruptedTurnContext[]> {
     const rows = await databaseCoordinator.openTaskExecutor({ name: 'chat.interrupted-context', feature: 'chat', priority: 'runtime' })
       .getAllAsync<{ run_id: string; input_high_watermark: number; created_at: string; shown_json: string }>(
         `WITH context_runs AS (
@@ -161,6 +162,7 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
            AND r.context_anchor_id >= ? AND r.context_anchor_id > COALESCE(s.visible_after_message_id, 0)
            AND (? IS NULL OR r.context_anchor_id < ?) AND i.shown_json IS NOT NULL
            AND json_extract(i.shown_json, '$.kind') <> 'reasoning'
+           ${scope === 'history' ? "AND (json_extract(i.shown_json, '$.kind') = 'tool' OR i.message_id IS NULL)" : ''}
          ORDER BY r.created_at, r.run_order, json_extract(i.shown_json, '$.sequence'), json_extract(i.shown_json, '$.segmentIndex')`,
         [sessionId, fromInputId, toInputId ?? null, toInputId ?? null]);
     const contexts = new Map<string, ChatInterruptedTurnContext & { items: ChatTurnDisplaySnapshot[] }>();
@@ -177,16 +179,23 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
   }
 
   async interruptOrphans(activeRunIds: readonly string[]): Promise<void> {
-    await databaseCoordinator.openTaskExecutor({ name: 'chat.interrupt-orphan-displays', feature: 'chat', priority: 'runtime' }).runAsync(
+    await databaseCoordinator.transaction({ name: 'chat.interrupt-orphan-displays', feature: 'chat', priority: 'runtime' }, async transaction => {
+      await transaction.runAsync(
       `UPDATE chat_turn_presentations SET state = 'interrupted', reason = 'process_restarted', updated_at = ?
        WHERE state = 'open' AND run_id NOT IN (SELECT value FROM json_each(?))`,
       [new Date().toISOString(), JSON.stringify(activeRunIds)]);
+      // 同一恢复入口也接管旧版本已经结束、但尚未取得消息身份的可见正文。
+      await finalizeInterruptedTurnMessagesInTransaction(transaction);
+    });
   }
 
   async interrupt(runId: string, reason: string): Promise<void> {
-    await databaseCoordinator.openTaskExecutor({ name: 'chat.interrupt-display', feature: 'chat', priority: 'interactive' }).runAsync(
+    await databaseCoordinator.transaction({ name: 'chat.interrupt-display', feature: 'chat', priority: 'interactive' }, async transaction => {
+      await transaction.runAsync(
       `UPDATE chat_turn_presentations SET state = 'interrupted', reason = ?, updated_at = ? WHERE run_id = ? AND state = 'open'`,
       [reason, new Date().toISOString(), runId]);
+      await finalizeInterruptedTurnMessagesInTransaction(transaction, undefined, runId);
+    });
   }
 }
 

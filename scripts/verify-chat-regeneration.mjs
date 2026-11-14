@@ -73,9 +73,9 @@ const override = (relative, value) => overrides.set(path.resolve(root, relative)
 const { SCHEMAS, INDEXES } = load('src/platform/persistence/sqlite/schema.ts');
 db.exec(`PRAGMA foreign_keys = ON;
   CREATE TABLE chat_conversations(id TEXT PRIMARY KEY, kind TEXT NOT NULL);
-  CREATE TABLE ai_assistants(id TEXT PRIMARY KEY);
-  INSERT INTO ai_assistants VALUES ('ai');
-  CREATE TABLE sessions(id TEXT PRIMARY KEY, last_message TEXT, last_time TEXT, updated_at TEXT, visible_after_message_id INTEGER, visible_after_at TEXT);
+  CREATE TABLE ai_assistants(id TEXT PRIMARY KEY, agent_id TEXT);
+  INSERT INTO ai_assistants VALUES ('ai', 'agent-ai');
+  CREATE TABLE sessions(id TEXT PRIMARY KEY, last_message TEXT, last_time TEXT, updated_at TEXT, visible_after_message_id INTEGER, visible_after_at TEXT, ai_assistant_id TEXT DEFAULT 'ai');
   CREATE TABLE media_assets(id TEXT PRIMARY KEY);
 `);
 db.exec(SCHEMAS.messages);
@@ -697,5 +697,119 @@ assert.equal(sheet.root.findAllByProps({ title: '采用此版本' }).length, 0);
 assert.ok(sheet.root.findAllByProps({ title: '复制回复正文' }).length > 0);
 await act(async () => sheet.unmount());
 
-console.log('Chat 重写与候选版本：原子替换、原输入、摘要保留、三版本采用、改写、上下文隔离、后续锁定、主动消息竞争、失败恢复与历史删除验证通过');
+// 中断只结束生成：已交付正文封存为普通消息，重写复用原输入并保留截断版本。
+db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run('interrupted', 'direct');
+db.prepare('INSERT INTO sessions(id) VALUES (?)').run('interrupted');
+await databaseCoordinator.transaction({}, tx => turns.ensureTurnStateRowInTransaction(tx, 'interrupted'));
+const interruptedUser = await messages.commitMessage({ message: makeMessage('interrupted', '原始问题', { senderType: 'user', isMe: true }), previewText: '原始问题' });
+const interruptedRun = await turns.claimIfIdle('interrupted', 'user_reply');
+const displays = load('src/features/chat/reply/infrastructure/SQLiteChatTurnPresentationRepository.ts').chatTurnPresentationRepository;
+await displays.open(interruptedRun);
+const interruptedItem = (version, text) => ({ version, snapshot: {
+  runId: interruptedRun.runId, sequence: 1, stepIndex: 1, kind: 'assistant', status: 'streaming', text,
+  clientMessageId: `agent-timeline:${interruptedRun.runId}:1:0`, createdAt: time, time: '18:00',
+  tokensUsed: 24, promptTokens: 20, completionTokens: 4, cachedTokens: 0,
+} });
+await displays.checkpoint(interruptedRun.runId, [interruptedItem(1, '收到的半句话')]);
+await displays.publishVersions(interruptedRun.runId, [interruptedItem(1, '收到的半句话')]);
+await displays.checkpoint(interruptedRun.runId, [interruptedItem(2, '收到的半句话，尚未交付的尾部')]);
+const beforeFailure = db.prepare('SELECT * FROM conversation_turn_state WHERE session_id = ?').get('interrupted');
+db.exec("CREATE TRIGGER reject_seal BEFORE INSERT ON messages WHEN NEW.text = '收到的半句话' BEGIN SELECT RAISE(ABORT, 'seal rollback'); END;");
+await assert.rejects(turns.revoke(interruptedRun, 'failed', 'network_error'), /seal rollback/);
+assert.equal(db.prepare('SELECT state FROM chat_turn_presentations WHERE run_id = ?').get(interruptedRun.runId).state, 'open');
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE turn_run_id = ?').get(interruptedRun.runId).n, 0);
+assert.deepEqual(db.prepare('SELECT * FROM conversation_turn_state WHERE session_id = ?').get('interrupted'), beforeFailure);
+db.exec('DROP TRIGGER reject_seal');
+await turns.revoke(interruptedRun, 'failed', 'network_error');
+const sealedMessages = (await messages.getMessages('interrupted', { limit: 20 })).messages;
+let sealed = sealedMessages.find(message => message.senderType === 'assistant');
+assert.ok(sealed.id > 0);
+assert.equal(sealed.text, '收到的半句话');
+assert.equal(sealed.status, 'sent');
+assert.equal(sealed.agentId, 'agent-ai');
+assert.equal(JSON.parse(sealed.metadataJson).interrupted, true);
+assert.equal(JSON.parse(sealed.metadataJson).cachedTokens, 0);
+assert.equal(sealed.tokensUsed, 24);
+assert.equal(db.prepare('SELECT reply_cursor FROM conversation_turn_state WHERE session_id = ?').get('interrupted').reply_cursor, beforeFailure.reply_cursor);
+assert.equal(db.prepare('SELECT status FROM conversation_turn_runs WHERE run_id = ?').get(interruptedRun.runId).status, 'failed');
+assert.equal(await turns.claimIfIdle('interrupted', 'user_reply'), null, '封存消息不隐式重试失败输入');
+assert.deepEqual((await displays.listHistory('interrupted'))[0].items, [], '历史恢复通过同一个消息身份读回');
+assert.deepEqual(await displays.listInterruptedContext('interrupted', 0, undefined, 'history'), [], '正式历史不重复附加同一段正文');
+assert.equal((await displays.listInterruptedContext('interrupted', 0))[0].items[0].text, sealed.text, '尚未消费的原任务仍可按原顺序读取已有结果');
+await displays.interruptOrphans([]);
+assert.deepEqual((await messages.getMessages('interrupted', { limit: 20 })).messages.map(message => message.id), sealedMessages.map(message => message.id), '重复恢复不创建新消息');
+const actions = load('src/features/chat/messages/domain/ChatMessageActions.ts').getChatMessageActions(sealed);
+assert.deepEqual(actions, { quote: true, translate: true, favorite: true });
+assert.equal(load('src/features/chat/messages/domain/ChatMessageEditing.ts').canEditChatMessage(sealed), true);
+assert.equal(load('src/features/chat/messages/domain/ChatMessageSelection.ts').canSelectChatMessage(sealed), true);
+sealed = await databaseCoordinator.transaction({}, tx => messages.editMessageTextInTransaction(tx, {
+  messageId: sealed.id, text: '修改过的半句话', previewText: '修改过的半句话',
+}));
+assert.equal((await displays.listInterruptedContext('interrupted', 0))[0].items[0].text, sealed.text,
+  '改写与后续模型读取使用同一份封存正文');
+assert.equal((await turns.getRegenerationState('interrupted')).eligibleRunId, interruptedRun.runId);
+await turns.requestRegeneration('interrupted', sealed.id);
+const retry = await turns.claimIfIdle('interrupted', 'user_reply');
+assert.equal(retry.kind, 'regenerate');
+assert.equal(retry.inputHighWatermark, interruptedUser.id);
+assert.equal(retry.inputCursorAtClaim, interruptedRun.replyCursorAtClaim);
+await turns.revoke(retry, 'failed', 'retry_network_error');
+assert.equal((await messages.getMessageById(sealed.id)).text, sealed.text, '重写失败保留原截断正文');
+await turns.requestRegeneration('interrupted', sealed.id);
+const successfulRetry = await turns.claimIfIdle('interrupted', 'user_reply');
+const completedRetry = await commit(successfulRetry, [makeMessage('interrupted', '重新生成的完整回答')]);
+const versions = await turns.getReplyVersionHistory('interrupted', successfulRetry.runId);
+assert.deepEqual(versions.versions.map(version => version.messages[0].text), ['修改过的半句话', '重新生成的完整回答']);
+await turns.adoptReplyVersion('interrupted', successfulRetry.runId, versions.versions[0].id, versions.selectedVersionId);
+assert.equal((await messages.listTurnMessagesInTransaction(executor, successfulRetry.runId))[0].text, sealed.text);
+assert.equal(completedRetry.outcome, 'committed');
+const adoptedPartial = (await messages.listTurnMessagesInTransaction(executor, successfulRetry.runId))[0];
+await messages.deleteMessagesWithMediaCandidates([adoptedPartial.id]);
+await displays.interruptOrphans([]);
+assert.equal(await messages.getMessageById(adoptedPartial.id), null, '删除后的截断正文不能从展示历史复活');
+assert.equal(await turns.getReplyVersionHistory('interrupted', successfulRetry.runId), null);
+
+// 旧版本遗留的独立正文沿恢复入口封存，清空可见边界以内的旧记录不能借新 ID 重新出现。
+db.prepare('INSERT INTO chat_conversations VALUES (?, ?)').run('legacy-interrupted', 'direct');
+db.prepare('INSERT INTO sessions(id) VALUES (?)').run('legacy-interrupted');
+const legacyUser = await messages.commitMessage({ message: makeMessage('legacy-interrupted', '旧问题', { senderType: 'user', isMe: true }), previewText: '旧问题' });
+const legacyRun = await turns.claimIfIdle('legacy-interrupted', 'user_reply');
+await displays.open(legacyRun);
+const legacyItem = { version: 1, snapshot: { ...interruptedItem(1, '旧版本收到的正文').snapshot,
+  runId: legacyRun.runId, clientMessageId: `agent-timeline:${legacyRun.runId}:1:0` } };
+await displays.checkpoint(legacyRun.runId, [legacyItem]);
+await displays.publishVersions(legacyRun.runId, [legacyItem]);
+db.prepare("UPDATE chat_turn_presentations SET state = 'interrupted' WHERE run_id = ?").run(legacyRun.runId);
+assert.equal((await commit(legacyRun, [makeMessage('legacy-interrupted', '封口之后迟到的完整输出')])).outcome, 'fence_failed',
+  '展示已经结束、T4 尚未撤销 owner 的交接期也拒绝迟到 T3');
+db.prepare("UPDATE conversation_turn_runs SET status = 'failed' WHERE run_id = ?").run(legacyRun.runId);
+db.prepare("UPDATE conversation_turn_state SET active_run_id = NULL, active_run_kind = NULL WHERE session_id = ?").run('legacy-interrupted');
+db.prepare('UPDATE sessions SET visible_after_message_id = ? WHERE id = ?').run(legacyUser.id, 'legacy-interrupted');
+await displays.interruptOrphans([]);
+assert.equal(db.prepare('SELECT COUNT(*) AS n FROM messages WHERE turn_run_id = ?').get(legacyRun.runId).n, 0);
+db.prepare('UPDATE sessions SET visible_after_message_id = 0 WHERE id = ?').run('legacy-interrupted');
+await messages.commitMessage({ message: makeMessage('legacy-interrupted', '后续新问题', { senderType: 'user', isMe: true }), previewText: '后续新问题' });
+const newerRun = await turns.claimIfIdle('legacy-interrupted', 'user_reply');
+await commit(newerRun, [makeMessage('legacy-interrupted', '后续回答')]);
+const newerVersion = await rerollVersion('legacy-interrupted', '后续回答的第二版');
+const newerTarget = (await messages.listTurnMessagesInTransaction(executor, newerVersion.runId))[0];
+await turns.requestRegeneration('legacy-interrupted', newerTarget.id);
+const activeNewerRewrite = await turns.claimIfIdle('legacy-interrupted', 'user_reply');
+await displays.interruptOrphans([activeNewerRewrite.runId]);
+assert.equal((await turns.getRegenerationState('legacy-interrupted')).activeRunId, activeNewerRewrite.runId,
+  '封存旧正文不撤销后续正在重写的 owner');
+assert.equal(db.prepare('SELECT locked FROM chat_reply_version_sets WHERE current_run_id = ?').get(newerVersion.runId).locked, 0,
+  '封存旧正文不锁定后续候选');
+await turns.revoke(activeNewerRewrite, 'failed', 'test_finished');
+assert.equal((await turns.getRegenerationState('legacy-interrupted')).eligibleRunId, newerVersion.runId,
+  '较晚取得数据库 ID 的旧正文不能抢占最新回复资格');
+const legacyReply = (await messages.getMessages('legacy-interrupted', { limit: 20 })).messages.find(message => message.senderType === 'assistant');
+assert.equal(legacyReply.text, '旧版本收到的正文');
+assert.equal(legacyReply.status, 'sent');
+assert.equal(db.prepare('SELECT status FROM conversation_turn_runs WHERE run_id = ?').get(legacyRun.runId).status, 'failed');
+const orderedLegacy = (await messages.getMessages('legacy-interrupted', { limit: 20 })).messages;
+assert.deepEqual(sortChatTimelineMessages(orderedLegacy).map(message => message.id), orderedLegacy.map(message => message.id),
+  '封存后 JS 与 SQLite 使用相同的历史位置');
+
+console.log('Chat 重写与候选版本：原子替换、原输入、截断正文封存与完整操作资格、失败回滚、候选采用、上下文隔离及恢复幂等验证通过');
 db.close();

@@ -1,7 +1,7 @@
 /**
  * @fileoverview BaseAIClient - OpenAI 兼容的基础 AI 客户端
  *
- * 提供通用的 OpenAI API 调用逻辑，供 OpenAI/Kimi 等客户端复用。
+ * 提供普通、流式、工具调用与向量请求的公共协议实现。
  *
  * @module platform/ai/BaseAIClient
  */

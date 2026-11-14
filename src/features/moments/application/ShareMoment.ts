@@ -15,7 +15,7 @@ export async function createMomentShareSnapshot(repository: IMomentRepository, m
     schemaVersion: 1, momentId: snapshot.id,
     author: { actorType: actor.actorType, actorId: actor.actorId, name: actor.publicName, displayName: actor.displayName,
       avatar: actor.avatarMediaAssetId ? { mediaAssetId: actor.avatarMediaAssetId } : null },
-    content: snapshot.content, locationLabel: snapshot.locationLabel, createdAt: snapshot.createdAt,
+    content: snapshot.content, locationLabel: snapshot.locationLabel, createdAt: snapshot.createdAt, editedAt: snapshot.editedAt,
     images: snapshot.media.map(image => ({ mediaAssetId: image.mediaAssetId,
       analysisText: image.analysisStatus === 'completed' ? image.analysisText : null })),
   };

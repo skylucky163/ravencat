@@ -7,6 +7,8 @@ export interface AuxiliaryModelInitialization {
   /** 资产参数或可用性变化与引用方的在途资格撤销共享提交边界，不改写引用ID。 */
   invalidateModelReferencesInTransaction(transaction: DatabaseTransactionExecutor, modelConfigId: string): Promise<void>;
   invalidateServiceReferencesInTransaction(transaction: DatabaseTransactionExecutor, serviceConfigId: string): Promise<void>;
+  /** 资格撤销后再解除跨 owner 连接；返回角色 ID 供提交后刷新，不能复制旧凭据。 */
+  detachServiceReferencesInTransaction(transaction: DatabaseTransactionExecutor, serviceConfigId: string, now: string): Promise<string[]>;
   initializeModelSelections(transaction: DatabaseTransactionExecutor, model: AuxiliaryModelConfig): Promise<void>;
   modelSelectionsInitialized(model: AuxiliaryModelConfig): void;
 }

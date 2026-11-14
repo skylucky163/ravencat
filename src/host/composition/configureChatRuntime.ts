@@ -3,6 +3,8 @@ import { chatSummaryRepository } from './chatSummaryRepository';
 import { resolveImageGroundingPrompt, resolveVisionOCRPrompt } from '@features/prompting';
 import {
   configureChatRuntimeDependencies,
+  configureChatCodePreview,
+  chatCodePreviewRepository,
   configureChatTextDrafts,
   configureChatBubbleSkins,
   SQLiteChatBubbleSkinRepository,
@@ -64,7 +66,8 @@ import {
 } from '@host/prompt';
 import { prepareHostModelRun } from '@host/runtime/HostModelRunPreparation';
 import { getConversationTurnCoordinator } from '../runtime/ConversationTurnCoordinator';
-import { aiScheduleRepository } from '@features/companion/composition';
+import { aiScheduleRepository, acknowledgeScheduleReplyInTransaction } from '@features/companion/composition';
+import { reconcileAIScheduleProjections } from '@features/companion';
 import {
   MEDIA_ASSET_STORAGE_BACKEND,
   resolveMediaAsset,
@@ -78,6 +81,7 @@ export function configureChatRuntime(): void {
     return;
   }
   configured = true;
+  configureChatCodePreview(chatCodePreviewRepository);
   configureChatTextDrafts(new SQLiteChatTextDraftRepository());
   configureChatBubbleSkins(new SQLiteChatBubbleSkinRepository());
   configureChatFavoriteRuntime(new SQLiteChatFavoriteRepository());
@@ -117,13 +121,16 @@ export function configureChatRuntime(): void {
     },
     // canonical 用户消息 commit 后：abort 被 supersede 的旧句柄并启动新一轮 claimIfIdle。
     canonicalUserMessage: {
+      onSubstantiveInputInTransaction: acknowledgeScheduleReplyInTransaction,
       onCommitted: async (payload) => {
         // T1 已撤销旧 fence；先持久交接日程背景，再允许新聊天组装上下文。
         // 即使旧执行已抢先 consume，也不能丢掉此次交接。
         if (payload.supersededRunId) await aiScheduleRepository.mergeClaimedRun(
           payload.supersededRunId, null, new Date().toISOString());
         const session = await sessionRepository.getSession(payload.sessionId);
-        if (session) await aiScheduleRepository.mergeDueIntoChat(session.aiAssistantId, new Date().toISOString());
+        if (session && await aiScheduleRepository.mergeDueIntoChat(session.aiAssistantId, new Date().toISOString())) {
+          await reconcileAIScheduleProjections();
+        }
         await getConversationTurnCoordinator().onCanonicalUserMessageCommitted(payload);
       },
     },

@@ -3,11 +3,14 @@ import {
   createDatabaseBackupSnapshot,
   deleteDatabaseBackupSnapshot,
 } from '@platform/persistence';
+import { aiHttpDiagnostics } from '@platform/ai';
 import {
   getPersistentMediaRootUri,
   persistentMediaStore,
 } from '@platform/device';
 import {
+  PERSISTENT_IMAGE_CATEGORY,
+  getPersistentImageCategoryPrefix,
   getPersistentImageInfoInRoot,
 } from '@platform/device/DeviceMediaService';
 import { MEDIA_ASSET_STORAGE_BACKEND, type MediaAsset } from '@features/media';
@@ -31,9 +34,15 @@ import {
 export class ApplicationBackupSourceGateway implements BackupSourceGateway {
   constructor(private readonly dependencies: {
     readMediaInventory(uri: string): Promise<readonly MediaAsset[]>;
+    readChatCodeCoverFiles(uri: string): Promise<readonly string[]>;
     prepareDatabaseSnapshot(executor: DatabaseWriteExecutor): Promise<void>;
     excludedMediaStoragePrefixes: readonly string[];
     searchCredentials: {
+      export(databaseUri?: string): Promise<unknown>;
+      validate(state: unknown, databaseUri: string): Promise<void>;
+      restore(state: unknown): Promise<void>;
+    };
+    mcpCredentials: {
       export(databaseUri?: string): Promise<unknown>;
       validate(state: unknown, databaseUri: string): Promise<void>;
       restore(state: unknown): Promise<void>;
@@ -59,15 +68,28 @@ export class ApplicationBackupSourceGateway implements BackupSourceGateway {
     }
   }
 
+  /** 作品封面随 persistent-media 根归档；快照里引用的文件名必须能真实命中。 */
+  private async validateChatCodeCovers(databaseUri: string, rootUri: string): Promise<void> {
+    const prefix = getPersistentImageCategoryPrefix(PERSISTENT_IMAGE_CATEGORY.chatCodeCover);
+    for (const coverFile of await this.dependencies.readChatCodeCoverFiles(databaseUri)) {
+      const info = await getPersistentImageInfoInRoot(rootUri, `${prefix}${coverFile}`);
+      if (!info.exists || info.isDirectory) {
+        throw new Error(`备份引用的作品封面缺失：${coverFile}`);
+      }
+    }
+  }
+
   deleteDatabaseSnapshot(uri: string): Promise<void> {
     return deleteDatabaseBackupSnapshot(uri);
   }
 
   async readNonDatabaseSources(databaseSnapshotUri: string) {
-    await this.validateDatabaseMedia(databaseSnapshotUri, getPersistentMediaRootUri());
+    const mediaRootUri = getPersistentMediaRootUri();
+    await this.validateDatabaseMedia(databaseSnapshotUri, mediaRootUri);
+    await this.validateChatCodeCovers(databaseSnapshotUri, mediaRootUri);
     const stableSettings = await this.readStableSettingsSource(databaseSnapshotUri);
     return {
-      mediaRootUri: getPersistentMediaRootUri(),
+      mediaRootUri,
       excludedMediaStoragePrefixes: this.dependencies.excludedMediaStoragePrefixes,
       bubbleSkinRootUri: stableSettings.bubbleSkinRootUri,
       stableSettingsJson: stableSettings.json,
@@ -85,9 +107,16 @@ export class ApplicationBackupSourceGateway implements BackupSourceGateway {
     databaseUri: string,
   ): Promise<void> {
     await this.validateDatabaseMedia(databaseUri, mediaRootUri);
+    await this.validateChatCodeCovers(databaseUri, mediaRootUri);
     const settings = parseStableSettingsBackupJson(json);
+    if ('aiHttpDiagnostics' in settings) {
+      aiHttpDiagnostics.validateBackupState(settings.aiHttpDiagnostics);
+    }
     if ('searchCredentials' in settings) {
       await this.dependencies.searchCredentials.validate(settings.searchCredentials, databaseUri);
+    }
+    if ('mcpCredentials' in settings) {
+      await this.dependencies.mcpCredentials.validate(settings.mcpCredentials, databaseUri);
     }
     const themeState = parseStoredThemeBackupState(settings.theme);
     await this.validateChatFooterImage(themeState, mediaRootUri);
@@ -106,16 +135,24 @@ export class ApplicationBackupSourceGateway implements BackupSourceGateway {
     if ('searchCredentials' in settings) {
       await this.dependencies.searchCredentials.restore(settings.searchCredentials);
     }
+    if ('mcpCredentials' in settings) {
+      await this.dependencies.mcpCredentials.restore(settings.mcpCredentials);
+    }
+    if ('aiHttpDiagnostics' in settings) {
+      await aiHttpDiagnostics.restoreBackupState(settings.aiHttpDiagnostics);
+    }
   }
 
   private async readStableSettingsSource(databaseUri?: string): Promise<{
     json: string;
     bubbleSkinRootUri: string;
   }> {
-    const [theme, bubbleSkins, searchCredentials] = await Promise.all([
+    const [theme, bubbleSkins, searchCredentials, mcpCredentials, diagnostics] = await Promise.all([
       loadStoredThemeBackupState(),
       getBubbleSkinBackupSource(),
       this.dependencies.searchCredentials.export(databaseUri),
+      this.dependencies.mcpCredentials.export(databaseUri),
+      aiHttpDiagnostics.exportBackupState(),
     ]);
     // create 侧同样校验底栏图标真实存在，避免产出引用缺失文件的“缩水”备份。
     await this.validateChatFooterImage(theme, getPersistentMediaRootUri());
@@ -126,6 +163,8 @@ export class ApplicationBackupSourceGateway implements BackupSourceGateway {
       theme,
       bubbleSkins: JSON.parse(bubbleSkins.settingsJson) as unknown,
       searchCredentials,
+      mcpCredentials,
+      aiHttpDiagnostics: diagnostics,
     });
 
     // create 侧必须与 restore 侧满足同一份严格契约，避免产生"缩水后仍成功"的备份。

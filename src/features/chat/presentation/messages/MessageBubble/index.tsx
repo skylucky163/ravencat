@@ -55,6 +55,8 @@ import {
 
 import type { SharedChatRecord } from '../../../messages/domain/SharedChatRecord';
 import SharedChatRecordCard from '../components/SharedChatRecordView';
+import ChatCodeCard from '../components/ChatCodeCard';
+import { readChatCodeBlock, chatCodePreviewId } from '../../../messages/domain/ChatCodeBlock';
 
 interface MessageBubbleProps {
   appearancePreview?: BubbleAppearancePreview;
@@ -200,7 +202,8 @@ function MessageBubble({
   const bubbleStyles = useMemo(() => createMessageBubbleStyles(theme), [theme]);
   const isMoonKimi = isMoonKimiTheme(theme);
   const isPaperNote = isPaperNoteTheme(theme);
-  const isSharedCard = sharedMoment !== null || sharedRecord !== null;
+  const codeBlock = useMemo(() => senderType === 'assistant' ? readChatCodeBlock(text) : null, [senderType, text]);
+  const isSharedCard = sharedMoment !== null || sharedRecord !== null || codeBlock !== null;
   const supportsBubbleSkins = supportsChatBubbleSkins(theme);
   const customSkins = useChatBubbleSkins(supportsBubbleSkins && !appearancePreview);
   // 临时数据库 ID 换成正式 ID 仍是同一条消息，不能在交接时撤掉已测量的装饰占位。
@@ -269,7 +272,7 @@ function MessageBubble({
   const hasTextContent = renderState?.hasTextContent ?? fallbackHasTextContent;
   const hasAttachments = renderState?.hasAttachments ?? fallbackHasAttachments;
   const hasSticker = renderState?.hasSticker ?? fallbackHasSticker;
-  const shouldUseMarkdown = renderState?.shouldUseMarkdown ?? fallbackShouldUseMarkdown;
+  const shouldUseMarkdown = !codeBlock && (renderState?.shouldUseMarkdown ?? fallbackShouldUseMarkdown);
   const isStandaloneAttachmentMessage =
     renderState?.isStandaloneAttachmentMessage ?? fallbackIsStandaloneAttachmentMessage;
   const isStandaloneStickerMessage =
@@ -378,7 +381,7 @@ function MessageBubble({
     setReasoningContentHeight(height);
   }, [setReasoningContentHeight]);
 
-  const textContentNode = !voice ? (
+  const textContentNode = !voice && !codeBlock ? (
     <BubbleTextContent
       selectable={isReasoning}
       hasTextContent={hasTextContent}
@@ -395,7 +398,11 @@ function MessageBubble({
     />
   ) : null;
 
-  const bubbleContent = sharedMoment ? <SharedMomentCard moment={sharedMoment} onLongPress={onAttachmentLongPress} /> : sharedRecord ? <SharedChatRecordCard messageId={messageId} record={sharedRecord} comment={sharedComment} onPreviewFile={onPreviewFile} onLongPress={onAttachmentLongPress} /> : (
+  const bubbleContent = codeBlock ? <ChatCodeCard block={codeBlock}
+    previewId={chatCodePreviewId({ id: messageId, clientMessageId })} sourceMessageId={messageId > 0 ? messageId : null}
+    agentId={agentId ?? null}
+    generating={messageStatus === 'streaming' || messageStatus === 'pending'} onLongPress={onAttachmentLongPress} />
+    : sharedMoment ? <SharedMomentCard moment={sharedMoment} onLongPress={onAttachmentLongPress} /> : sharedRecord ? <SharedChatRecordCard messageId={messageId} record={sharedRecord} comment={sharedComment} onPreviewFile={onPreviewFile} onLongPress={onAttachmentLongPress} /> : (
     <>
       {hasAttachments ? (
         <BubbleAttachmentList

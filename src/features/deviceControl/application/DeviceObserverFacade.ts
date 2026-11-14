@@ -9,7 +9,6 @@ import type {
   DeviceObserverSemanticReadRequest,
   DeviceObserverSemanticSnapshot,
   DeviceObserverSubscription,
-  DeviceObserverWindowState,
 } from './DeviceObserverPort';
 
 function getDeviceObserver() {
@@ -20,12 +19,6 @@ export function addDeviceObserverConnectionListener(
   listener: (state: DeviceObserverConnectionState) => void
 ): DeviceObserverSubscription {
   return getDeviceObserver().addConnectionStateListener(listener);
-}
-
-export function addDeviceObserverWindowListener(
-  listener: (state: DeviceObserverWindowState) => void
-): DeviceObserverSubscription {
-  return getDeviceObserver().addWindowStateListener(listener);
 }
 
 export function getDeviceObserverConnectionState() {

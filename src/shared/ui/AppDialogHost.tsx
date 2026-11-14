@@ -116,19 +116,20 @@ export default function AppDialogHost() {
           {buttons.map((button, index) => {
             const primary = button.style !== 'cancel' && index === buttons.length - 1;
             const destructive = button.style === 'destructive';
+            const strongDestructive = destructive && button.emphasis === 'strong';
             return <Pressable
               key={index}
               accessibilityRole="button"
               accessibilityLabel={button.text}
               onPress={() => finishAppDialog(dialog, button)}
               style={({ pressed }) => [styles.button, {
-                backgroundColor: primary && !destructive
+                backgroundColor: strongDestructive ? theme.colors.feedback.error : primary && !destructive
                   ? (pressed ? theme.colors.brand.primaryPressed : theme.colors.brand.primary)
                   : theme.colors.surface.muted,
                 opacity: pressed ? 0.8 : 1,
               }]}
             >
-              <Text style={[styles.buttonText, { color: destructive
+              <Text style={[styles.buttonText, { color: strongDestructive ? theme.colors.brand.onPrimary : destructive
                 ? theme.colors.feedback.error
                 : primary ? theme.colors.brand.onPrimary : theme.colors.text.primary,
               }]}>{button.text}</Text>

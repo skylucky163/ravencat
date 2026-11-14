@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
-import { ArchiveRestore, RefreshCw, Star, Trash2, UserRound, type LucideIcon } from 'lucide-react-native';
+import { Database, RefreshCw, Star, UserRound, type LucideIcon } from 'lucide-react-native';
 import type { UserProfile } from '../domain/UserProfile';
 import { UserAvatar } from '@shared/ui';
 import { ThemedSurface, useTheme } from '@shared/theme';
@@ -8,14 +8,14 @@ import { getInstalledApplicationInfo } from '@platform/device/DeviceStatus';
 import { version as sourceVersion } from '../../../../package.json';
 import { createProfileStyles } from './ProfileTab.styles';
 
-function ProfileSettingsMenuItem({ title, onPress, danger = false, icon: Icon,
+function ProfileSettingsMenuItem({ title, onPress, icon: Icon,
   detail, hasNotice = false, disabled = false }: {
-  title: string; onPress(): void; danger?: boolean; icon: LucideIcon;
+  title: string; onPress(): void; icon: LucideIcon;
   detail?: string; hasNotice?: boolean; disabled?: boolean;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createProfileStyles(theme), [theme]);
-  const color = danger ? theme.colors.feedback.error : theme.colors.text.primary;
+  const color = theme.colors.text.primary;
   return <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.7}
     disabled={disabled} accessibilityRole="button" accessibilityState={{ disabled }}
     accessibilityLabel={[title, detail, hasNotice ? '有新版本' : null].filter(Boolean).join('，')}>
@@ -26,10 +26,10 @@ function ProfileSettingsMenuItem({ title, onPress, danger = false, icon: Icon,
   </TouchableOpacity>;
 }
 
-export function ProfileContent({ profile, hasLoadedProfile, onOpenProfile, onOpenFavorites, onBackupPress, onClearAllData,
+export function ProfileContent({ profile, hasLoadedProfile, onOpenProfile, onOpenFavorites, onOpenDataManagement,
   checkingUpdates, availableUpdateVersion, updateProgress, updateDownloaded, onCheckUpdates }: {
   profile: UserProfile; hasLoadedProfile: boolean;
-  onOpenProfile(): void; onOpenFavorites(): void; onBackupPress(): void; onClearAllData(): void;
+  onOpenProfile(): void; onOpenFavorites(): void; onOpenDataManagement(): void;
   checkingUpdates: boolean; availableUpdateVersion: string | null; onCheckUpdates(): void;
   updateProgress: number | null; updateDownloaded: boolean;
 }) {
@@ -51,13 +51,12 @@ export function ProfileContent({ profile, hasLoadedProfile, onOpenProfile, onOpe
       <ProfileSettingsMenuItem title="收藏" icon={Star} onPress={onOpenFavorites} />
     </ThemedSurface>
     <ThemedSurface nativeGlass variant="card" style={styles.menuSection}>
-      <ProfileSettingsMenuItem title="备份与恢复" icon={ArchiveRestore} onPress={onBackupPress} />
+      <ProfileSettingsMenuItem title="数据管理" icon={Database} onPress={onOpenDataManagement} />
       <ProfileSettingsMenuItem title="检查更新" icon={RefreshCw} onPress={onCheckUpdates}
         disabled={checkingUpdates} hasNotice={availableUpdateVersion !== null}
         detail={updateProgress !== null ? `下载 ${Math.floor(updateProgress * 100)}%`
           : updateDownloaded ? '已下载，点击安装' : checkingUpdates ? '正在检查…'
             : availableUpdateVersion ? `v${availableUpdateVersion}` : __DEV__ ? '开发版' : undefined} />
-      <ProfileSettingsMenuItem title="清空所有数据" icon={Trash2} danger onPress={onClearAllData} />
     </ThemedSurface>
     <View style={styles.versionSection}>
       {__DEV__ ? <>

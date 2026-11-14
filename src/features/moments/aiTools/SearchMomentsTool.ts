@@ -131,6 +131,7 @@ export async function execute(
       const actor = directory.resolve({ actorType: moment.authorType, actorId: moment.authorId, nameSnapshot: moment.authorNameSnapshot });
       return [
         `${index + 1}. [${new Date(moment.createdAt).toLocaleString('zh-CN')}] ${actor.displayName}（${moment.authorType}，authorId: ${moment.authorId}）`,
+        moment.editedAt ? `已编辑，最后编辑时间: ${new Date(moment.editedAt).toLocaleString('zh-CN')}` : '未编辑',
         `momentId: ${moment.id}\n正文摘要: ${moment.content.substring(0, 120)}${moment.content.length > 120 ? '…' : ''}`,
         ...moment.ownComments.map((comment) => `你自己的评论（commentId: ${comment.id}，parentCommentId: ${comment.parentCommentId ?? 'null'}）: ${comment.content}`),
       ].join('\n');

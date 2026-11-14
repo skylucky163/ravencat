@@ -24,7 +24,7 @@ import {
 } from './FormFields';
 import { createStyles } from './styles';
 import { createCommonStyles } from '@shared/ui/commonStyles';
-import { useTheme, useThemedStyles } from '@shared/theme';
+import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
 import ServiceConnectionPicker from '../auxiliaryModels/ServiceConnectionPicker';
 
 const STEPS = ['基本信息', '选择模型', '测试连接'];
@@ -49,6 +49,7 @@ export default function AddAIScreen({ onBack, onAdded }: AddAIScreenProps) {
     name,
     setName,
     apiKey,
+    serviceConfigId,
     apiBaseUrl,
     selectedModel,
     systemPrompt,
@@ -129,10 +130,10 @@ export default function AddAIScreen({ onBack, onAdded }: AddAIScreenProps) {
 
         <ScrollView
           style={commonStyles.screenContainer}
-          contentContainerStyle={styles.contentContainer}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <ThemedSurface variant="card" style={[commonStyles.formSurface, styles.contentContainer]}>
           {/* 步骤指示器 */}
           <StepIndicator currentStep={currentStep} steps={STEPS} />
 
@@ -140,7 +141,7 @@ export default function AddAIScreen({ onBack, onAdded }: AddAIScreenProps) {
           <NameInput value={name} onChangeText={setName} />
 
           <View style={styles.section}>
-            <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} onFill={handleFillServiceConnection} disabled={isTesting || isLoadingModels} />
+            <ServiceConnectionPicker baseUrl={apiBaseUrl} apiKey={apiKey} serviceConfigId={serviceConfigId} onFill={handleFillServiceConnection} disabled={isTesting || isLoadingModels} />
           </View>
 
           {/* API 地址 */}
@@ -186,6 +187,7 @@ export default function AddAIScreen({ onBack, onAdded }: AddAIScreenProps) {
 
           {/* 提示信息 */}
           <TipSection />
+          </ThemedSurface>
         </ScrollView>
       </KeyboardAvoidingContainer>
 

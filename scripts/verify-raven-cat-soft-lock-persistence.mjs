@@ -115,6 +115,30 @@ function createRepository(database) {
   return new repositoryModule.SQLiteSoftAppLockRepository();
 }
 
+function insertLock(database, lock) {
+  database.prepare(`
+    INSERT INTO raven_cat_soft_app_locks (
+      id, target_package, source, source_ai_id, reason, created_at, expires_at, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    lock.id,
+    lock.targetPackage,
+    lock.source,
+    lock.sourceAiId ?? null,
+    lock.reason ?? null,
+    lock.createdAtEpochMs,
+    lock.expiresAtEpochMs ?? null,
+    lock.status,
+  );
+}
+
+async function readLock(database, id) {
+  const row = database.prepare(
+    'SELECT * FROM raven_cat_soft_app_locks WHERE id = ?',
+  ).get(id) ?? null;
+  return createSoftAppLockFromRow(row);
+}
+
 function createTestPort(database) {
   const calls = [];
   const behavior = {
@@ -605,8 +629,8 @@ function resolveExecution(overrides = {}) {
     createdAtEpochMs: NOW_MS,
     expiresAtEpochMs: LATER_MS,
   });
-  await repository.insert(activeNoExpiry);
-  await repository.insert(activeWithFutureExpiry);
+  insertLock(database, activeNoExpiry);
+  insertLock(database, activeWithFutureExpiry);
 
   // active row 可由 listActive 得到；映射不丢 reason/sourceAiId/expiresAt。
   const activeList = await repository.listActive(NOW_MS);
@@ -656,7 +680,7 @@ function resolveExecution(overrides = {}) {
   ]);
   assert.deepEqual(await repository.expireDue(NOW_MS + 2), []);
   assert.equal(
-    (await repository.getById('lock-due')).status,
+    (await readLock(database, 'lock-due')).status,
     'expired'
   );
   // 未到期的 active 不受影响。
@@ -670,25 +694,6 @@ function resolveExecution(overrides = {}) {
     ['lock-future']
   );
 
-  // release：active → released；幂等；不改写终态历史；not_found。
-  const firstRelease = await repository.release('lock-active');
-  assert.equal(firstRelease.outcome, 'released');
-  assert.equal(firstRelease.lock.status, 'released');
-  const secondRelease = await repository.release('lock-active');
-  assert.equal(secondRelease.outcome, 'unchanged');
-  assert.equal(secondRelease.lock.status, 'released');
-  assert.equal((await repository.release('lock-expired')).outcome, 'unchanged');
-  assert.equal((await repository.getById('lock-expired')).status, 'expired');
-  assert.equal((await repository.release('lock-missing')).outcome, 'not_found');
-  assert.deepEqual(await repository.listActive(NOW_MS), []);
-
-  // clearForFactoryReset：清空业务真值行。
-  await repository.clearForFactoryReset();
-  assert.equal(await repository.getById('lock-active'), null);
-  assert.equal(
-    database.prepare('SELECT COUNT(*) AS count FROM raven_cat_soft_app_locks').get().count,
-    0
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -706,7 +711,7 @@ function resolveExecution(overrides = {}) {
     expiresAtEpochMs: LATER_MS,
   }), NOW_MS);
   assert.equal(first.outcome, 'inserted');
-  await repository.insert(createSoftAppLock({
+  insertLock(database, createSoftAppLock({
     id: 'manual-lock-1',
     targetPackage: 'com.example.target',
     source: 'manual_test',
@@ -723,7 +728,7 @@ function resolveExecution(overrides = {}) {
   }), NOW_MS);
   assert.equal(duplicate.outcome, 'already_active');
   assert.equal(duplicate.lock.id, 'ai-lock-1');
-  assert.equal(await repository.getById('ai-lock-duplicate'), null);
+  assert.equal(await readLock(database, 'ai-lock-duplicate'), null);
 
   const anotherActor = await repository.insertAiLockIfNoActiveByActorAndTarget(createSoftAppLock({
     id: 'ai-lock-actor-2',
@@ -741,8 +746,8 @@ function resolveExecution(overrides = {}) {
   );
   assert.equal(actorRelease.outcome, 'released');
   assert.equal(actorRelease.lock.id, 'ai-lock-1');
-  assert.equal((await repository.getById('manual-lock-1')).status, 'active');
-  assert.equal((await repository.getById('ai-lock-actor-2')).status, 'active');
+  assert.equal((await readLock(database, 'manual-lock-1')).status, 'active');
+  assert.equal((await readLock(database, 'ai-lock-actor-2')).status, 'active');
   assert.equal(
     (await repository.releaseActiveAiLockByActorAndTarget('ai-1', 'com.example.target')).outcome,
     'not_found',
@@ -865,7 +870,7 @@ function resolveExecution(overrides = {}) {
   });
   assert.equal(nativeFailed.status, 'activated');
   assert.equal(nativeFailed.native.reconcile.status, 'failed');
-  assert.equal((await repository.getById('soft-lock-2')).status, 'active');
+  assert.equal((await readLock(database, 'soft-lock-2')).status, 'active');
 
   // release：先提交 released，之后 port 收到剩余 active 投影；结果幂等语义明确。
   const released = await facade.releaseAiSoftLock({ sourceAiId: 'ai-test', targetPackage: 'com.example.target' });
@@ -886,9 +891,9 @@ function resolveExecution(overrides = {}) {
   assert.equal((await facade.releaseAiSoftLock({ sourceAiId: 'ai-test', targetPackage: 'com.example.target' })).status, 'not_found');
   assert.equal((await facade.releaseAiSoftLock({ sourceAiId: 'ai-test', targetPackage: 'com.example.missing' })).status, 'not_found');
 
-  // expireDue：到期行先落 expired，再投影剩余 active。
+  // reconcile：到期行先落 expired，再投影剩余 active。
   clockMs = LATER_MS + 1;
-  const expireResult = await facade.expireDueSoftLocks();
+  const expireResult = await facade.reconcileDeviceControl();
   assert.deepEqual(expireResult.expired.map(({ id }) => id), ['soft-lock-2']);
   assert.deepEqual(expireResult.active, []);
   assert.deepEqual(portSnapshots.at(-1).projection, []);
@@ -898,7 +903,7 @@ function resolveExecution(overrides = {}) {
     ['reconcile:0', 'stop'],
     '最后一条锁到期后必须先 reconcile([]) 再 stopRuntimeIfIdle'
   );
-  assert.equal((await repository.getById('soft-lock-2')).status, 'expired');
+  assert.equal((await readLock(database, 'soft-lock-2')).status, 'expired');
 
   // Repository 读路径是纯查询——已过时间但仍 active 的行只被过滤，
   // 数据库 status 不被修改，也不触发 native reconcile。
@@ -912,7 +917,7 @@ function resolveExecution(overrides = {}) {
   const activeLocks = await repository.listActive(clockMs);
   assert.deepEqual(activeLocks, [], '到期 active 行在查询结果中只被过滤');
   assert.equal(
-    (await repository.getById('soft-lock-3')).status,
+    (await readLock(database, 'soft-lock-3')).status,
     'active',
     '读路径不得把到期行写成 expired'
   );
@@ -922,7 +927,7 @@ function resolveExecution(overrides = {}) {
   // 先 expireDue 归一化，目标保持 expired 终态并返回 not_found，不得覆盖成 released。
   const expiredRelease = await facade.releaseAiSoftLock({ sourceAiId: 'ai-test', targetPackage: 'com.example.third' });
   assert.equal(expiredRelease.status, 'not_found');
-  assert.equal((await repository.getById('soft-lock-3')).status, 'expired');
+  assert.equal((await readLock(database, 'soft-lock-3')).status, 'expired');
   assert.ok(
     portSnapshots.at(-1).rowsAtCallTime.some(({ id, status }) => (
       id === 'soft-lock-3' && status === 'expired'
@@ -937,7 +942,7 @@ function resolveExecution(overrides = {}) {
     facade.activateAiSoftLock({ sourceAiId: 'ai-test', expiresAtEpochMs: clockMs + 1_000, targetPackage: 'com.example.fourth' }),
     /port crashed/
   );
-  const crashLock = await repository.getById('soft-lock-4');
+  const crashLock = await readLock(database, 'soft-lock-4');
   assert.equal(crashLock.status, 'active', 'port 崩溃不得回滚或伪造业务真值');
 }
 
@@ -1011,7 +1016,7 @@ function resolveExecution(overrides = {}) {
   assert.equal(activated.lock.expiresAtEpochMs, LATER_MS);
   assert.equal(activated.native.reconcile.status, 'ok');
   assert.deepEqual(activated.execution, { state: 'blocking_now' });
-  const persistedActivated = await repository.getById(activated.lock.id);
+  const persistedActivated = await readLock(database, activated.lock.id);
   assert.equal(persistedActivated.source, 'ai_tool');
   assert.equal(persistedActivated.sourceAiId, 'ai-1');
   assert.equal(persistedActivated.expiresAtEpochMs, LATER_MS);
@@ -1049,7 +1054,7 @@ function resolveExecution(overrides = {}) {
     createdAtEpochMs: NOW_MS,
     expiresAtEpochMs: LATER_MS,
   });
-  await repository.insert(manual);
+  insertLock(database, manual);
   const anotherActor = await facade.activateAiSoftLock({
     targetPackage: 'com.example.target',
     sourceAiId: 'ai-2',
@@ -1080,7 +1085,7 @@ function resolveExecution(overrides = {}) {
     state: 'activated_but_not_executing',
     issue: 'reconcile_failed',
   });
-  assert.equal((await repository.getById(reconcileFailed.lock.id)).status, 'active');
+  assert.equal((await readLock(database, reconcileFailed.lock.id)).status, 'active');
 
   clockMs = LATER_MS + 1;
   const recreated = await facade.activateAiSoftLock({
@@ -1089,7 +1094,7 @@ function resolveExecution(overrides = {}) {
     expiresAtEpochMs: LATER_MS + 1_000,
   });
   assert.equal(recreated.status, 'activated', '旧 lock 到期归一化后必须允许重新创建');
-  assert.equal((await repository.getById('ai-soft-lock-1')).status, 'expired');
+  assert.equal((await readLock(database, 'ai-soft-lock-1')).status, 'expired');
 }
 
 // ---------------------------------------------------------------------------
@@ -1119,7 +1124,7 @@ function resolveExecution(overrides = {}) {
     createdAtEpochMs: NOW_MS,
     expiresAtEpochMs: LATER_MS,
   });
-  await repository.insert(manual);
+  insertLock(database, manual);
   const otherActor = await facade.activateAiSoftLock({
     targetPackage: 'com.example.shared',
     sourceAiId: 'ai-2',
@@ -1132,9 +1137,9 @@ function resolveExecution(overrides = {}) {
   });
   assert.equal(released.status, 'released');
   assert.equal(released.lock.id, own.lock.id);
-  assert.equal((await repository.getById(own.lock.id)).status, 'released');
-  assert.equal((await repository.getById(manual.id)).status, 'active');
-  assert.equal((await repository.getById(otherActor.lock.id)).status, 'active');
+  assert.equal((await readLock(database, own.lock.id)).status, 'released');
+  assert.equal((await readLock(database, manual.id)).status, 'active');
+  assert.equal((await readLock(database, otherActor.lock.id)).status, 'active');
   assert.deepEqual(
     calls.at(-1).projection.map(({ id }) => id),
     [manual.id, otherActor.lock.id],
@@ -1150,8 +1155,8 @@ function resolveExecution(overrides = {}) {
     sourceAiId: 'ai-1',
   });
   assert.equal(noOwnedLock.status, 'not_found');
-  assert.equal((await repository.getById(manual.id)).status, 'active');
-  assert.equal((await repository.getById(otherActor.lock.id)).status, 'active');
+  assert.equal((await readLock(database, manual.id)).status, 'active');
+  assert.equal((await readLock(database, otherActor.lock.id)).status, 'active');
 }
 
 {
@@ -1181,7 +1186,7 @@ function resolveExecution(overrides = {}) {
     state: 'activated_but_not_executing',
     issue: 'background_start_restricted',
   });
-  assert.equal((await repository.getById('ai-soft-lock-restricted')).status, 'active');
+  assert.equal((await readLock(database, 'ai-soft-lock-restricted')).status, 'active');
   assert.deepEqual(calls.map(({ method }) => method), ['start']);
 }
 
@@ -1338,7 +1343,7 @@ function resolveExecution(overrides = {}) {
   assert.equal((await firstRelease).status, 'released');
   await assert.rejects(queuedRelease, /queued release cancelled/u);
   assert.equal(
-    (await repository.getById(releaseTarget.lock.id)).status,
+    (await readLock(database, releaseTarget.lock.id)).status,
     'active',
     '在 command queue 中已 abort 的 release 不得稍后改写 Soft Lock 事实'
   );
@@ -1400,7 +1405,6 @@ function resolveExecution(overrides = {}) {
   const trackingRepository = {
     insertAiLockIfNoActiveByActorAndTarget: (lock, nowEpochMs) =>
       repository.insertAiLockIfNoActiveByActorAndTarget(lock, nowEpochMs),
-    getById: (id) => repository.getById(id),
     listActive: (nowEpochMs) => {
       repositoryCalls.push({ method: 'listActive', nowEpochMs });
       return repository.listActive(nowEpochMs);
@@ -1413,7 +1417,6 @@ function resolveExecution(overrides = {}) {
       repositoryCalls.push({ method: 'expireDue', nowEpochMs });
       return repository.expireDue(nowEpochMs);
     },
-    clearForFactoryReset: () => repository.clearForFactoryReset(),
   };
   const port = {
     startRuntime: async () => ({ status: 'started', reason: null }),
@@ -1447,7 +1450,7 @@ function resolveExecution(overrides = {}) {
     commandCalls[2].nowEpochMs,
     'expireDue 与 reconcile 必须使用同一个 captured now'
   );
-  assert.equal((await repository.getById('soft-lock-clock')).status, 'released');
+  assert.equal((await readLock(database, 'soft-lock-clock')).status, 'released');
 }
 
 // ---------------------------------------------------------------------------
@@ -1475,7 +1478,7 @@ function resolveExecution(overrides = {}) {
   assert.equal(activation.status, 'activated');
   assert.equal(activation.native.start.status, 'background_start_restricted');
   assert.equal(activation.native.reconcile, null, 'start 失败后不得伪造 reconcile 成功');
-  assert.equal((await repository.getById('soft-lock-restricted')).status, 'active');
+  assert.equal((await readLock(database, 'soft-lock-restricted')).status, 'active');
   assert.deepEqual(calls.map(({ method }) => method), ['start']);
 }
 
@@ -1502,7 +1505,7 @@ function resolveExecution(overrides = {}) {
   assert.deepEqual(calls.map(({ method }) => method), ['reconcile', 'stop']);
   assert.deepEqual(calls[0].projection, []);
 
-  await repository.insert(createSoftAppLock({
+  insertLock(database, createSoftAppLock({
     id: 'soft-lock-due-startup',
     targetPackage: 'com.example.due-startup',
     source: 'manual_test',
@@ -1511,17 +1514,17 @@ function resolveExecution(overrides = {}) {
   }));
   clockMs = LATER_MS + 1;
   calls.length = 0;
-  const expired = await facade.expireDueSoftLocks();
+  const expired = await facade.reconcileDeviceControl();
   assert.deepEqual(expired.expired.map(({ id }) => id), ['soft-lock-due-startup']);
   assert.deepEqual(calls.map(({ method }) => method), ['reconcile', 'stop']);
-  assert.equal((await repository.getById('soft-lock-due-startup')).status, 'expired');
+  assert.equal((await readLock(database, 'soft-lock-due-startup')).status, 'expired');
 }
 
 {
   const database = createSoftAppLockDatabase();
   const repository = createRepository(database);
   const { port, calls, behavior } = createTestPort(database);
-  await repository.insert(createSoftAppLock({
+  insertLock(database, createSoftAppLock({
     id: 'soft-lock-startup-active',
     targetPackage: 'com.example.startup',
     source: 'manual_test',
@@ -1548,7 +1551,7 @@ function resolveExecution(overrides = {}) {
   const restricted = await facade.reconcileDeviceControl();
   assert.deepEqual(calls.map(({ method }) => method), ['start']);
   assert.equal(restricted.native.reconcile, null);
-  assert.equal((await repository.getById('soft-lock-startup-active')).status, 'active');
+  assert.equal((await readLock(database, 'soft-lock-startup-active')).status, 'active');
 }
 
 {
@@ -1574,7 +1577,7 @@ function resolveExecution(overrides = {}) {
   const database = createSoftAppLockDatabase();
   const repository = createRepository(database);
   const { port, calls, behavior } = createTestPort(database);
-  await repository.insert(createSoftAppLock({
+  insertLock(database, createSoftAppLock({
     id: 'soft-lock-race',
     targetPackage: 'com.example.race',
     source: 'ai_tool',
@@ -1606,7 +1609,7 @@ function resolveExecution(overrides = {}) {
     .filter(({ method }) => method === 'reconcile')
     .map(({ projection }) => projection.map(({ id }) => id));
   assert.deepEqual(projections, [['soft-lock-race'], []]);
-  assert.equal((await repository.getById('soft-lock-race')).status, 'released');
+  assert.equal((await readLock(database, 'soft-lock-race')).status, 'released');
 }
 
 // ---------------------------------------------------------------------------
@@ -1765,7 +1768,7 @@ function resolveExecution(overrides = {}) {
 {
   const database = createSoftAppLockDatabase();
   const repository = createRepository(database);
-  await repository.insert(createSoftAppLock({
+  insertLock(database, createSoftAppLock({
     id: 'soft-lock-reset-race',
     targetPackage: 'com.example.reset-race',
     source: 'manual_test',
@@ -1807,7 +1810,7 @@ function resolveExecution(overrides = {}) {
 {
   const database = createSoftAppLockDatabase();
   const repository = createRepository(database);
-  await repository.insert(createSoftAppLock({
+  insertLock(database, createSoftAppLock({
     id: 'soft-lock-process-expired',
     targetPackage: 'com.example.expired-after-process-loss',
     source: 'manual_test',
@@ -1827,7 +1830,7 @@ function resolveExecution(overrides = {}) {
   assert.deepEqual(startup.active, []);
   assert.deepEqual(calls.map(({ method }) => method), ['reconcile', 'stop']);
   assert.deepEqual(calls[0].projection, []);
-  assert.equal((await repository.getById('soft-lock-process-expired')).status, 'expired');
+  assert.equal((await readLock(database, 'soft-lock-process-expired')).status, 'expired');
 }
 
 // Host factory reset 不调用 SoftAppLock 专属 DELETE；既有 clearDB 的动态表清理

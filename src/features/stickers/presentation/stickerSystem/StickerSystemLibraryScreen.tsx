@@ -1,16 +1,16 @@
 /** 表情包图库：全部收藏项的浏览与基础 metadata 管理。 */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { FlatList, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemedSurface, useTheme } from '@shared/theme';
-import { EmptyState, InputField, ModalSheet, showAppDialog } from '@shared/ui';
+import { EmptyState, ImageViewerModal, InputField, ModalSheet, showAppDialog } from '@shared/ui';
 import {
   deleteStickerFromLibrary,
   editStickerMetadata,
   toggleStickerFavorite,
 } from '../../application/StickerCommands';
-import { listStickerGroups, listStickers } from '../../application/StickerQueries';
+import { listStickerGroups, listStickers, resolveStickerMedia } from '../../application/StickerQueries';
 import type { Sticker, StickerGroup } from '../../domain/Sticker';
 import { useStickerSystemStyles } from './styles';
 import { StickerAnnotationStatus } from './StickerAnnotationStatus';
@@ -34,6 +34,7 @@ export default function StickerSystemLibraryScreen() {
   const [draftTags, setDraftTags] = useState('');
   const [draftEmotion, setDraftEmotion] = useState('');
   const [showErrors, setShowErrors] = useState(false);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
   const nameError = draftName.trim() ? undefined : '请填写表情名称';
 
   const reload = useCallback(async () => {
@@ -167,13 +168,27 @@ export default function StickerSystemLibraryScreen() {
 
       <ModalSheet
         visible={editing !== null}
-        onClose={() => setEditing(null)}
+        onClose={() => { setEditing(null); setPreviewUri(null); }}
         title="编辑表情信息"
       >
         <ScrollView style={styles.editorScroll} keyboardShouldPersistTaps="handled">
           <Text style={styles.hint}>名称必填，其他信息选填。修改含义后，原向量需要更新。</Text>
           <View style={{ paddingHorizontal: theme.spacing.lg }}>
-            {editing && <StickerThumbnail sticker={editing} style={styles.preview} />}
+            {editing && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`全屏预览「${editing.name}」`}
+                style={{ width: '100%' }}
+                onPress={() => {
+                  const target = editing;
+                  void resolveStickerMedia(target.id)
+                    .then(media => setPreviewUri(media.localUri))
+                    .catch(() => showAppDialog({ title: '无法预览表情', message: '表情素材暂时不可用', tone: 'error' }));
+                }}
+              >
+                <StickerThumbnail sticker={editing} style={styles.preview} />
+              </Pressable>
+            )}
             <InputField label="名称（必填）" value={draftName} onChangeText={setDraftName} maxLength={120} error={showErrors ? nameError : undefined} />
             <InputField label="含义/描述（选填）" value={draftDescription} onChangeText={setDraftDescription} multiline autoGrow
               hint={editing?.annotationStatus !== 'ready' ? '留空仅保存其他信息；补充含义后可完成手动标注。' : undefined} />
@@ -205,6 +220,8 @@ export default function StickerSystemLibraryScreen() {
           </TouchableOpacity>
         </View>
       </ModalSheet>
+      <ImageViewerModal visible={previewUri !== null} sources={[{ uri: previewUri ?? '' }]}
+        onClose={() => setPreviewUri(null)} />
     </View>
   );
 }

@@ -2,7 +2,7 @@
 import { getAssistantDisplayName } from '@features/assistants';
 
 import React from 'react';
-import { Search } from 'lucide-react-native';
+import { Library, Search } from 'lucide-react-native';
 import { Pressable, StyleSheet, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
@@ -34,6 +34,7 @@ interface AIOptionsProps {
   onSearchMessages?: () => void;
   onCallHistory?: () => void;
   onChatStatistics?: () => void;
+  onOpenCodeLibrary?: () => void;
   onDeleteAI?: () => void | Promise<void>;
 }
 
@@ -107,6 +108,7 @@ export default function AIOptions({
   onSearchMessages,
   onCallHistory,
   onChatStatistics,
+  onOpenCodeLibrary,
   onDeleteAI,
 }: AIOptionsProps) {
   const theme = useTheme();
@@ -165,10 +167,10 @@ export default function AIOptions({
   ];
 
   const primaryMenuItems = [
-    ...(conversationId ? [{
-      key: 'search-messages', icon: <View style={styles.iconBox}><Search size={22} color={theme.colors.brand.primary} /></View>,
-      title: '搜索聊天记录', onPress: onSearchMessages,
-    }] : []),
+    {
+      key: 'code-library', icon: <View style={styles.iconBox}><Library size={22} color={theme.colors.brand.primary} /></View>,
+      title: '作品库', onPress: onOpenCodeLibrary,
+    },
     {
       key: 'protocol-space',
       icon: <ProtocolIcon color={theme.colors.brand.primary} />,
@@ -186,6 +188,10 @@ export default function AIOptions({
     ...(conversationId ? [{
       key: 'chat-statistics', icon: <StatisticsIcon color={theme.colors.brand.primary} />,
       title: '相遇痕迹', onPress: onChatStatistics,
+    }] : []),
+    ...(conversationId ? [{
+      key: 'search-messages', icon: <View style={styles.iconBox}><Search size={22} color={theme.colors.brand.primary} /></View>,
+      title: '搜索聊天记录', onPress: onSearchMessages,
     }] : []),
     {
       key: 'clear-history',

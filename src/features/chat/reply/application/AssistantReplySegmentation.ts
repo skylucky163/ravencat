@@ -1,20 +1,14 @@
-/** AI 回复的确定性分段：分段由客户端代码决定，不依赖模型输出任何格式标记。 */
+/** AI 正文与代码围栏共用确定性分段；气泡边界由客户端决定。 */
 import type { BubbleDeliveryMode } from '@shared/prompt';
-
-/** 单段达到该长度后，在下一个完整句末结束气泡，不回头移动已显示的句子。 */
-const MAX_SEGMENT_LENGTH = 100;
-
-/** 句末切分点：中英文句末标点之后允许继续切。 */
-const SENTENCE_END_PATTERN = /[。！？!?；;…]+["'”’）)]*/g;
+import { splitReplyContentBlocks } from '../../messages/domain/ChatCodeBlock';
 
 /**
  * 把模型输出的纯文本切成气泡段：
- * 1. 按空行切分为候选段；
- * 2. 候选段达到长度阈值后在句末切分；
- * 3. single-bubble 模式下整段一个气泡。
+ * 1. 代码围栏始终独立成泡，内部原样保留；
+ * 2. 普通正文只按空行分泡，不按长度或句末标点切分，避免拆开段内 Markdown；
+ * 3. single-bubble 只合并普通正文，不合并代码卡片。
  *
- * 没有句末标点可切的超长段整段保留，不做硬切：硬切会把一句话劈成两个气泡，
- * 宁可让单条气泡更长，也不输出半句话。
+ * 增量展示与最终提交保留相同段落边界，不回头移动已显示的内容。
  */
 export function segmentAssistantReplyText(
   rawText: string,
@@ -29,6 +23,17 @@ export function segmentAssistantReplyProgress(
   bubbleDeliveryMode: BubbleDeliveryMode,
   completed: boolean,
 ): { text: string; completed: boolean }[] {
+  return splitReplyContentBlocks(rawText, completed).flatMap(block => {
+    if (block.kind === 'code') return [{ text: block.text, completed: block.completed }];
+    return segmentPlainText(block.text, bubbleDeliveryMode, block.completed);
+  });
+}
+
+function segmentPlainText(
+  rawText: string,
+  bubbleDeliveryMode: BubbleDeliveryMode,
+  completed: boolean,
+): { text: string; completed: boolean }[] {
   if (bubbleDeliveryMode === 'single-bubble') {
     const text = rawText.trim();
     return text ? [{ text, completed }] : [];
@@ -37,19 +42,6 @@ export function segmentAssistantReplyProgress(
   const paragraphs = rawText.split(/\n\s*\n/);
   return paragraphs.flatMap((rawParagraph, index) => {
     const paragraph = rawParagraph.trim();
-    const paragraphCompleted = completed || index < paragraphs.length - 1;
-    const segments: { text: string; completed: boolean }[] = [];
-    let start = 0;
-    SENTENCE_END_PATTERN.lastIndex = 0;
-    for (let match = SENTENCE_END_PATTERN.exec(paragraph); match; match = SENTENCE_END_PATTERN.exec(paragraph)) {
-      const end = match.index + match[0].length;
-      if (end - start < MAX_SEGMENT_LENGTH) continue;
-      // 句末后的引号、括号和连续标点可能跨 delta；尾段等后文或终态再确认闭合。
-      segments.push({ text: paragraph.slice(start, end).trim(), completed: paragraphCompleted || end < paragraph.length });
-      start = end;
-    }
-    const tail = paragraph.slice(start).trim();
-    if (tail) segments.push({ text: tail, completed: paragraphCompleted });
-    return segments;
+    return paragraph ? [{ text: paragraph, completed: completed || index < paragraphs.length - 1 }] : [];
   });
 }

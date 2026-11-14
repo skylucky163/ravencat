@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { loadTypeScriptModule } from './helpers/load-typescript-module.mjs';
 
 const schema = loadTypeScriptModule('src/platform/persistence/sqlite/ravenCatCompanionSchema.ts');
+const timing = loadTypeScriptModule('src/features/companion/domain/AIScheduleTiming.ts');
 const db = new DatabaseSync(':memory:');
 db.exec(schema.RAVEN_CAT_AI_SCHEDULES_SCHEMA);
 let inTransaction = false, mutation = null, injectMutation = false;
@@ -26,6 +27,7 @@ const executor = {
 };
 const { SQLiteProactiveLifeReadRepository } = loadTypeScriptModule('src/features/companion/infrastructure/SQLiteProactiveLifeReadRepository.ts', {
   '@platform/persistence': { databaseCoordinator: { openTaskExecutor: () => executor } },
+  '../domain/AIScheduleTiming': timing,
 });
 const repository = new SQLiteProactiveLifeReadRepository();
 const insert = db.prepare(`INSERT INTO raven_cat_ai_schedules
@@ -89,5 +91,75 @@ proof.set('history-run',{runId:'history-run',respondedAt:null,terminalCode:'MODE
 enriched = await queries.listProactiveLifeDay({...base,limit:25});
 assert.equal(enriched.items.find(row=>row.item.sourceId==='history').item.completionDisposition,'failed');
 for (const input of [{...base,limit:0,days:[day]},{...base,days:[]}]) await assert.rejects(()=>queries.loadProactiveLifeCalendar(input));
+
+// 只保存 11 号最近一期，12 号以后也必须显示重复规则对应的安排，不创建未来任务行。
+const daily = {frequency:'daily',timeZone:'Asia/Shanghai',hour:21,minute:0};
+function localDay(key) {
+  const start=Date.parse(`${key}T00:00:00+08:00`);
+  return {key,from:new Date(start).toISOString(),until:new Date(start+86400000).toISOString()};
+}
+function repeating(id,at,recurrence,owner='repeated') {
+  add(id,at,{owner});
+  db.prepare('UPDATE raven_cat_ai_schedules SET recurrence_json=?,series_id=? WHERE schedule_id=?')
+    .run(JSON.stringify(recurrence),id,id);
+}
+const days=['2026-11-11','2026-11-12','2026-11-13'].map(localDay);
+const repeatQuery={ownerAIId:'repeated',now:'2026-11-11T02:00:00.000Z',day:days[1],days,limit:25};
+repeating('every-night','2026-11-11T13:00:00.000Z',daily);
+add('one-off','2026-11-11T14:00:00.000Z',{owner:'repeated'});
+repeating('other-owner','2026-11-11T13:00:00.000Z',daily,'other-owner');
+const beforeRows=db.prepare('SELECT COUNT(*) AS count FROM raven_cat_ai_schedules').get().count;
+let repeated=await repository.loadCalendar(repeatQuery);
+assert.deepEqual(repeated.counts.map(value=>value.count),[2,1,1]);
+assert.equal(repeated.page.items[0].item.plannedAt,'2026-11-12T13:00:00.000Z');
+assert.equal(repeated.page.items[0].item.sourceId,'every-night','后续日期仍指向可编辑和取消的真实日程');
+assert.equal(repeated.page.items[0].item.isProjected,true);
+assert.deepEqual(repeated.page.items[0].item.recurrence,daily);
+assert.equal((await repository.listDay({...repeatQuery,day:days[0]})).items.find(row=>row.item.sourceId==='every-night').item.isProjected,false);
+const far=localDay('2030-11-11');
+assert.equal((await repository.listDay({...repeatQuery,day:far})).items[0].item.plannedAt,'2030-11-11T13:00:00.000Z','直接跳到遥远日期也显示重复安排');
+assert.equal(db.prepare('SELECT COUNT(*) AS count FROM raven_cat_ai_schedules').get().count,beforeRows,'查看日历不能写入或调度未来任务');
+
+// 切换规则、结束时间和取消立即反映在未来日期；过去日期不伪造历史。
+db.prepare('UPDATE raven_cat_ai_schedules SET recurrence_json=? WHERE schedule_id=?')
+  .run(JSON.stringify({...daily,frequency:'weekly',weekdays:[3,5]}),'every-night');
+repeated=await repository.loadCalendar(repeatQuery);
+assert.deepEqual(repeated.counts.map(value=>value.count),[2,0,1]);
+db.prepare('UPDATE raven_cat_ai_schedules SET recurrence_json=? WHERE schedule_id=?')
+  .run(JSON.stringify({...daily,until:'2026-11-13T13:00:00.000Z'}),'every-night');
+assert.equal((await repository.listDay({...repeatQuery,day:localDay('2026-11-13')})).items.length,1,'重复结束时间包含最后一期');
+assert.equal((await repository.listDay({...repeatQuery,day:localDay('2026-11-14')})).items.length,0);
+assert.equal((await repository.listDay({...repeatQuery,day:localDay('2026-11-10')})).items.length,0,'不向首次安排之前或过去的空白日期补造记录');
+db.prepare("UPDATE raven_cat_ai_schedules SET status='cancelled',cancelled_at=? WHERE schedule_id=?")
+  .run(repeatQuery.now,'every-night');
+assert.equal((await repository.listDay(repeatQuery)).items.length,0,'停止重复后不再显示后续安排');
+
+// 下一期真正生成后，应展示那条实际记录，而不是与旧规则预览重复计数。
+db.prepare("UPDATE raven_cat_ai_schedules SET status='claimed',cancelled_at=NULL,claimed_at=?,claimed_by_run_id='daily-run' WHERE schedule_id=?")
+  .run('2026-11-11T13:00:00.000Z','every-night');
+repeating('next-night','2026-11-12T13:00:00.000Z',daily);
+db.prepare("UPDATE raven_cat_ai_schedules SET series_id='every-night' WHERE schedule_id='next-night'").run();
+repeated=await repository.loadCalendar({...repeatQuery,now:'2026-11-11T13:01:00.000Z'});
+assert.deepEqual(repeated.counts.map(value=>value.count),[2,1,1]);
+assert.equal(repeated.page.items[0].item.sourceId,'next-night');
+assert.equal(repeated.page.items[0].item.isProjected,false);
+
+repeating('month-end','2026-11-30T13:00:00.000Z',{...daily,frequency:'monthly',monthDay:31},'monthly');
+const monthly={...repeatQuery,ownerAIId:'monthly',day:localDay('2027-02-28')};
+assert.equal((await repository.listDay(monthly)).items[0].item.plannedAt,'2027-02-28T13:00:00.000Z');
+assert.equal((await repository.listDay({...monthly,day:localDay('2028-02-29')})).items[0].item.plannedAt,'2028-02-29T13:00:00.000Z');
+assert.equal((await repository.listDay({...monthly,day:localDay('2027-03-31')})).items.length,1,'月底缩短不改变之后月份的原始日期');
+
+// 夏令时回拨形成 25 小时本地日，同一重复规则可能有两期，分页和列表身份必须都保留。
+repeating('long-day','2026-10-31T04:30:00.000Z',{frequency:'daily',timeZone:'UTC',hour:4,minute:30},'long-day');
+const longDay={...repeatQuery,ownerAIId:'long-day',now:'2026-10-30T00:00:00.000Z',limit:1,
+  day:{key:'2026-11-01',from:'2026-11-01T04:00:00.000Z',until:'2026-11-02T05:00:00.000Z'}};
+const firstLong=await repository.loadCalendar({...longDay,days:[longDay.day]});
+assert.equal(firstLong.counts[0].count,2);
+assert.equal(firstLong.page.hasMore,true);
+const secondLong=await repository.listDay({...longDay,after:firstLong.page.nextCursor});
+assert.deepEqual([...firstLong.page.items,...secondLong.items].map(row=>row.item.plannedAt),
+  ['2026-11-01T04:30:00.000Z','2026-11-02T04:30:00.000Z']);
+assert.equal(secondLong.nextCursor,null);
 db.close();
-console.log('主动生活日历查询验证通过：日期边界、状态归属、一致快照、稳定分页与真实响应证据。');
+console.log('主动生活日历查询验证通过：重复日程预览、月底、结束与取消、无重复和无写入、日期边界、一致快照及稳定分页。');

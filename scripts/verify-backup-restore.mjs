@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 import { importTypeScriptModule } from './lib/import-typescript-module.mjs';
 
+await import('./verify-image-generation-backup.mjs');
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const modulePath = resolvePath('src/host/composition/runPendingBackupRestoreCompletion.ts');
 

@@ -1,6 +1,5 @@
 /** 消息变更在原事务内撤销重写资格；普通回复的 owner 不受手动编辑影响。 */
 import type { DatabaseTransactionExecutor } from '@platform/persistence';
-export { interruptTurnPresentationsInTransaction } from '../../reply/infrastructure/ChatTurnPresentationSql';
 
 export async function cancelRegenerationInTransaction(
   transaction: DatabaseTransactionExecutor,

@@ -92,6 +92,7 @@ const useMoments = load('src/features/moments/presentation/useMoments.ts', {
     createUserMomentLike: async momentId => { interactionCalls.push(momentId); },
   },
   '../application/MomentMediaAnalysis': { subscribeMomentMediaAnalysisUpdated: () => () => {} },
+  '../application/EditMoment': { subscribeMomentEdited: () => () => {} },
 }).default;
 let state;
 function Probe({ agentId }) { state = useMoments(agentId); return null; }
@@ -169,12 +170,13 @@ const { default: SpaceCover } = load('src/features/assistants/presentation/profi
 });
 const Header = load('src/features/moments/presentation/MomentsHeader.tsx', {
   react: React, 'react-native': nativeUI,
-  '@expo/vector-icons': { Ionicons: 'Icon' }, '@shared/ui': { UserAvatar: 'Avatar', AIAvatar: 'AIAvatar' },
+  '@expo/vector-icons': { Ionicons: 'Icon' },
+  '@shared/ui': { UserAvatar: 'Avatar', AIAvatar: 'AIAvatar', ImageViewerModal: 'ImageViewer', showAppDialog: () => {} },
   '@shared/ui/NavigationHeader': 'NavigationHeader',
   '@shared/theme': { useTheme: () => theme },
-  './MomentsCoverPreviewModal': 'CoverPreview',
   './useMomentsCover': coverController,
-  '@features/assistants': { AssistantSpaceCover: SpaceCover },
+  '@features/assistants': { AssistantSpaceCover: SpaceCover, DEFAULT_ASSISTANT_SPACE_COVER_SOURCE: 'default-stars' },
+  '@features/media': { resolveMediaAsset: async mediaAssetId => ({ localUri: `file://${mediaAssetId}` }) },
 }).default;
 // 复用 FlatList 的公开契约：元素直接渲染，组件类型通过 React 创建实例。
 function FlatList({ ListHeaderComponent, ListEmptyComponent, data }) {
@@ -238,8 +240,14 @@ assert.equal(renderer.root.findByType('AIAvatar').props.avatarUrl, 'file:///ai.j
 assert.equal(renderer.root.findAllByType('Avatar').length, 0);
 assert.equal(renderer.root.findByType('NavigationHeader').props.title, '朋友圈');
 assert.equal(renderer.root.findByType('NavigationHeader').props.onGoBack, noop);
-assert.equal(renderer.root.findAllByType('CoverPreview').length, 0, 'AI 空间封面没有用户封面编辑入口');
-assert.equal(renderer.root.findAllByType('Button').length, 0, 'AI 朋友圈不提供发布和设置按钮');
+assert.equal(renderer.root.findAllByType('ImageViewer').filter(node => node.props.visible).length, 0, '未点击封面时不显示图片预览');
+assert.equal(renderer.root.findAllByType('Button')
+  .filter(node => node.props.accessibilityLabel !== '查看封面').length, 0, 'AI 朋友圈不提供发布和设置按钮');
+await act(async () => renderer.root.findAllByType('Button')
+  .find(node => node.props.accessibilityLabel === '查看封面').props.onPress());
+const openedViewer = renderer.root.findAllByType('ImageViewer').find(node => node.props.visible);
+assert.ok(openedViewer, 'AI 空间封面点击进入共享图片预览');
+assert.equal(openedViewer.props.sources[0], 'default-stars', '默认封面同样可预览');
 timeline.moments = [];
 await act(async () => { renderer.update(React.createElement(Tab, {
   refreshRevision: 0, onBack: noop,
@@ -247,7 +255,8 @@ await act(async () => { renderer.update(React.createElement(Tab, {
 })); });
 assert.ok(renderer.root.findAllByType('Text').some(node => node.children.join('') === 'TA 还没有发布朋友圈'));
 assert.equal(typeof renderer.root.findByType(FlatList).props.onRefresh, 'function', '空列表仍可下拉刷新');
-assert.equal(renderer.root.findAllByType('Button').length, 0, '空列表不提供替 AI 发布的按钮');
+assert.equal(renderer.root.findAllByType('Button')
+  .filter(node => node.props.accessibilityLabel !== '查看封面').length, 0, '空列表不提供替 AI 发布的按钮');
 assert.equal(renderer.root.findByType('SpaceMediaImage').props.mediaAssetId, 'ai-space-cover', '朋友圈显示助手资料中的空间封面');
 assert.equal(renderer.root.findAllByType('SpaceDefaultImage').length, 0);
 assert.equal(profileReads, readsBeforeAI, 'AI 封面变更仍不读取用户封面');
@@ -276,6 +285,21 @@ const icons = load('src/features/moments/presentation/momentItem/icons.tsx', {
   react: React, '@expo/vector-icons': { Ionicons: 'Icon' }, '@shared/ui': avatars, '@shared/theme': avatarThemeApi,
 });
 const openedProfiles = [];
+const mediaManagementCalls = [];
+const MediaViewer = load('src/features/moments/presentation/MomentMediaViewerModal.tsx', {
+  react: React,
+  'react-native': { ...avatarNative, Modal: 'Modal', TextInput: 'TextInput' },
+  '@shared/ui': {
+    showAppDialog: noop,
+    // 查看器只负责容器与手势；直接渲染业务 footer，保持原有动作入口断言。
+    ImageViewerModal: ({ footer }) => (footer ? footer(0) : null),
+  },
+  '@features/media': { resolveMediaAsset: async mediaAssetId => ({ localUri: `file://${mediaAssetId}` }) },
+  '../presentationFacade': {
+    retryMomentMediaAnalysis: async id => { mediaManagementCalls.push(['retry', id]); return { success: true }; },
+    saveMomentMediaAnalysis: async (id, text) => { mediaManagementCalls.push(['save', id, text]); },
+  },
+}).default;
 const MomentItem = load('src/features/moments/presentation/MomentItem.tsx', {
   react: React, 'react-native': avatarNative, '@shared/theme': avatarThemeApi,
   '@shared/ui': { showAppDialog: noop }, '@features/profile': { SELF_USER_PROFILE_ID: 'self' },
@@ -287,13 +311,15 @@ const MomentItem = load('src/features/moments/presentation/MomentItem.tsx', {
   './momentItem/styles': { createMomentItemStyles: () => ({}) },
   './momentItem/modals': { AIManagerModal: () => null, CommentInputModal: () => null, MoreMenuModal: () => null },
   './momentActionFeedback': {}, './MomentAudienceDraft': { describeMomentVisibility: () => null },
-  './MomentMediaViewerModal': () => null,
+  './MomentMediaViewerModal': MediaViewer,
 }).default;
 for (const detail of [false, true]) {
   const item = { id: 'post', actorType: 'ai', actorId: 'agent-ai', assistantId: 'assistant-ai', userName: '同名作者',
     avatar: null, content: '正文', createdAt: '', media: [], likes: [], comments: [], locationLabel: null, audienceMode: 'all' };
   const renderItem = value => React.createElement(MomentItem, { item: value, detail });
   await act(async () => { renderer = create(renderItem(item)); });
+  await act(async () => renderer.update(renderItem({ ...item, createdAt: '2026-11-01T00:00:00.000Z', editedAt: '2026-11-02T00:00:00.000Z' })));
+  assert.ok(renderer.root.findAllByType('Text').some(node => JSON.stringify(node.props.children).includes('已编辑')), '列表和详情展示原帖编辑标记');
   assert.equal(renderer.root.findByType('Image').props.source, 101, `${detail ? '详情' : '列表'}中的 AI 使用 AI 默认头像`);
   await act(async () => renderer.root.findAllByType('Button').find(node => node.props.accessibilityLabel === '打开同名作者的个人主页').props.onPress());
   assert.equal(openedProfiles.at(-1), 'assistant-ai', '头像仍打开原作者主页');
@@ -312,4 +338,32 @@ for (const detail of [false, true]) {
   }
   await act(async () => renderer.unmount());
 }
-console.log('Moments 图片加载状态 / 首屏暂存态 / 保活封面复用与更新 / 帖子作者头像验证通过。');
+// 列表与详情打开用户或 AI 的图片，都能用同一查看器重识别和编辑描述。
+const originalAnimationFrame = globalThis.requestAnimationFrame;
+globalThis.requestAnimationFrame = callback => { callback(); return 0; };
+for (const detail of [false, true]) {
+  for (const actorType of ['user', 'ai']) {
+    let mediaUpdates = 0;
+    const media = { id: `${actorType}-media`, mediaAssetId: 'shared-image', analysisStatus: 'completed',
+      analysisText: '模型识别的原描述', analysisSource: 'model' };
+    const item = { id: `${actorType}-post`, actorType, actorId: actorType === 'user' ? 'self' : 'agent-ai',
+      userName: '作者', avatar: null, content: '带图时刻', createdAt: '', media: [media], likes: [], comments: [], audienceMode: 'all' };
+    await act(async () => { renderer = create(React.createElement(MomentItem, { item, detail, onMediaUpdated: () => { mediaUpdates++; } })); });
+    await act(async () => renderer.root.findByType('AssetImage').parent.props.onPress());
+    const action = label => renderer.root.findAllByType('Button')
+      .find(button => button.findAllByType('Text').some(text => text.children.join('') === label));
+    assert.ok(action('重新识别'), `${actorType} 发布的图片提供重新识别入口`);
+    assert.ok(action('编辑描述'), `${actorType} 发布的图片提供编辑描述入口`);
+    await act(async () => action('重新识别').props.onPress());
+    assert.deepEqual(mediaManagementCalls.at(-1), ['retry', media.id]);
+    await act(async () => action('编辑描述').props.onPress());
+    assert.equal(renderer.root.findByType('TextInput').props.value, '模型识别的原描述');
+    await act(async () => renderer.root.findByType('TextInput').props.onChangeText('用户校正后的描述'));
+    await act(async () => action('保存').props.onPress());
+    assert.deepEqual(mediaManagementCalls.at(-1), ['save', media.id, '用户校正后的描述']);
+    assert.equal(mediaUpdates, 2, '重新识别和编辑保存后都刷新所属时刻');
+    await act(async () => renderer.unmount());
+  }
+}
+globalThis.requestAnimationFrame = originalAnimationFrame;
+console.log('Moments 图片加载状态 / 首屏暂存态 / 保活封面复用与更新 / 帖子作者头像 / 用户与 AI 图片描述管理验证通过。');

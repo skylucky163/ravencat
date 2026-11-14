@@ -19,8 +19,10 @@ import type {
   AIScheduleListCursor,
   AIScheduleListPage,
   AIScheduleRepository,
+  RemoveAIScheduleCalendarInput,
 } from '../domain/AIScheduleRepository';
 import { getCompanionRuntimeDependencies } from './CompanionRuntimeDependencies';
+import { isAIScheduleRecurrence, isFollowUpInterval, nextAIScheduleTime, type AIScheduleRecurrence } from '../domain/AIScheduleTiming';
 
 export type AIScheduleApplicationErrorCode = AIScheduleCommandErrorCode
   | 'invalid_content'
@@ -47,6 +49,7 @@ export interface CreateAIScheduleInput {
   summary: string;
   details: string;
   systemCalendar?: boolean;
+  recurrence?: AIScheduleRecurrence | null;
   sourceConversationId?: string;
   sourceMessageIds?: string[];
 }
@@ -67,6 +70,7 @@ export interface UpdateAIScheduleCommand {
   summary?: string;
   details?: string;
   systemCalendar?: boolean;
+  recurrence?: AIScheduleRecurrence | null;
 }
 
 const MIN_RANGE_MS = 24 * 60 * 60 * 1_000;
@@ -76,6 +80,17 @@ const MAX_LIST_LIMIT = 50;
 
 export class AIScheduleApplication {
   constructor(private readonly dependencies: AIScheduleApplicationDependencies) {}
+
+  async removeCalendarLinks(input: RemoveAIScheduleCalendarInput): Promise<
+    AIScheduleApplicationOutcome<'updated', { scheduleIds: string[]; updatedCount: number }>
+  > {
+    if (!['schedule', 'series', 'all'].includes(input.scope)
+      || (input.scope === 'all' ? input.scheduleId !== undefined : !input.scheduleId?.trim())) {
+      return { status: 'error', code: 'invalid_content' };
+    }
+    const outcome = await this.dependencies.schedules.removeCalendarLinks(input);
+    return outcome.status === 'updated' ? outcome : { status: 'error', code: outcome.status };
+  }
 
   async create(
     input: CreateAIScheduleInput,
@@ -90,13 +105,20 @@ export class AIScheduleApplication {
     const occurredAt = this.dependencies.now().toISOString();
     const remindAt = normalizeFutureTime(input.remindAt, occurredAt);
     if (!remindAt) return { status: 'error', code: 'invalid_time' };
+    if (input.recurrence && !isAIScheduleRecurrence(input.recurrence)) return { status: 'error', code: 'invalid_time' };
+    if (input.recurrence && nextAIScheduleTime(input.recurrence, new Date(Date.parse(remindAt) - 1).toISOString()) !== remindAt) {
+      return { status: 'error', code: 'invalid_time' };
+    }
+    const scheduleId = this.dependencies.generateScheduleId();
     const schedule = createAISchedule({
-      scheduleId: this.dependencies.generateScheduleId(),
+      scheduleId,
       ownerAIId: input.ownerAIId,
       remindAt,
       summary: content.summary,
       details: content.details,
       systemCalendar: input.systemCalendar ?? false,
+      recurrence: input.recurrence ?? null,
+      seriesId: input.recurrence ? scheduleId : null,
       sourceConversationId: source?.conversationId ?? null,
       sourceMessageIds: source?.messageIds ?? null,
       sourceExcerpt: source?.excerpt ?? null,
@@ -163,12 +185,15 @@ export class AIScheduleApplication {
     input: UpdateAIScheduleCommand,
   ): Promise<AIScheduleApplicationOutcome<'updated', { schedule: AISchedule }>> {
     const occurredAt = this.dependencies.now().toISOString();
-    if (input.remindAt === undefined && input.summary === undefined && input.details === undefined && input.systemCalendar === undefined) {
+    if (input.remindAt === undefined && input.summary === undefined && input.details === undefined && input.systemCalendar === undefined && input.recurrence === undefined) {
       return { status: 'error', code: 'invalid_content' };
     }
+    if (input.recurrence && !isAIScheduleRecurrence(input.recurrence)) return { status: 'error', code: 'invalid_time' };
     const remindAt = input.remindAt === undefined
-      ? undefined
+      ? input.recurrence ? nextAIScheduleTime(input.recurrence, occurredAt) : undefined
       : normalizeFutureTime(input.remindAt, occurredAt);
+    if (input.recurrence && (!remindAt || nextAIScheduleTime(input.recurrence,
+      new Date(Date.parse(remindAt) - 1).toISOString()) !== remindAt)) return { status: 'error', code: 'invalid_time' };
     if (input.remindAt !== undefined && !remindAt) {
       return { status: 'error', code: 'invalid_time' };
     }
@@ -192,6 +217,7 @@ export class AIScheduleApplication {
       summary: summary ?? undefined,
       details: details ?? undefined,
       systemCalendar: input.systemCalendar,
+      recurrence: input.recurrence,
     });
     return outcome.status === 'updated'
       ? { status: 'updated', schedule: outcome.schedule }
@@ -218,6 +244,7 @@ export class AIScheduleApplication {
     claimedAt: string;
     expectedRemindAt: string;
     projectionToken: string;
+    conversationId: string;
   }): Promise<AIScheduleApplicationOutcome<'claimed', { schedule: AISchedule }>> {
     if (!isAbsoluteTime(input.claimedAt) || !isAbsoluteTime(input.expectedRemindAt)) {
       return { status: 'error', code: 'invalid_time' };
@@ -238,6 +265,7 @@ export class AIScheduleApplication {
     consumedAt: string;
     completionDisposition: AIScheduleCompletionDisposition;
     failureCode?: string;
+    firstVisibleAt?: string | null;
   }): Promise<AIScheduleApplicationOutcome<'consumed', { schedule: AISchedule }>> {
     if (!isAbsoluteTime(input.consumedAt)) return { status: 'error', code: 'invalid_time' };
     const outcome = await this.dependencies.schedules.consumeClaimed({
@@ -344,6 +372,7 @@ export const getAIScheduleQuery = (input: { scheduleId: string; ownerAIId: strin
   aiScheduleApplication.get(input)
 );
 export const updateAIScheduleCommand = (input: UpdateAIScheduleCommand) => aiScheduleApplication.update(input);
+export const removeAIScheduleCalendarLinksCommand = (input: RemoveAIScheduleCalendarInput) => aiScheduleApplication.removeCalendarLinks(input);
 export const cancelAIScheduleCommand = (input: { scheduleId: string; ownerAIId: string }) => (
   aiScheduleApplication.cancel(input)
 );
@@ -354,6 +383,7 @@ export const claimAIScheduleCommand = (input: {
   claimedAt: string;
   expectedRemindAt: string;
   projectionToken: string;
+  conversationId: string;
 }) => aiScheduleApplication.claim(input);
 export const consumeAIScheduleCommand = (input: {
   scheduleId: string;
@@ -361,4 +391,11 @@ export const consumeAIScheduleCommand = (input: {
   consumedAt: string;
   completionDisposition: AIScheduleCompletionDisposition;
   failureCode?: string;
+  firstVisibleAt?: string | null;
 }) => aiScheduleApplication.consume(input);
+
+export async function setAIScheduleFollowUpInterval(input: { scheduleId: string; ownerAIId: string; runId: string; minutes: number }) {
+  if (!isFollowUpInterval(input.minutes)) return { status: 'error' as const, code: 'invalid_time' as const };
+  const result = await getCompanionRuntimeDependencies().repositories.aiSchedules.setNextFollowUpInterval(input);
+  return result.status === 'updated' ? result : { status: 'error' as const, code: result.status };
+}

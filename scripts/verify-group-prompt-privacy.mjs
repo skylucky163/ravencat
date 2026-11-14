@@ -79,6 +79,7 @@ const { PromptHistoryBuilder } = loadTypeScriptModule(
   {
     '@shared/prompt': loadTypeScriptModule('src/shared/prompt/messageTimestamp.ts', {}),
     '@features/chat': {
+      ...loadTypeScriptModule('src/features/chat/messages/domain/ChatCodeBlock.ts'),
       getChatSummaryContext: async () => ({
         settings: { generationEnabled: false, fixedMessageId: null }, contextSegments: [],
         raw: globalThis.__GROUP_PROMPT_TIMELINE__.map((message) => {

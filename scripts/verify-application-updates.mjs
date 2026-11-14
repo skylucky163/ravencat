@@ -260,7 +260,7 @@ globalThis.__DEV__ = false;
 let checkButtonPresses = 0;
 const { ProfileContent } = load('src/features/profile/presentation/ProfileContent.tsx', {
   'react-native': { Text: 'Text', TouchableOpacity: 'TouchableOpacity', View: 'View' },
-  'lucide-react-native': { ArchiveRestore: 'Icon', RefreshCw: 'Icon', Star: 'Icon', Trash2: 'Icon', UserRound: 'Icon' },
+  'lucide-react-native': { Database: 'Icon', RefreshCw: 'Icon', Star: 'Icon', UserRound: 'Icon' },
   '@shared/ui': { UserAvatar: 'Avatar' },
   '@shared/theme': { ThemedSurface: 'Surface', useTheme: () => ({ colors: { feedback: { error: '#f00' }, text: { primary: '#333' } } }) },
   '@platform/device/DeviceStatus': { getInstalledApplicationInfo: () => ({ name: 'RavenCat', version: '2.0.0', buildNumber: '123' }) },
@@ -268,7 +268,7 @@ const { ProfileContent } = load('src/features/profile/presentation/ProfileConten
   './ProfileTab.styles': { createProfileStyles: () => ({}) },
 });
 const profileProps = { profile: { name: '测试用户' }, hasLoadedProfile: false,
-  onOpenProfile() {}, onOpenFavorites() {}, onBackupPress() {}, onClearAllData() {}, onCheckUpdates() { checkButtonPresses++; },
+  onOpenProfile() {}, onOpenFavorites() {}, onOpenDataManagement() {}, onCheckUpdates() { checkButtonPresses++; },
   checkingUpdates: false, availableUpdateVersion: '2.1.0', updateProgress: null, updateDownloaded: false };
 await renderer.act(async () => { mounted = renderer.create(React.createElement(ProfileContent, profileProps)); });
 const updateMenuItem = () => mounted.root.findAllByType('TouchableOpacity')

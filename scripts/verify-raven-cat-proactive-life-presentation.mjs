@@ -33,6 +33,16 @@ assert.equal(vm.formatProactiveLifeFullDateTime(local.toISOString()),'2026年11�
 assert.equal(vm.canCancelAISchedule({status:'scheduled',remindAt:'2026-11-02T00:00:00Z'},new Date('2026-11-01T00:00:00Z')),true);
 assert.equal(vm.canCancelAISchedule({status:'consumed',remindAt:'2026-11-02T00:00:00Z'},new Date('2026-11-01T00:00:00Z')),false);
 assert.notEqual(vm.resolveAIScheduleCommandErrorMessage('already_past'),vm.resolveAIScheduleCommandErrorMessage('not_found'));
+const dailyRecurrence={frequency:'daily',timeZone:'Asia/Shanghai',hour:21,minute:0};
+assert.equal(vm.proactiveLifeRecurrenceLabel(dailyRecurrence),'每天重复');
+assert.equal(vm.proactiveLifeRecurrenceLabel({...dailyRecurrence,frequency:'weekly',weekdays:[1,3]}),'每周一、三重复');
+assert.equal(vm.proactiveLifeRecurrenceLabel({...dailyRecurrence,frequency:'monthly',monthDay:31}),'每月 31 号重复');
+const firstProjected={kind:'future',item:{sourceType:'ai_schedule',ownerAIId:'owner',sourceId:'same-rule',seriesId:'repeat-series',
+  plannedAt:'2026-11-01T04:30:00.000Z',summary:'重复日程',recurrence:dailyRecurrence,isProjected:true}};
+const secondProjected={...firstProjected,item:{...firstProjected.item,plannedAt:'2026-11-02T04:30:00.000Z'}};
+assert.notEqual(vm.proactiveLifeCalendarItemKey(firstProjected),vm.proactiveLifeCalendarItemKey(secondProjected),'同一规则的不同期次不能共用列表身份');
+assert.equal(vm.proactiveLifeCalendarItemKey(firstProjected),vm.proactiveLifeCalendarItemKey({kind:'future',item:{...firstProjected.item,sourceId:'next-real',isProjected:false}}),
+  '实际生成同一期次后，列表身份保持不变');
 
 const originalTZ=process.env.TZ;
 process.env.TZ='America/New_York';
@@ -152,10 +162,12 @@ await act(async()=>{renderer.unmount();});
 assert.equal(activeLoops.size,0,'离开页面不留下装饰动画');
 
 const pending=[];
+let morePage={items:[],nextCursor:null};
 const {default:useCalendar}=loadUI('src/features/companion/presentation/useProactiveLifeCalendar.ts',{
   '../application/CompanionSettingsFacade':{loadCompanionProductState:async()=>({hostAI:{id:'owner'},state:{desiredEnabled:true}})},
-  '../application/ProactiveLifeReadQueries':{loadProactiveLifeCalendar:input=>new Promise(resolve=>pending.push({input,resolve})),listProactiveLifeDay:async()=>({items:[],nextCursor:null})},
+  '../application/ProactiveLifeReadQueries':{loadProactiveLifeCalendar:input=>new Promise(resolve=>pending.push({input,resolve})),listProactiveLifeDay:async()=>morePage},
   './proactiveLifeCalendar':calendar,
+  './proactiveLifeViewModel':vm,
 });
 let reading;
 function Harness({selected,active=true}){reading=useCalendar(selected,active);return null;}
@@ -164,8 +176,11 @@ await act(async()=>{renderer.update(React.createElement(Harness,{selected:day+1}
 const old=pending.find(request=>request.input.day.key===calendar.calendarDayKey(day));
 const current=pending.find(request=>request.input.day.key===calendar.calendarDayKey(day+1));
 const result={counts:[],page:{items:[],nextCursor:null}};
-await act(async()=>{current.resolve(result);});
+await act(async()=>{current.resolve({counts:[],page:{items:[firstProjected],nextCursor:{rank:1,at:firstProjected.item.plannedAt,sourceId:'same-rule'}}});});
 assert.equal(reading.snapshot.day,day+1);
+morePage={items:[secondProjected],nextCursor:null};
+await act(async()=>{await reading.loadMore();});
+assert.equal(reading.snapshot.items.length,2,'分页合并不能吞掉相同规则在另一时刻的期次');
 await act(async()=>{old.resolve(result);});
 assert.equal(reading.snapshot.day,day+1,'迟到的旧日期不能覆盖当前日期');
 await act(async()=>{renderer.update(React.createElement(Harness,{selected:day+2}));});
@@ -182,7 +197,7 @@ const ScreenNative={
   ActivityIndicator:'ActivityIndicator',Pressable:'Pressable',RefreshControl:'RefreshControl',Text:'Text',View:'View',
   AppState:{currentState:'active',addEventListener:(event,listener)=>{appStateListener=listener;return{remove(){}};}},
   StyleSheet:{absoluteFill:{position:'absolute',inset:0}},
-  FlatList:props=>React.createElement('FlatList',props,props.ListHeaderComponent,...props.data.map((item,index)=>React.createElement(React.Fragment,{key:item.item.sourceId},props.renderItem({item,index}))),props.ListFooterComponent),
+  FlatList:props=>React.createElement('FlatList',props,props.ListHeaderComponent,...props.data.map((item,index)=>React.createElement(React.Fragment,{key:props.keyExtractor(item,index)},props.renderItem({item,index}))),props.ListFooterComponent),
 };
 const {default:Screen}=loadUI('src/features/companion/presentation/ProactiveLifeScreen.tsx',{
   'react-native':ScreenNative,'react-native-safe-area-context':{SafeAreaView:'SafeAreaView',useSafeAreaInsets:()=>({bottom:0})},
@@ -194,12 +209,13 @@ const {default:Screen}=loadUI('src/features/companion/presentation/ProactiveLife
   '@shared/ui/space':{GalaxyBackground:'GalaxyBackground',ShootingStars:'ShootingStars'},
   './proactiveLifeCalendar':calendar,'./proactiveLifeViewModel':vm,'./ProactiveLifeScreen.styles':{},
   './ProactiveLifeCalendarArc':{default:'CalendarArc'},'./AIScheduleDetailContent':{default:'ScheduleDetail'},
-  './useProactiveLifeCalendar':{default:()=>({snapshot:{ownerAIId:'owner',enabled:true,items:[{kind:'future',item:{sourceId:'schedule',plannedAt:'2026-11-01T20:30:00Z',summary:'测试日程'}}],cursor:null},counts:[],loading:false,loadingMore:false,error:null,refresh(){},loadMore(){}})},
+  './useProactiveLifeCalendar':{default:()=>({snapshot:{ownerAIId:'owner',enabled:true,items:[firstProjected],cursor:null},counts:[],loading:false,loadingMore:false,error:null,refresh(){},loadMore(){}})},
 });
 try{
   await act(async()=>{renderer=create(React.createElement(Screen,{onBack(){}}));});
   await act(async()=>{renderer.root.findAllByType('View').find(node=>node.props.onLayout).props.onLayout({nativeEvent:{layout:{width:400,height:800}}});});
   const source=renderer.root.findByType('GlassBackdrop');
+  assert.ok(renderer.root.findAllByType('Text').some(node=>node.props.children==='每天重复'),'首页重点日程也展示重复提示');
   source.findByType('GalaxyBackground');
   assert.equal(source.findAllByType('Text').length,0,'背景采样源不包含任何页面正文');
   const arcGroup=renderer.root.findAllByType('View').find(node=>node.children.some(child=>child.type==='CalendarArc'));
@@ -223,9 +239,50 @@ try{
   await act(async()=>{renderer.root.findByType('ModalSheet').props.onClose();});
   await act(async()=>{renderer.root.findAllByType('Pressable').find(node=>node.props.accessibilityLabel?.includes('查看日程详情')).props.onPress();});
   assert.equal(renderer.root.findByType('ModalSheet').props.title,'日程');
+  assert.equal(renderer.root.findByType('ScheduleDetail').props.scheduleId,firstProjected.item.sourceId);
+  assert.equal(renderer.root.findByType('ScheduleDetail').props.occurrenceAt,firstProjected.item.plannedAt,'打开后续日期时携带所选期次时间');
   assert.equal(source.findAllByType('ScheduleDetail').length,0);
   await act(async()=>{renderer.root.findByType('ModalSheet').props.onClose();appStateListener('background');});
   assert.equal(renderer.root.findByType('ShootingStars').props.active,false,'应用进入后台后停止流星');
+}finally{await act(async()=>{renderer.unmount();});}
+
+// 后续日期的详情展示所选期次，编辑和停止仍操作真实系列，不制造新的日程身份。
+const actualAt=new Date(Date.now()+86400000).toISOString();
+const previewAt=new Date(Date.now()+3*86400000).toISOString();
+const actualSchedule={scheduleId:'real-next',ownerAIId:'owner',remindAt:actualAt,createdAt:actualAt,
+  claimedAt:null,summary:'每晚来找你',details:'每晚来找你',triggerKind:'scheduled',status:'scheduled',recurrence:dailyRecurrence,systemCalendar:true};
+let detailClosed=0,detailRefreshed=0;
+const calendarRemovals=[];let calendarRemovalStatus='synced';
+const {default:ScheduleDetail}=loadUI('src/features/companion/presentation/AIScheduleDetailContent.tsx',{
+  'react-native':{ActivityIndicator:'ActivityIndicator',ScrollView:'ScrollView',Text:'Text',View:'View'},
+  '@shared/theme':{useTheme:()=>({colors:{brand:{primary:'#fff'}}}),useThemedStyles:()=>({})},
+  '@shared/ui':{Button:'Button',showAppDialog(){throw new Error('只打开详情不应发起取消');}},
+  '../application':{getAISchedule:async()=>({status:'found',schedule:actualSchedule}),removeAIScheduleCalendarEvents:async input=>{
+    calendarRemovals.push(input);actualSchedule.systemCalendar=false;
+    return {status:'updated',calendar:calendarRemovalStatus};
+  }},
+  './proactiveLifeViewModel':vm,'./AIScheduleDetail.styles':{},'./AIScheduleRecurrenceEditor':{AIScheduleRecurrenceEditor:'RecurrenceEditor'},
+});
+try{
+  await act(async()=>{renderer=create(React.createElement(ScheduleDetail,{scheduleId:'real-next',ownerAIId:'owner',occurrenceAt:previewAt,onClose:()=>detailClosed++,onCancelled:()=>detailRefreshed++}));});
+  const displayed=renderer.root.findAllByType('Text').map(node=>node.children.join(''));
+  assert.ok(displayed.includes(`计划时间：${vm.formatProactiveLifeFullDateTime(previewAt)}`));
+  assert.ok(displayed.some(text=>text.includes(vm.formatProactiveLifeFullDateTime(actualAt))&&text.includes('最近一次安排')));
+  assert.equal(renderer.root.findByType('RecurrenceEditor').props.schedule.scheduleId,'real-next');
+  await act(async()=>{renderer.root.findAllByType('Button').find(node=>node.props.title==='移除系统日历提醒，保留应用内日程').props.onPress();});
+  assert.deepEqual(calendarRemovals,[{ownerAIId:'owner',scope:'series',scheduleId:'real-next'}]);
+  assert.equal(renderer.root.findByType('RecurrenceEditor').props.schedule.status,'scheduled','移除日历不取消应用内日程');
+  await act(async()=>{renderer.root.findByType('RecurrenceEditor').props.onSaved(actualSchedule);});
+  assert.equal(detailRefreshed,2);assert.equal(detailClosed,1,'编辑规则后关闭已失效的后续日期预览');
+  actualSchedule.claimedAt=actualAt;actualSchedule.status='consumed';actualSchedule.systemCalendar=true;
+  await act(async()=>{renderer.update(React.createElement(ScheduleDetail,{key:'rolled',scheduleId:'real-next',ownerAIId:'owner',occurrenceAt:previewAt,onClose(){},onCancelled(){}}));});
+  assert.ok(renderer.root.findAllByType('Text').some(node=>node.children.join('')==='实际开始时间：尚未开始'),
+    '打开预览时原最近一期已开始，也不能把它的开始时间冒充成未来期次的执行');
+  calendarRemovalStatus='permission_required';
+  await act(async()=>{renderer.root.findAllByType('Button').find(node=>node.props.title==='移除系统日历提醒，保留应用内日程').props.onPress();});
+  assert.equal(calendarRemovals.length,2,'历史日程也能独立移除系统事件');
+  assert.equal(actualSchedule.status,'consumed');
+  assert.ok(renderer.root.findAllByType('Text').some(node=>node.children.join('').includes('旧系统事件尚未全部移除')),'缺权限明确显示尚未移除，不误报系统清理完成');
 }finally{await act(async()=>{renderer.unmount();});}
 
 // 共享流星最多一个；暂停既清除下一次生成，也取消当前飞行。

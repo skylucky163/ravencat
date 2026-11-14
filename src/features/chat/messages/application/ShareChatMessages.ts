@@ -77,7 +77,7 @@ export async function createChatShareSnapshot(source: { sessionId: string; name:
       buildReplyQuoteModelText(message),
       `${getMessageVoice(message) ? '[语音转写]\n' : ''}${buildGroupMentionModelText(message.text, message, publicMembers)}`,
     ].filter(Boolean).join('\n');
-    const attachments = getMessageAttachments(message).map((attachment) => ({ ...attachment, id: `share:${message.id}:${attachment.id}` }));
+    const attachments = getMessageAttachments(message);
     const sticker = getMessageSticker(message);
     const moment = getMessageSharedMoment(message);
     if (text.trim() || attachments.length || sticker || moment) entries.push({ author, createdAt: message.createdAt, kind: isTool ? 'tool_status' : 'speech', text, modelText, attachments, sticker, ...(moment ? { moment } : {}) });

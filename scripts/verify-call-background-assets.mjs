@@ -56,6 +56,7 @@ db.exec(`
 db.exec(load('src/platform/persistence/sqlite/callHistorySchema.ts').CALL_HISTORY_SCHEMA);
 db.exec(load('src/platform/persistence/sqlite/callRingtoneSchema.ts').CALL_RINGTONE_SELECTION_SCHEMA);
 db.exec(load('src/platform/persistence/sqlite/chatReplyVersionSchema.ts').CHAT_REPLY_VERSIONS_SCHEMA);
+db.exec(load('src/platform/persistence/sqlite/aiImageSchema.ts').AI_GENERATED_IMAGES_SCHEMA);
 const executor = {
   execAsync: async (sql) => db.exec(sql),
   getFirstAsync: async (sql, params = []) => db.prepare(sql).get(...params) ?? null,
@@ -360,15 +361,22 @@ assert.equal(settings.has(legacyKey), false);
 
 const gatewayModule = load('src/features/backup/infrastructure/ApplicationBackupSourceGateway.ts', {
   '@platform/persistence': {},
+  '@platform/ai': {},
   '@platform/device': { PERSISTENT_IMAGE_CATEGORY: { wallpaper: 'wallpaper' }, getPersistentImageCategoryPrefix: () => 'wallpapers/', persistentMediaStore: {} },
-  '@platform/device/DeviceMediaService': { getPersistentImageInfoInRoot: async (mediaRoot, key) => ({ exists: mediaRoot === 'file:///staging', isDirectory: false, size: 5 }) },
+  '@platform/device/DeviceMediaService': {
+    PERSISTENT_IMAGE_CATEGORY: { chatCodeCover: 'chatCodeCover' }, getPersistentImageCategoryPrefix: () => 'covers/chat-code/',
+    getPersistentImageInfoInRoot: async (mediaRoot) => ({ exists: mediaRoot === 'file:///staging', isDirectory: false, size: 5 }),
+  },
   '@features/media': { MEDIA_ASSET_STORAGE_BACKEND },
   '@shared/theme': { parseStoredThemeBackupState: value => value },
   '../../../../modules/ravencat-floating-layer': { validateBubbleSkinBackupSettings: async () => {} },
   './stableSettingsBackupState': load('src/features/backup/infrastructure/stableSettingsBackupState.ts'),
 });
 const reads = [];
-const gateway = new gatewayModule.ApplicationBackupSourceGateway({ readMediaInventory: async (uri) => { reads.push(uri); return inventory; } });
+const gateway = new gatewayModule.ApplicationBackupSourceGateway({
+  readMediaInventory: async (uri) => { reads.push(uri); return inventory; },
+  readChatCodeCoverFiles: async () => [],
+});
 const stable = JSON.stringify({ schemaVersion: load('src/features/backup/infrastructure/stableSettingsBackupState.ts').STABLE_SETTINGS_BACKUP_SCHEMA_VERSION, legacyMediaRootUri: 'file:///source/persistent-media/', theme: {}, bubbleSkins: {} });
 await gateway.validateStableSettingsJson(stable, 'file:///skins', 'file:///staging', 'file:///incoming.db');
 assert.deepEqual(reads, ['file:///incoming.db'], 'preflight 读取 incoming 数据库，不能读活动库');
@@ -529,14 +537,14 @@ assert.equal(await covers.clearLegacyCachedMomentsCover(profileRepository), fals
 
 db.close();
 
-// 真实备份页修复入口需要明确确认，完成后刷新显示并报告结果，不自动创建备份。
+// 真实备份面板修复入口需要明确确认，完成后刷新显示并报告结果，不自动创建备份。
 const dialogs = [];
 let clears = 0;
 let refreshes = 0;
 let clearResult = { callBackground: true, wallpapers: 2, momentsCover: false };
 let clearError = null;
 const jsx = (type, props) => ({ type, props });
-const { BackupScreen } = load('src/features/backup/presentation/BackupScreen.tsx', {
+const { BackupPanel } = load('src/features/backup/presentation/BackupPanel.tsx', {
   '@shared/ui': { showAppDialog: (dialog) => dialogs.push(dialog) },
   react: { useCallback: (fn) => fn, useEffect() {}, useMemo: (fn) => fn(), useState: (value) => [value, () => {}] },
   'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
@@ -548,13 +556,13 @@ const { BackupScreen } = load('src/features/backup/presentation/BackupScreen.tsx
     useTheme: () => ({ colors: { brand: { primary: 'blue' }, text: { secondary: 'grey' } } }),
     useWallpaper: () => ({ refreshWallpapers: async () => { refreshes++; } }),
   },
-  '@shared/ui/NavigationHeader': { default: 'NavigationHeader' },
+  '@shared/ui/NavigationHeaderHelp': { default: 'NavigationHeaderHelp' },
   '../application/BackupTargetCatalog': { BACKUP_TARGET_CATALOG: [{ title: '本地', description: '下载' }] },
   './BackupRestoreModal': { BackupRestoreModal: 'BackupRestoreModal' },
-  './BackupScreen.styles': { createBackupScreenStyles: () => ({}) },
+  './BackupPanel.styles': { createBackupPanelStyles: () => ({}) },
 });
-const backupPage = BackupScreen({
-  onBack() {},
+const backupPage = BackupPanel({
+  disabled: false, onBusyChange() {},
   runtime: {
     async clearLegacyCachedImageSelections() {
       clears++;

@@ -1,3 +1,4 @@
+import { chatCodeBlockModuleUrl, chatCodePreviewRepositoryModuleUrl } from './chat-timeline-fixture.mjs';
 import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /**
@@ -128,7 +129,7 @@ async function importMessageRepository(db) {
   const metadataUrl = transpileToModuleUrl(read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`)
     .replaceAll("from './ChatSticker'", `from '${transpileToModuleUrl(read('src/features/chat/messages/domain/ChatSticker.ts'))}'`)
     .replaceAll("from './SharedChatRecord'", `from '${sharedChatRecordModuleUrl}'`));
-  const source = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`)
+  const source = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from '../domain/ChatCodeBlock'", `from '${chatCodeBlockModuleUrl}'`).replaceAll("from './SQLiteChatCodePreviewRepository'", `from '${chatCodePreviewRepositoryModuleUrl}'`).replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`)
     .replace("from '../domain/chatMessageMetadata'", `from '${metadataUrl}'`);
   const output = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },

@@ -2,11 +2,11 @@
 import React, { useMemo, useState } from 'react';
 import { ImageBackground, StyleSheet, Text, TouchableOpacity, View, type ImageSourcePropType } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { AIAvatar, UserAvatar } from '@shared/ui';
+import { AIAvatar, ImageViewerModal, UserAvatar, showAppDialog } from '@shared/ui';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import { GlassSurface, useTheme, type PresentationTheme } from '@shared/theme';
-import { AssistantSpaceCover } from '@features/assistants';
-import MomentsCoverPreviewModal from './MomentsCoverPreviewModal';
+import { AssistantSpaceCover, DEFAULT_ASSISTANT_SPACE_COVER_SOURCE } from '@features/assistants';
+import { resolveMediaAsset } from '@features/media';
 import { useMomentsCover } from './useMomentsCover';
 import type { MomentProfileAssistant } from './MomentsTab';
 
@@ -37,18 +37,16 @@ function createStyles(theme: PresentationTheme) {
 type CoverProps = {
   name: string;
   avatar: string | null;
+  onPress?: () => void;
+  onError?: () => void;
 } & ({
   isAI: true;
   mediaAssetId: string | null;
   source?: never;
-  onPress?: never;
-  onError?: never;
 } | {
   isAI?: false;
   mediaAssetId?: never;
   source: ImageSourcePropType;
-  onPress?: () => void;
-  onError?: () => void;
 });
 
 function MomentsCover({ source, name, avatar, isAI, mediaAssetId, onPress, onError }: CoverProps) {
@@ -71,7 +69,12 @@ function MomentsCover({ source, name, avatar, isAI, mediaAssetId, onPress, onErr
       {userInfo}
     </ImageBackground>;
   return <View style={styles.coverContainer}>
-    {onPress ? <TouchableOpacity style={styles.coverTouchable} onPress={onPress} activeOpacity={0.95}>{image}</TouchableOpacity> : image}
+    {onPress ? (
+      <TouchableOpacity style={styles.coverTouchable} onPress={onPress} activeOpacity={0.95}
+        accessibilityRole="button" accessibilityLabel="查看封面">
+        {image}
+      </TouchableOpacity>
+    ) : image}
   </View>;
 }
 
@@ -94,20 +97,33 @@ function UserMomentsHeader({ onCameraPress, onSettingsPress }: MomentsHeaderProp
     <NavigationHeader title="时刻" rightButton={rightButton} includeTopInset={theme.effects.glass.enabled} />
     <MomentsCover source={cover.coverSource} name={cover.currentUser.name} avatar={cover.currentUser.avatar}
       onPress={() => setPreviewVisible(true)} onError={cover.handleCoverError} />
-    <MomentsCoverPreviewModal visible={previewVisible} coverSource={cover.coverSource}
-      hasCustomCover={cover.hasCustomCover} isUpdating={cover.isUpdatingCover}
-      onClose={() => setPreviewVisible(false)}
-      onPickCover={() => { setPreviewVisible(false); void cover.pickCover(); }}
-      onResetCover={() => { setPreviewVisible(false); void cover.resetCover(); }} />
+    {/* 封面更换与恢复只在时刻设置里维护，首页封面点击就是纯看图。 */}
+    <ImageViewerModal visible={previewVisible} sources={[cover.coverSource]}
+      onClose={() => setPreviewVisible(false)} />
+  </View>;
+}
+
+function AssistantMomentsHeader({ assistant, onBack }: { assistant: MomentProfileAssistant; onBack?: () => void }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const [preview, setPreview] = useState<ImageSourcePropType | null>(null);
+  const openCover = () => {
+    const mediaAssetId = assistant.profileCoverMediaAssetId;
+    if (mediaAssetId === null) { setPreview(DEFAULT_ASSISTANT_SPACE_COVER_SOURCE); return; }
+    void resolveMediaAsset(mediaAssetId)
+      .then(resolved => setPreview({ uri: resolved.localUri }))
+      .catch(() => showAppDialog({ title: '无法预览封面', message: '封面图片暂时不可用', tone: 'error' }));
+  };
+  return <View style={styles.container}>
+    <NavigationHeader title="朋友圈" onGoBack={onBack} includeTopInset={theme.effects.glass.enabled} />
+    <MomentsCover mediaAssetId={assistant.profileCoverMediaAssetId} name={assistant.name} avatar={assistant.avatar}
+      isAI onPress={openCover} />
+    <ImageViewerModal visible={preview !== null} sources={[preview]}
+      onClose={() => setPreview(null)} />
   </View>;
 }
 
 export default function MomentsHeader({ assistant, onBack, ...props }: MomentsHeaderProps) {
-  const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
   if (!assistant) return <UserMomentsHeader {...props} />;
-  return <View style={styles.container}>
-    <NavigationHeader title="朋友圈" onGoBack={onBack} includeTopInset={theme.effects.glass.enabled} />
-    <MomentsCover mediaAssetId={assistant.profileCoverMediaAssetId} name={assistant.name} avatar={assistant.avatar} isAI />
-  </View>;
+  return <AssistantMomentsHeader assistant={assistant} onBack={onBack} />;
 }

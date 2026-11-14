@@ -251,11 +251,6 @@ assert.equal(
   false,
   'AI create 第一版不得暴露 locationLabel',
 );
-assert.equal(
-  Object.hasOwn(createTool.definition.parameters.properties, 'mediaAssetIds'),
-  false,
-  'AI create 第一版不得暴露 mediaAssetIds',
-);
 assert.doesNotMatch(
   read('src/features/moments/presentation/MomentsTab.tsx'),
   /triggerAIAutoInteraction|triggerAIReplyToMomentComment/,

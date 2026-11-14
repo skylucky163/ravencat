@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { loadTypeScriptModule } from './helpers/load-typescript-module.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mode = process.argv[2];
@@ -48,9 +49,9 @@ async function verifyLocale() {
 }
 
 async function verifyChatEnvelope() {
-  const segmentation = await importTypeScript(
-    'src/features/chat/reply/application/AssistantReplySegmentation.ts'
-  );
+  const segmentation = loadTypeScriptModule('src/features/chat/reply/application/AssistantReplySegmentation.ts', {
+    '../../messages/domain/ChatCodeBlock': loadTypeScriptModule('src/features/chat/messages/domain/ChatCodeBlock.ts'),
+  });
 
   assert.deepEqual(
     segmentation.segmentAssistantReplyText('   ', 'multi-bubble'),
@@ -71,13 +72,23 @@ async function verifyChatEnvelope() {
     'multi-bubble 必须按空行切分为独立气泡片段'
   );
   const longParagraph = Array.from({ length: 20 }, (_, index) => `这是第${index + 1}句足够长的话。`).join('');
-  const sentenceSegments = segmentation.segmentAssistantReplyText(longParagraph, 'multi-bubble');
-  assert.ok(sentenceSegments.length > 1, '超过 100 字符的单段必须按句末标点二次切分');
-  assert.ok(
-    sentenceSegments.slice(0, -1).every((segment) => segment.length >= 100 && /[。！？!?；;…]["'”’）)]*$/.test(segment)),
-    '长段达到阈值后在完整句末闭合，不回头挪动已经显示的句子'
+  assert.deepEqual(
+    segmentation.segmentAssistantReplyText(longParagraph, 'multi-bubble'),
+    [longParagraph],
+    '有句末标点的长段也必须整段保留，不按字数二次切分'
   );
-  assert.equal(sentenceSegments.join(''), longParagraph, '二次切分不得丢失正文');
+  const longMarkdown = '长'.repeat(90) + '**我真的觉得很奇怪。**你知道为什么嘛？'
+    + '这是**另一个加粗；还有省略号……**以及 `行内代码！` 和 [链接？](https://example.com)。';
+  assert.deepEqual(
+    segmentation.segmentAssistantReplyText(longMarkdown, 'multi-bubble'),
+    [longMarkdown],
+    '长段内的加粗、行内代码和链接不得被标点切开'
+  );
+  assert.deepEqual(
+    segmentation.segmentAssistantReplyText(`${longMarkdown}\n\n${longParagraph}`, 'multi-bubble'),
+    [longMarkdown, longParagraph],
+    '长段只在模型输出的空行处分泡'
+  );
   const noPunctuation = '无标点长句'.repeat(100);
   assert.deepEqual(
     segmentation.segmentAssistantReplyText(noPunctuation, 'multi-bubble'),
@@ -88,6 +99,9 @@ async function verifyChatEnvelope() {
     '  第一泡\n\n第二泡\n \n第三泡  ',
     '长'.repeat(99) + '！？”)下一句。\n\n再说一句。',
     '短句。'.repeat(60) + '没有句末的尾巴',
+    longParagraph,
+    longMarkdown,
+    `${longMarkdown}\n\n${longParagraph}`,
     noPunctuation,
   ]) {
     let previous = [];
@@ -104,7 +118,7 @@ async function verifyChatEnvelope() {
     assert.ok(final.every(segment => segment.completed), '终态关闭所有气泡');
     for (const [index, segment] of previous.entries()) assert.equal(final[index].text, segment.text, '最终提交不重新排段');
   }
-  console.log('Prompt chat segmentation 检查通过（单气泡、多气泡与长文本切分不丢正文）。');
+  console.log('Prompt chat segmentation 检查通过（空行分泡、长段与 Markdown 保留完整、流式边界稳定）。');
 }
 
 const checks = {

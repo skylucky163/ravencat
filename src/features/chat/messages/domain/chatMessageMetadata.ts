@@ -199,6 +199,7 @@ export interface GroupChatMessageMetadata {
 }
 
 export interface ParsedChatMessageMetadata {
+  timelineAnchor?: { id: number; createdAt: string };
   interrupted?: boolean;
   pendingDelivery?: boolean;
   replyQuote?: ChatReplyQuote;

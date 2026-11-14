@@ -261,18 +261,18 @@ try {
   const elevenSpeed = catalog.getSpeechParameters('elevenlabs', 'eleven_multilingual_v2').find((field) => field.key === 'speed');
   assert.deepEqual([elevenSpeed.min, elevenSpeed.max], [0.7, 1.2]);
 
-  // 切换提供方不继承旧密钥或参数；连接字段作为一个整体提交，名称独立保存。
+  // 提供方草稿仅用于新建；已有资产的参数修改保持原连接，名称与 Key 独立保存。
   const initial = draftModule.getSpeechModelDraft('tts', { name: '原配置', enabled: true, baseUrl: 'https://custom.example/v1', apiKey: 'old', model: 'speech-2.8-hd', metadataJson: JSON.stringify({ provider: 'minimaxT2aV2', voiceId: 'old-voice' }) });
   const edited = { ...initial, speed: '0.8' };
   assert.equal(draftModule.buildSpeechDraftConfiguration(edited).baseURL, 'https://custom.example/v1');
-  const changed = { ...edited, ...draftModule.switchSpeechProvider('elevenlabs') };
+  const changed = { ...draftModule.getSpeechModelDraft('tts', null), ...draftModule.createSpeechProviderDraft('elevenlabs') };
   assert.equal(changed.apiKey, '');
   const invalid = draftModule.parseSpeechModelDraft('tts', { ...changed, name: '新名称' }, ['provider', 'name']);
   assert.deepEqual(invalid.patch, { name: '新名称' });
   assert.ok(invalid.errors.voiceId);
   const pendingKey = draftModule.parseSpeechModelDraft('tts', { ...changed, apiKey: 'new-provider-key' }, ['provider', 'model', 'voiceId', 'apiKey']);
-  assert.equal(pendingKey.patch.apiKey, undefined, '新提供方配置未完成时，不能把新密钥保存到旧连接');
-  assert.equal(pendingKey.accepted.includes('apiKey'), false);
+  assert.equal(pendingKey.patch.apiKey, 'new-provider-key', '固定提供方后，Key 的合法修改不被其他未完成参数阻塞');
+  assert.equal(pendingKey.accepted.includes('apiKey'), true);
   changed.voiceId = 'new-voice';
   const parsed = draftModule.parseSpeechModelDraft('tts', changed, ['provider', 'model', 'voiceId', 'apiKey']);
   const saved = JSON.parse(parsed.patch.metadataJson);
@@ -284,7 +284,7 @@ try {
   assert.equal(completeSwitch.patch.apiKey, 'new-provider-key');
   assert.equal(JSON.parse(completeSwitch.patch.metadataJson).provider, 'elevenlabs');
   assert.ok(draftModule.parseSpeechModelDraft('tts', { ...edited, speed: '错误' }, ['speed']).errors.speed);
-  const fishDraft = { ...initial, ...draftModule.switchSpeechProvider('fishAudio'), apiKey: 'fish-key', voiceId: 'fish-voice', temperature: '0', topP: '0', normalize: false };
+  const fishDraft = { ...draftModule.getSpeechModelDraft('tts', null), ...draftModule.createSpeechProviderDraft('fishAudio'), apiKey: 'fish-key', voiceId: 'fish-voice', temperature: '0', topP: '0', normalize: false };
   const fishParsed = draftModule.parseSpeechModelDraft('tts', fishDraft, Object.keys(fishDraft));
   assert.deepEqual(fishParsed.errors, {});
   assert.equal(fishParsed.patch.baseUrl, 'https://api.fish.audio/v1');
@@ -694,7 +694,7 @@ try {
   // 新提供方仍由同一配置草稿校验、保存与解析，官方地址无需用户输入。
   const newConfigurations = new Map();
   for (const provider of ['volcengineRealtimeAsr', 'stepfunRealtimeAsr']) {
-    const draft = { ...draftModule.getSpeechModelDraft('stt', null), ...draftModule.switchSpeechProvider(provider), apiKey: 'speech-key' };
+    const draft = { ...draftModule.getSpeechModelDraft('stt', null), ...draftModule.createSpeechProviderDraft(provider), apiKey: 'speech-key' };
     const snapshot = draftModule.buildSpeechDraftConfiguration(draft);
     assert.deepEqual(catalog.validateSpeechConfiguration('stt', snapshot), {});
     assert.equal(snapshot.baseURL, catalog.getSpeechProvider(provider).baseURL);
@@ -930,14 +930,20 @@ try {
     'expo-router': { useFocusEffect: (effect) => React.useEffect(effect, [effect]) },
   });
   const formFeedback = load('src/shared/ui/useAutoSaveFeedback.ts', { react: React, 'react-native': nativeForm });
-  const formTheme = { spacing: { lg: 10, md: 8, sm: 4, xl: 16 }, colors: { background: { app: '#fff' }, text: { primary: '#000', secondary: '#555' }, feedback: { error: '#f00' } } };
+  const formTheme = { spacing: { lg: 10, md: 8, sm: 4, xl: 16 }, radius: { md: 12 }, colors: { background: { screen: '#fff' }, surface: { input: '#eee' }, text: { primary: '#000', secondary: '#555' }, feedback: { error: '#f00' } } };
+  const directoryRequests = [];
   const formPage = load('src/features/assistants/presentation/auxiliaryModels/SpeechModelEditScreen.tsx', {
     react: React, 'react-native': nativeForm, 'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
-    '@features/speech': { ...catalog, SpeechConfigurationTest: 'SpeechTest' },
-    '@shared/ui': { KeyboardAvoidingContainer: 'KeyboardContainer', Button: 'Button', DropdownField: 'DropdownField', InputField: 'InputField', ToggleField: 'ToggleField', ModelPickerModal: 'ModelPickerModal', ListItem: 'ListItem', showAppDialog: assert.fail },
-    '@shared/ui/NavigationHeader': 'Header', '@shared/theme': { useTheme: () => formTheme },
+    '@features/speech': { ...catalog, SpeechConfigurationTest: 'SpeechTest', listSpeechProviderOptions: async configuration => {
+      directoryRequests.push(configuration);
+      return { models: [{ value: 'eleven_v3', label: '官方模型' }], voices: [{ value: 'voice', label: '官方音色' }] };
+    } },
+    '@shared/ui': { KeyboardAvoidingContainer: 'KeyboardContainer', Button: 'Button', DropdownField: 'DropdownField', InputField: 'InputField', ModelPickerField: 'InputField', ToggleField: 'ToggleField', ModelPickerModal: 'ModelPickerModal', ListItem: 'ListItem', showAppDialog: assert.fail },
+    '@shared/ui/NavigationHeader': 'Header', '@shared/theme': { ThemedSurface: 'ThemedSurface', useTheme: () => formTheme },
+    '@shared/ui/commonStyles': { createCommonStyles: () => ({}) },
     '@shared/ui/useAutoSaveDraft': formHooks, '@shared/ui/useAutoSaveFeedback': formFeedback,
     '@shared/ui/AutoSaveErrors': { AutoSaveErrors: 'AutoSaveErrors' }, './speechModelDraft': draftModule, './ServiceConnectionPicker': 'ServicePicker',
+    './ModelFormSection': 'FormSection',
   });
   const createdFish = []; const fishWrites = [];
   const formProps = { kind: 'tts', initialData: null, saving: false, onBack() {},
@@ -1029,6 +1035,22 @@ try {
   assert.equal(formField('DropdownField', '提供方').props.disabled, true);
   await act(async () => { fishForm.unmount(); });
 
+  await act(async () => { fishForm = TestRenderer.create(React.createElement(formPage.default, formProps)); });
+  await act(async () => { formField('DropdownField', '提供方').props.onChange('elevenlabs'); });
+  await act(async () => { formField('InputField', '模型名称').props.onPress(); });
+  assert.equal(fishForm.root.findByType('ModelPickerModal').props.visible, true);
+  assert.ok(fishForm.root.findByType('ModelPickerModal').props.models.length, '未填 Key 时仍可选择内置模型');
+  assert.equal(directoryRequests.length, 0);
+  await act(async () => { fishForm.root.findByType('ModelPickerModal').props.onClose(); });
+  await act(async () => { formField('InputField', 'API Key').props.onChangeText('directory-key'); });
+  await act(async () => { formField('InputField', '模型名称').props.onPress(); });
+  await act(async () => { await fishForm.root.findByType('ModelPickerModal').props.onRefresh(); });
+  assert.equal(directoryRequests.length, 1);
+  assert.equal(directoryRequests[0].apiKey, 'directory-key');
+  assert.deepEqual(fishForm.root.findByType('ModelPickerModal').props.models, [{ id: 'eleven_v3', name: '官方模型' }]);
+  assert.deepEqual(formField('DropdownField', '从官方音色库选择').props.options, [{ value: 'voice', label: '官方音色' }], '弹窗刷新同时保留音色目录加载');
+  await act(async () => { fishForm.unmount(); });
+
   for (const providerId of ['volcengineRealtimeAsr', 'stepfunRealtimeAsr']) {
     const created = [];
     let form;
@@ -1039,7 +1061,8 @@ try {
     await act(async () => { field('DropdownField', '提供方').props.onChange(providerId); });
     const provider = catalog.getSpeechProvider(providerId);
     assert.equal(form.root.findAllByType('ServicePicker').length, 0, '实时 STT 不参与通用服务配置');
-    assert.equal(field('InputField', 'API 地址'), undefined, '官方实时识别无需填写 Endpoint 或 API 地址');
+    assert.equal(field('InputField', 'API 地址').props.value, provider.baseURL, '官方实时识别展示提供方地址');
+    assert.equal(field('InputField', 'API 地址').props.editable, false, '官方实时识别地址不可编辑');
     assert.equal(form.root.findByType('ModelPickerModal').props.models[0].name, provider.modelLabels[provider.defaultModel]);
     await act(async () => { field('InputField', provider.credentialLabel).props.onChangeText('new-service-key'); });
     let testSnapshot;

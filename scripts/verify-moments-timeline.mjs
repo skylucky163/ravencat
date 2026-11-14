@@ -179,7 +179,7 @@ assert.deepEqual(
   freshDb.prepare(`PRAGMA table_info('moments')`).all().map((row) => row.name),
   [
     'id', 'author_type', 'author_id', 'author_name_snapshot',
-    'content', 'location_label', 'audience_mode', 'created_at',
+    'content', 'location_label', 'audience_mode', 'created_at', 'edited_at', 'edit_revision',
   ],
   'fresh moments schema 必须包含 nullable location_label',
 );
@@ -478,13 +478,13 @@ assert.deepEqual(
   assert.equal(byLocation.data[0].locationLabel, '学校图书馆');
 }
 
-// 4.5 AI 发布入口第一版不暴露 location / media。
+// 4.5 AI 发布不提供定位或原始图片输入；已有图片通过媒体 ID 引用。
 assert.equal(
   Object.hasOwn(createTool.definition.parameters.properties, 'locationLabel'),
   false,
   'aiCreateMoment 不得暴露 locationLabel',
 );
-for (const forbidden of ['mediaAssetIds', 'imageUrl', 'imageBase64', 'location']) {
+for (const forbidden of ['imageUrl', 'imageBase64', 'location']) {
   assert.equal(
     Object.hasOwn(createTool.definition.parameters.properties, forbidden),
     false,

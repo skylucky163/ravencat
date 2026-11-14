@@ -1,4 +1,10 @@
 export const CAPABILITY_META = {
+  image_generation: {
+    label: '生图模型',
+    description: '用于 AI 与用户文生图；在「AI 生图」页面选择生效的模型，请求由第三方服务计费',
+    icon: 'image-outline',
+    iconColor: '#AF52DE',
+  },
   summary: {
     label: '摘要模型',
     description: '用于单聊与群聊的两级摘要，各会话分别选择实际使用的配置',

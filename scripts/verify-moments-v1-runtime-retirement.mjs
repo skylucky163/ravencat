@@ -45,7 +45,7 @@ const phoneTools = new Proxy(load('src/features/phoneTools/toolPackages/ToolPack
 });
 const momentShareTool = load('src/host/composition/agent/ShareMomentTool.ts', () => placeholder);
 const registration = load('src/host/composition/agent/createAgentToolRegistry.ts', (specifier) => {
-  if (specifier === '@platform/ai') return load('src/platform/ai/moonshotEndpoint.ts');
+  if (specifier === '@platform/ai') return load('src/platform/ai/officialToolsEndpoint.ts');
   if (specifier === '@shared/aiTools') return load('src/shared/aiTools/ToolCompletionIntent.ts');
   if (specifier === '@features/moments') return moments;
   if (specifier === '@features/phoneTools') return phoneTools;
@@ -54,11 +54,13 @@ const registration = load('src/host/composition/agent/createAgentToolRegistry.ts
   if (specifier === './ApplicationSettingsTools') return { applicationSettingsTools: [] };
   if (specifier === './ShareMomentTool') return momentShareTool;
   if (specifier === './GroupManagementTools') return { groupManagementTools: [] };
+  if (specifier === './ChatCodeWorkTools') return placeholder;
   if (specifier === '@features/phoneTools/neteaseComposition') return { productionNetEaseChildTools: [] };
   assert.ok(specifier.startsWith('@features/'), `Registry 未声明依赖：${specifier}`);
   return placeholder;
 });
 const expectedNames = [
+  'aiEditOwnMoment',
   'searchMoments', 'getMomentDetail', 'readSocialInbox', 'aiLikeMoment', 'aiCommentMoment',
   'aiCreateMoment', 'aiReplyMomentComment', 'aiUnlikeMoment', 'aiDeleteOwnMoment',
   'aiDeleteOwnMomentComment', 'share_moment',

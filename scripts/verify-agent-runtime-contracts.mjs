@@ -219,6 +219,10 @@ const SENSITIVE_ACTION = {
 
 const builtInTools = [
   ...[
+    ['ListCodeWorksTool', 'list_code_works', PRIVATE_READ], ['GetCodeWorkTool', 'get_code_work', PRIVATE_READ],
+    ['SetCodeWorkInLibraryTool', 'set_code_work_in_library', REVERSIBLE_ACTION], ['EditCodeWorkTool', 'edit_code_work', REVERSIBLE_ACTION],
+  ].map(([symbol, name, policy]) => ({ module: './ChatCodeWorkTools', symbol, name, owner: 'chat', ...policy })),
+  ...[
     ['search_groups', false, true], ['join_group', false, false], ['add_group_member', false, false],
     ['remove_group_member', true, false], ['mute_group_member', true, false],
     ['unmute_group_member', true, false], ['leave_group', false, false], ['rename_group', false, false],
@@ -227,10 +231,16 @@ const builtInTools = [
   { module: '@features/webTools', symbol: 'KimiWebSearchTool', name: 'kimi_web_search', owner: 'webTools', ...SAFE_READ },
   { module: '@features/webTools', symbol: 'KimiWebFetchTool', name: 'kimi_web_fetch', owner: 'webTools', ...SAFE_READ },
   { module: '@features/webTools', symbol: 'KimiMewTool', name: 'kimi_mew', owner: 'webTools', risk: 'safe_read', idempotency: 'not_idempotent' },
+  ...[['KimiConvertTool', 'kimi_convert'], ['KimiRethinkTool', 'kimi_rethink'], ['KimiRandomChoiceTool', 'kimi_random_choice'],
+    ['KimiExcelTool', 'kimi_excel'], ['KimiDateTool', 'kimi_date'], ['KimiBase64Tool', 'kimi_base64']]
+    .map(([symbol, name]) => ({ module: '@features/webTools', symbol, name, owner: 'webTools', risk: 'safe_read', idempotency: 'not_idempotent' })),
+  { module: '@features/webTools', symbol: 'DeepSeekWebSearchTool', name: 'deepseek_web_search', owner: 'webTools', ...SAFE_READ },
+  { module: '@features/webTools', symbol: 'DeepSeekWebFetchTool', name: 'deepseek_web_fetch', owner: 'webTools', ...SAFE_READ },
   { module: '@features/webTools', symbol: 'WebSearchTool', name: 'web_search', owner: 'webTools', ...SAFE_READ },
   { module: '@features/webTools', symbol: 'WebFetchTool', name: 'web_fetch', owner: 'webTools', ...SAFE_READ },
   { module: '@features/webTools', symbol: 'DownloadFileTool', name: 'download_file', owner: 'webTools', ...REVERSIBLE_ACTION },
   { module: '@features/media', symbol: 'DownloadImageTool', name: 'download_image', owner: 'media', ...REVERSIBLE_ACTION },
+  { module: '@features/media', symbol: 'GenerateImageTool', name: 'generate_image', owner: 'media', ...EXTERNAL_SIDE_EFFECT },
   { module: '@features/media', symbol: 'QueryDownloadedImagesTool', name: 'query_downloaded_images', owner: 'media', ...PRIVATE_READ },
   { module: '@features/media', symbol: 'ViewImageTool', name: 'view_image', owner: 'media', ...PRIVATE_READ },
   ...[
@@ -259,6 +269,7 @@ const builtInTools = [
   { module: '@features/moments', symbol: 'AILikeMomentTool', name: 'aiLikeMoment', owner: 'moments', ...REVERSIBLE_WRITE },
   { module: '@features/moments', symbol: 'AICommentMomentTool', name: 'aiCommentMoment', owner: 'moments', ...REVERSIBLE_WRITE },
   { module: '@features/moments', symbol: 'AICreateMomentTool', name: 'aiCreateMoment', owner: 'moments', ...REVERSIBLE_WRITE },
+  { module: '@features/moments', symbol: 'AIEditOwnMomentTool', name: 'aiEditOwnMoment', owner: 'moments', ...REVERSIBLE_WRITE },
   { module: '@features/moments', symbol: 'AIReplyMomentCommentTool', name: 'aiReplyMomentComment', owner: 'moments', ...REVERSIBLE_WRITE },
   { module: '@features/moments', symbol: 'AIUnlikeMomentTool', name: 'aiUnlikeMoment', owner: 'moments', ...REVERSIBLE_WRITE },
   { module: '@features/moments', symbol: 'AIDeleteOwnMomentTool', name: 'aiDeleteOwnMoment', owner: 'moments', ...REVERSIBLE_WRITE },
@@ -306,6 +317,7 @@ const builtInTools = [
   { module: '@features/companion', symbol: 'GetAIScheduleTool', name: 'get_ai_schedule', owner: 'companion', ...PRIVATE_READ },
   { module: '@features/companion', symbol: 'UpdateAIScheduleTool', name: 'update_ai_schedule', owner: 'companion', ...REVERSIBLE_WRITE },
   { module: '@features/companion', symbol: 'CancelAIScheduleTool', name: 'cancel_ai_schedule', owner: 'companion', ...SENSITIVE_ACTION },
+  { module: '@features/companion', symbol: 'RemoveAIScheduleCalendarEventsTool', name: 'remove_ai_schedule_calendar_events', owner: 'companion', ...SENSITIVE_ACTION },
   { module: '@features/chat', symbol: 'SearchChatSummariesTool', name: 'search_chat_summaries', owner: 'chat', ...PRIVATE_READ },
   { module: '@features/chat', symbol: 'SearchChatMessagesTool', name: 'search_chat_messages', owner: 'chat', ...PRIVATE_READ },
   { module: '@features/chat', symbol: 'ReadChatMessageContextTool', name: 'read_chat_message_context', owner: 'chat', ...PRIVATE_READ },
@@ -356,7 +368,7 @@ function createAgentNativeBuiltInTool(name) {
 const featureMocks = Object.fromEntries(
   [...new Set(builtInTools.map((tool) => tool.module))].map((module) => [module, {}])
 );
-featureMocks['@platform/ai'] = loadTypeScriptModule('src/platform/ai/moonshotEndpoint.ts', {});
+featureMocks['@platform/ai'] = loadTypeScriptModule('src/platform/ai/officialToolsEndpoint.ts', {});
 featureMocks['@shared/aiTools'] = loadTypeScriptModule('src/shared/aiTools/ToolCompletionIntent.ts');
 for (const tool of builtInTools) {
   featureMocks[tool.module][tool.symbol] = (
@@ -367,6 +379,7 @@ for (const tool of builtInTools) {
     || tool.module === '@features/memory'
     || tool.module === './ApplicationSettingsTools'
     || tool.module === './GroupManagementTools'
+    || tool.module === './ChatCodeWorkTools'
     || tool.module === './ShareMomentTool'
     || tool.symbol === 'SendVoiceMessageTool'
     || tool.symbol === 'SendImageTool'
@@ -432,6 +445,9 @@ const productionRegistry = createAgentToolRegistry({
   },
 });
 const productionDescriptors = productionRegistry.list();
+for (const name of ['list_code_works', 'get_code_work', 'set_code_work_in_library', 'edit_code_work']) {
+  assert.equal(getToolPackageRuntimeBindings(productionRegistry).find(binding => binding.tool.descriptor.name === name).packageId, 'codeWorks');
+}
 for (const name of ['search_chat_messages', 'read_chat_message_context', 'search_chat_summaries', 'get_secondary_summary', 'edit_secondary_summary', 'edit_primary_summary', 'delete_primary_summary']) {
   assert.equal(getToolPackageRuntimeBindings(productionRegistry).find(binding => binding.tool.descriptor.name === name).packageId, 'memory');
 }
@@ -572,13 +588,18 @@ assert.deepEqual(settingsBindings.map(binding => binding.tool.descriptor.name).s
 const { registerToolPackagesForHostRun } = loadTypeScriptModule('src/host/composition/agent/ToolPackageExposure.ts', {});
 const imageRegistry = createAgentToolRegistry({ createLegacyContext: () => legacyContext });
 const imageExposure = registerToolPackagesForHostRun({ registry: imageRegistry,
-  allowedToolNames: ['download_image', 'query_downloaded_images', 'view_image', 'send_image'],
+  allowedToolNames: ['download_image', 'generate_image', 'query_downloaded_images', 'view_image', 'send_image'],
   bindings: getToolPackageRuntimeBindings(imageRegistry), openPackageIds: [],
 });
 assert.deepEqual(imageExposure.visibleToolNames(), []);
 await imageRegistry.get('open_tool_package').execute({ package_id: 'media' }, executionContext);
-assert.deepEqual(new Set(imageExposure.visibleToolNames()), new Set(['download_image', 'query_downloaded_images', 'view_image', 'send_image']),
-  '展开图片包后可直接下载、找回、查看与发送图片');
+assert.deepEqual(new Set(imageExposure.visibleToolNames()), new Set(['download_image', 'generate_image', 'query_downloaded_images', 'view_image', 'send_image']),
+  '展开图片包后可直接下载、生成、找回、查看与发送图片');
+for (const scenario of [{ triggerSource: 'chat' }, { triggerSource: 'group_chat' }, { triggerSource: 'raven_cat_wake', capabilities: ['raven_cat.autonomous'] }]) {
+  assert.deepEqual(availableNames({ ...scenario, allowedToolNames: ['generate_image'] }), ['generate_image']);
+  assert.deepEqual(availableNames({ ...scenario, allowedToolNames: [] }), []);
+}
+assert.equal(availableNames({ triggerSource: 'call', allowedToolNames: ['generate_image'] }).length, 0);
 const cooldownRegistry = createAgentToolRegistry({ createLegacyContext: () => legacyContext });
 const cooldownExposure = registerToolPackagesForHostRun({ registry: cooldownRegistry,
   allowedToolNames: ['release_host_cooldown'], bindings: getToolPackageRuntimeBindings(cooldownRegistry),
@@ -829,7 +850,7 @@ assert.deepEqual(
     .map(({ name, owner }) => ({
     name,
     owner,
-    defaultEnabled: !['kimi_web_search', 'kimi_web_fetch', 'kimi_mew'].includes(name),
+    defaultEnabled: !name.startsWith('kimi_') && !name.startsWith('deepseek_'),
     callOnly: name === 'lookAtUser',
     memoryParticipation: ['remember_memory', 'recall_memory', 'update_memory', 'forget_memory', 'convert_exited_group_history_to_memory'].includes(name)
       ? 'read_write'

@@ -4,7 +4,7 @@
 
 当前源码快照不包含 `node_modules/` 或这些包的构建产物。直接分发这些包或将其打入安装包前，需要按实际分发范围补齐相应原文和署名；本表不等于 APK 依赖清单。
 
-37 个未安装的跨平台可选包另见 [完整清单](npm-inventory.json)。
+32 个未安装的跨平台可选包另见 [完整清单](npm-inventory.json)。
 
 | 包 | 锁定版本 | 元数据许可证 |
 |---|---|---|
@@ -13,6 +13,8 @@
 | [@expo/ws-tunnel](https://www.npmjs.com/package/@expo/ws-tunnel/v/1.0.6) | 1.0.6 | MIT |
 | [@expo/xcpretty](https://www.npmjs.com/package/@expo/xcpretty/v/4.4.1) | 4.4.1 | BSD-3-Clause |
 | [@humanfs/types](https://www.npmjs.com/package/@humanfs/types/v/0.15.0) | 0.15.0 | Apache-2.0 |
+| [@napi-rs/wasm-runtime](https://www.npmjs.com/package/@napi-rs/wasm-runtime/v/1.1.6) | 1.1.6 | MIT |
+| [@tybys/wasm-util](https://www.npmjs.com/package/@tybys/wasm-util/v/0.10.3) | 0.10.3 | MIT |
 | [@types/json5](https://www.npmjs.com/package/@types/json5/v/0.0.29) | 0.0.29 | MIT |
 | [ansi-fragments](https://www.npmjs.com/package/ansi-fragments/v/0.2.1) | 0.2.1 | MIT |
 | [app-module-path](https://www.npmjs.com/package/app-module-path/v/2.2.0) | 2.2.0 | BSD-2-Clause |

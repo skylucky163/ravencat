@@ -207,6 +207,13 @@ const MEDIA_ASSET_REFERENCE_QUERY = `${MEDIA_ASSET_BUBBLE_PRESET_REFERENCE_QUERY
   FROM assistant_profile_covers
 `;
 
+// 旧快照在升级前枚举媒体，不能向 165–167 的引用查询引入尚不存在的新表。
+const MEDIA_ASSET_GENERATED_REFERENCE_QUERY = `${MEDIA_ASSET_REFERENCE_QUERY}
+  UNION ALL
+  SELECT media_asset_id, 'ai_generated_image', id, 'ai_generated_images.media_asset_id'
+  FROM ai_generated_images
+`;
+
 /**
  * targeted release 的候选裁决：只对候选 asset id 探测全部引用源。
  *
@@ -277,6 +284,10 @@ const MEDIA_ASSET_CANDIDATE_UNREFERENCED_QUERY = `
     AND NOT EXISTS (
           SELECT 1 FROM ai_downloaded_images
           WHERE ai_downloaded_images.media_asset_id = candidate.asset_id
+        )
+    AND NOT EXISTS (
+          SELECT 1 FROM ai_generated_images
+          WHERE ai_generated_images.media_asset_id = candidate.asset_id
         )
     AND NOT EXISTS (
           SELECT 1 FROM chat_favorites, json_tree(chat_favorites.snapshot_json) AS tree
@@ -369,7 +380,7 @@ async function auditDatabaseWithExecutor(
     `SELECT ${MEDIA_ASSET_COLUMNS} FROM media_assets ORDER BY created_at ASC, id ASC`,
   );
   const referenceRows = await executor.getAllAsync<MediaAssetReferenceRow>(
-    MEDIA_ASSET_REFERENCE_QUERY,
+    MEDIA_ASSET_GENERATED_REFERENCE_QUERY,
   );
   const invalidRows = await executor.getAllAsync<InvalidChatMetadataRow>(
     `SELECT id, metadata_json
@@ -434,7 +445,8 @@ export class SQLiteMediaAssetRepository implements MediaAssetRepository, MediaAs
     // 143 的已安装库存在仅录音和含截图两种结构；恢复预检必须保留实际已有的图片引用。
     const hasCallImages = version!.user_version === 143
       && await executor.getFirstAsync("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'call_history_images'") !== null;
-    const references = version!.user_version >= 165 ? MEDIA_ASSET_REFERENCE_QUERY
+    const references = version!.user_version >= 168 ? MEDIA_ASSET_GENERATED_REFERENCE_QUERY
+      : version!.user_version >= 165 ? MEDIA_ASSET_REFERENCE_QUERY
       : version!.user_version >= 154 ? MEDIA_ASSET_BUBBLE_PRESET_REFERENCE_QUERY
       : version!.user_version >= 153 ? MEDIA_ASSET_BUBBLE_DECORATION_REFERENCE_QUERY
       : version!.user_version >= 151 ? MEDIA_ASSET_BUBBLE_SKIN_REFERENCE_QUERY
@@ -664,12 +676,14 @@ export class SQLiteMediaAssetRepository implements MediaAssetRepository, MediaAs
       UNION
       SELECT media_asset_id AS asset_id FROM ai_downloaded_images WHERE assistant_id = ?
       UNION
+      SELECT media_asset_id AS asset_id FROM ai_generated_images WHERE assistant_id = ?
+      UNION
       SELECT e.media_asset_id AS asset_id FROM call_history_entries e JOIN call_history h ON h.call_id = e.call_id
       WHERE h.assistant_id = ? AND e.media_asset_id IS NOT NULL
       UNION
       SELECT i.media_asset_id AS asset_id FROM call_history_images i JOIN call_history h ON h.call_id = i.call_id
       WHERE h.assistant_id = ?
-    `, [assistantId, assistantId, assistantId, assistantId, assistantId, assistantId, assistantId, assistantId]);
+    `, [assistantId, assistantId, assistantId, assistantId, assistantId, assistantId, assistantId, assistantId, assistantId]);
     return rows.map((row) => row.asset_id);
   }
 

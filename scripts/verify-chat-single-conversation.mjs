@@ -1,3 +1,4 @@
+import { chatCodeBlockModuleUrl, chatCodePreviewRepositoryModuleUrl } from './chat-timeline-fixture.mjs';
 import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /** Chat Single-Conversation Foundation 的持久化与公开产品契约验证。 */
@@ -60,7 +61,7 @@ async function importMessageRepository(executor) {
   const metadataUrl = moduleUrl(read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`)
     .replaceAll("from './ChatSticker'", `from '${moduleUrl(read('src/features/chat/messages/domain/ChatSticker.ts'))}'`)
     .replaceAll("from './SharedChatRecord'", `from '${sharedChatRecordModuleUrl}'`));
-  const source = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`)
+  const source = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from '../domain/ChatCodeBlock'", `from '${chatCodeBlockModuleUrl}'`).replaceAll("from './SQLiteChatCodePreviewRepository'", `from '${chatCodePreviewRepositoryModuleUrl}'`).replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`)
     .replaceAll("from '../domain/chatMessageMetadata'", `from '${metadataUrl}'`)
     .replace(
       /import \{[\s\S]*?\} from '@platform\/persistence';/,

@@ -10,6 +10,7 @@ export default function AssistantProfileRoute() {
     onEdit={() => router.push(`/assistants/${encodeURIComponent(aiId)}/edit` as Href)}
     onSendMessage={() => router.dismissTo(`/chat/${encodeURIComponent(aiId)}` as Href)}
     onOpenMoments={() => router.push(`/assistants/${encodeURIComponent(aiId)}/moments` as Href)}
+    onOpenCodeLibrary={() => router.push(`/assistants/${encodeURIComponent(aiId)}/works` as Href)}
     onOpenModelSettings={() => router.push(`/assistants/${encodeURIComponent(aiId)}/model-settings` as Href)}
     onOpenContextSettings={() => router.push(`/assistants/${encodeURIComponent(aiId)}/context-settings` as Href)}
     onOpenSummary={() => router.push(`/chat/${encodeURIComponent(aiId)}/summary` as Href)}

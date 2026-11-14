@@ -1,13 +1,14 @@
-/** AI 发布文本 Moment；作者身份只取自 trusted ToolContext。 */
+/** AI 发布文字与可选图片 Moment；作者身份只取自 trusted ToolContext。 */
 import { listAIAssistants } from '@features/assistants';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
-import { createAgentMoment } from '../application/CreateMoment';
+import { createAgentMoment, MAX_MOMENT_MEDIA_COUNT } from '../application/CreateMoment';
 import { MomentDomainError } from '../domain/MomentErrors';
 import type { MomentAudience } from '../domain/MomentRepository';
 import type { MomentToolContext } from './MomentToolContext';
 
 interface AICreateMomentArgs {
   content: string;
+  mediaAssetIds?: string[];
   audience?: {
     mode: 'all' | 'selected' | 'all_except';
     agentIds?: string[];
@@ -23,11 +24,18 @@ interface AICreateMomentResult {
 
 export const definition = {
   name: 'aiCreateMoment',
-  description: '发布一条文本时刻。',
+  description: '发布一条时刻（朋友圈），可附带已有图片。',
   parameters: {
     type: 'object' as const,
     properties: {
       content: { type: 'string' as const, description: '时刻正文', maxLength: 2000 },
+      mediaAssetIds: {
+        type: 'array' as const,
+        items: { type: 'string' as const, minLength: 1 },
+        maxItems: MAX_MOMENT_MEDIA_COUNT,
+        uniqueItems: true,
+        description: '可选图片媒体 ID，按展示顺序传入，最多 9 张。使用消息、下载或生图工具返回的 mediaAssetId；不传或空数组发布纯文字。不接受路径或 URL，不确定图片内容时先看图。',
+      },
       audience: {
         type: 'object' as const,
         description: '可见范围；省略时对全部 AI 可见',
@@ -79,6 +87,7 @@ export async function execute(
         agentId,
         nameSnapshot: aiName,
         content: args.content,
+        mediaAssetIds: args.mediaAssetIds,
         audience: toAudience(args.audience),
         abortSignal: context.abortSignal,
       }

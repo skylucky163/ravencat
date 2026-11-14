@@ -40,6 +40,10 @@ const schedule = {
   updatedAt: '2026-09-09T08:00:00.000Z',
 };
 const application = {
+  setAIScheduleFollowUpInterval: async (input) => {
+    calls.push(['interval',input]);
+    return { status:'updated',schedule:{...schedule,nextFollowUpMinutes:input.minutes} };
+  },
   listAISchedulesQuery: async (input) => {
     calls.push(['list', input]);
     return {
@@ -67,6 +71,11 @@ function projectionFor(operation) {
 }
 
 const projectionOwner = {
+  removeAIScheduleCalendarEvents: async (input) => {
+    calls.push(['remove-calendar',input]);
+    return {status:'updated',matchedCount:3,updatedCount:2,removedCount:calendarMode==='synced'?3:0,
+      pendingCount:calendarMode==='synced'?0:null,calendar:calendarMode};
+  },
   createAIScheduleWithProjection: async (input) => {
     calls.push(['create', input]);
     if (createError) return { status: 'error', code: createError, projection: null };
@@ -115,6 +124,7 @@ const tools = [
   module.exports.GetAIScheduleTool,
   module.exports.UpdateAIScheduleTool,
   module.exports.CancelAIScheduleTool,
+  module.exports.RemoveAIScheduleCalendarEventsTool,
 ];
 assert.deepEqual(tools.map(({ name }) => name), [
   'create_ai_schedule',
@@ -122,6 +132,7 @@ assert.deepEqual(tools.map(({ name }) => name), [
   'get_ai_schedule',
   'update_ai_schedule',
   'cancel_ai_schedule',
+  'remove_ai_schedule_calendar_events',
 ]);
 assert.ok(tools.every((tool) => tool.definition.parameters.additionalProperties === false));
 
@@ -166,6 +177,14 @@ assert.equal(calls[0][1].sourceConversationId, 'session-a');
 assert.equal(calls[0][1].systemCalendar, true);
 await tools[0].execute({ remind_at: schedule.remindAt, summary: schedule.summary, details: schedule.details, system_calendar: false }, context);
 assert.equal(calls.at(-1)[1].systemCalendar, false);
+const repeat = { frequency:'daily',timeZone:'Asia/Shanghai',hour:9,minute:0 };
+await tools[0].execute({ remind_at:schedule.remindAt,summary:schedule.summary,details:schedule.details,recurrence:repeat },context);
+assert.deepEqual(calls.at(-1)[1].recurrence,repeat,'重复规则交给唯一日程应用入口');
+const interval = await tools[3].execute({schedule_id:schedule.scheduleId,next_follow_up_minutes:2},context);
+assert.equal(interval.status,'success');
+assert.deepEqual(calls.at(-1),['interval',{scheduleId:schedule.scheduleId,ownerAIId:'host-ai',runId:context.runId,minutes:2}]);
+assert.match(interval.modelContent,/用户默认值和系统日历未改变/);
+assert.equal((await tools[3].execute({schedule_id:schedule.scheduleId,next_follow_up_minutes:2,summary:'混合修改'},context)).status,'error');
 
 // native projection 失败仍返回 durable degraded success；模型必须知道不要重复业务操作。
 projectionMode = 'failed';
@@ -213,6 +232,19 @@ assert.equal(calendarPartialSuccess.data.scheduleId, schedule.scheduleId);
 assert.equal(calendarPartialSuccess.data.calendarStatus, 'failed');
 assert.match(calendarPartialSuccess.modelContent, /不要重复创建/);
 
+calendarMode='synced';
+const removed=await tools[5].execute({scope:'series',schedule_id:'schedule-a'},context);
+assert.equal(removed.status,'success');
+assert.deepEqual(calls.at(-1),['remove-calendar',{ownerAIId:'host-ai',scope:'series',scheduleId:'schedule-a'}]);
+assert.equal(removed.data.removedCount,3);
+assert.match(removed.modelContent,/未取消任何内部日程/);
+calendarMode='permission_required';
+const removalPending=await tools[5].execute({scope:'all'},context);
+assert.equal(removalPending.status,'success');
+assert.equal(removalPending.data.calendar,'permission_required');
+assert.match(removalPending.modelContent,/尚未全部移除/);
+assert.match(removalPending.modelContent,/不要取消内部日程/);
+
 currentHostAIId = 'other-ai';
 const denied = await tools[1].execute({
   from: '2026-09-09T00:00:00.000Z',
@@ -220,5 +252,8 @@ const denied = await tools[1].execute({
 }, context);
 assert.equal(denied.status, 'error');
 assert.equal(denied.code, 'NOT_CURRENT_HOST');
+const beforeDeniedRemoval=calls.length;
+assert.equal((await tools[5].execute({scope:'all'},context)).code,'NOT_CURRENT_HOST');
+assert.equal(calls.length,beforeDeniedRemoval,'撤销的主理身份不能执行清理');
 
-console.log('AI Schedule 五个 Host Tool 行为检查通过。');
+console.log('AI Schedule 日程及独立系统日历移除工具行为检查通过。');

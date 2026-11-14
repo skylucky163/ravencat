@@ -89,6 +89,7 @@ export {
   invalidateAISchedulesForRevokedOwner,
   reconcileAIScheduleProjections,
   updateAIScheduleWithProjection,
+  removeAIScheduleCalendarEvents,
 } from './AIScheduleProjectionOwner';
 export type {
   AIScheduleProjectionOutcome,

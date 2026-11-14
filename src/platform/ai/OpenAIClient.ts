@@ -7,8 +7,6 @@
  */
 
 import { BaseAIClient } from './BaseAIClient';
-import { KimiClient } from './KimiClient';
-import { resolveMoonshotAPIBaseURL } from './moonshotEndpoint';
 import type { AIClientConfig } from './types';
 
 export class OpenAIClient extends BaseAIClient {}
@@ -31,7 +29,7 @@ function resolveBaseURL(aiAssistant: AIAssistantConfig): string {
 
 /**
  * 创建 AI 客户端的工厂函数
- * 根据 AI 助手配置创建对应客户端
+ * 根据 AI 助手配置创建 OpenAI 兼容客户端
  *
  * @param aiAssistant - AI 助手配置
  * @returns AI 客户端实例
@@ -49,10 +47,6 @@ export function createAIClient(aiAssistant: AIAssistantConfig): BaseAIClient {
     systemPrompt: aiAssistant.systemPrompt,
     disableThinking: aiAssistant.disableThinking,
   };
-
-  if (resolveMoonshotAPIBaseURL(baseURL)) {
-    return new KimiClient(config);
-  }
 
   return new OpenAIClient(config);
 }

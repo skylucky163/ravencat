@@ -21,7 +21,7 @@ function load(file, dependencies) {
   }, module, module.exports);
   return module.exports;
 }
-const native = Object.fromEntries(['View', 'Text', 'TouchableOpacity', 'Image', 'ActivityIndicator', 'ScrollView'].map(name => [name, name]));
+const native = Object.fromEntries(['View', 'Text', 'Pressable', 'TouchableOpacity', 'Image', 'ActivityIndicator', 'ScrollView'].map(name => [name, name]));
 native.FlatList = function TestFlatList({ data, renderItem, ListHeaderComponent, ListEmptyComponent }) {
   return React.createElement('List', {},
     ListHeaderComponent, ...data.map(item => React.createElement(React.Fragment, { key: item.sticker ? item.sticker.id : item.id }, renderItem({ item }))),
@@ -240,7 +240,7 @@ const Home = load('src/features/stickers/presentation/stickerSystem/StickerSyste
   'react-native': { ...native, ScrollView: 'Scroll' }, 'react-native-safe-area-context': { SafeAreaView: 'SafeArea' },
   'expo-router': { useFocusEffect: callback => React.useEffect(callback, [callback]) },
   '@expo/vector-icons': { Ionicons: 'Icon' },
-  '@shared/ui': { ...ui, ListItem: 'ListItem', ModelPickerModal: 'ModelPicker', ToggleField: 'ToggleField' },
+  '@shared/ui': { ...ui, ListItem: 'ListItem', ModelPickerModal: 'ModelPicker', ToggleField: 'ToggleField', useModelManagementNavigation: () => kind => calls.push(['manage', kind]) },
   '@shared/theme': { ThemedSurface: 'Surface', useTheme: () => ({ spacing: { lg: 16 }, colors: { text: { secondary: 'gray' } } }) },
   '../../application/StickerSystemModels': {
     listStickerModelCandidates: async () => [],
@@ -301,6 +301,14 @@ assert.equal(renderer.root.findByType('ModelPicker').props.selectedModel, 'visio
 await act(async () => { renderer.root.findByType('ModelPicker').props.onSelect('vision-next'); });
 assert.equal(homeConfig.recognitionModelConfigId, 'vision-next');
 assert.equal(homeModelItem('视觉识别模型').props.subtitle, '新视觉模型', '模型保存后由同一进度快照更新名称');
+for (const [title, kind] of [['视觉识别模型', 'ocr'], ['向量化模型', 'embedding']]) {
+  await act(async () => { homeModelItem(title).props.onPress(); });
+  const picker = renderer.root.findByType('ModelPicker');
+  const manage = picker.props.onManageModels;
+  await act(async () => { picker.props.onClose(); });
+  manage();
+  assert.deepEqual(calls.pop(), ['manage', kind], '收起选择弹窗后仍管理点击时的用途');
+}
 
 homeLoadError = new Error('模拟刷新失败');
 const beforeRefreshFailureDialogs = dialogs.length;
@@ -413,7 +421,7 @@ await act(async () => { renderer.unmount(); });
 // 图库编辑同样在提交前提示空名称，不把选填描述改成必填。
 const Library = load('src/features/stickers/presentation/stickerSystem/StickerSystemLibraryScreen.tsx', {
   'react-native': native, '@expo/vector-icons': { Ionicons: 'Icon' },
-  '@shared/ui': { ...ui, EmptyState: 'EmptyState' },
+  '@shared/ui': { ...ui, EmptyState: 'EmptyState', ImageViewerModal: 'ImageViewer' },
   '@shared/theme': { ThemedSurface: 'Surface', useTheme: () => ({ ...formTheme, spacing: { lg: 16 } }) },
   '../../application/StickerCommands': { editStickerMetadata: async (id, input) => calls.push(['library-save', id, input]) },
   '../../application/StickerQueries': { listStickerGroups: async () => [],

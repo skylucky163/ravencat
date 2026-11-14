@@ -2,13 +2,20 @@
 
 Android 流式传输失败时保留 React Native 返回的原生网络原因。错误回调中的 `responseText` 属于连接错误信息，不能覆盖此前实际接收的 SSE 正文；诊断记录分别保存已收到的响应和失败原因。超时分类优先于笼统网络分类，避免把 `Network request timed out` 提示成 API 地址错误。这些信息不等同于后台宿主被杀，不增加自动重试或保活逻辑。
 
-这里提供跨业务的文本模型技术能力，只负责调用 OpenAI 兼容 Provider，不承载助手、聊天或语音业务规则。
+这里提供跨业务的模型技术能力，不承载助手、聊天或语音业务规则。文本和向量走既有 OpenAI 兼容客户端；图片生成独立映射所选供应商的协议。
+
+阿里百炼千问图片使用官方 DashScope 原生同步接口 `/api/v1/services/aigc/multimodal-generation/generation`。资产继续保存现有的百炼服务连接，图片客户端以该服务域名构造原生路径，不把 `/images/generations` 拼到旧域名的兼容地址下，也不要求重新填写 Key。提示词和参考图映射到 `input.messages[].content`，单张与尺寸放在 `parameters`，尺寸分隔符为 `*`；响应从 `output.choices[].message.content[].image` 提取并校验单张 HTTPS 图片。诊断省略嵌套的文字、参考图和结果签名 URL。协议依据见[千问图像生成与编辑 API](https://help.aliyun.com/zh/model-studio/qwen-image-generation-and-editing-api-reference)。
+
+Seedream 4.5 使用 `sequential_image_generation: disabled` 限定单图，5.0 Flash 原生只生成单图，不发送不支持的组图字段。新建 Seedream 配置默认使用 Flash，已有 4.5 资产保留原选择。GPT Image 文生图与编辑分别解析 `image_generation.*`、`image_edit.*` 流式事件，只接受对应接口的最终图片。上传限制由 `validateImageGenerationReference` 按供应商检查；Media 传入 Device 已检查的真实格式、尺寸与字节数，不重复读取或解码。当前支持模型的逐项核对与验证范围见[供应商核对记录](../../../docs/tasks/image-generation-provider-review-2026-11-14.md)。
 
 ## 职责
 
 - `BaseAIClient.ts`：普通、流式、工具调用与向量请求的公共实现；
-- `OpenAIClient.ts` / `KimiClient.ts`：Provider 客户端与创建工厂；
-- `moonshotEndpoint.ts` / `MoonshotToolsClient.ts`：识别 Moonshot 官方 OpenAI 根地址，执行搜索／网页抓取 REST 请求与 mew Formula 调用，验证响应及官方参数声明；工具权限和模型续轮由 Host 与统一 Runtime 持有；
+- `OpenAIClient.ts`：统一的 OpenAI 兼容客户端与创建工厂；
+- `imageGenerationConfig.ts` / `ImageGenerationRequest.ts`：固定生图供应商、已适配模型与能力契约。硅基流动按完整模型 ID 映射：Z-Image 和 Qwen-Image 仅文生图，Kolors 允许可选参考图，两个 Qwen 编辑模型必须参考图且不发送 `image_size`；各自映射推荐尺寸，统一解析 `images[].url`。Qwen-Image 使用官方推荐的 50 步与 CFG 4。MiniMax 使用原生 `image_generation`，Seedream 使用 Images 契约，百炼千问使用 DashScope 原生同步契约，官方 GPT Image 参考图使用 multipart edits。自定义 OpenAI 模式已移除，旧 metadata 只识别为停用配置，不继续发送请求；配置读取边界确认供应商、官方地址和模型匹配。`ImageGenerationClient.ts` 拥有一次 HTTP、取消、180 秒等待、响应校验与脱敏，不重试、换模型或换协议。上传使用 Expo `File`，不用 `expo/fetch` 不支持的 RN `{ uri }` 文件对象。
+- `ImageGenerationStream.ts`：只解析 GPT Image 的真实中间预览和最终图片，网络中断、服务端错误及无最终结果分别暴露；预览不等于完成百分比，不能作为最终图片提交。诊断仅保留脱敏后的请求形状与结果分类，省略提示词、参考图、图片字节与签名结果 URL。
+- `officialToolsEndpoint.ts` / `OfficialToolsHttpClient.ts`：识别 Moonshot、DeepSeek 官方 API 根地址，共用凭据边界、HTTP 超时、取消、响应上限和脱敏错误；
+- `MoonshotToolsClient.ts` / `DeepSeekToolsClient.ts`：各自映射搜索／网页抓取 REST 协议；Moonshot 另支持 mew、convert、rethink、random-choice、excel、date、base64 的固定 Formula 路由，验证官方声明后执行，原样返回普通或 protected 输出。工具权限和模型续轮由 Host 与统一 Runtime 持有；
 - `modelDiscovery.ts`：发现模型列表；
 - `connectionTest.ts`：单次连接测试，不额外发起工具支持探测；
 - `errorMapping.ts`：把外部错误转换为稳定的展示信息；聊天、通话、模型连接测试与群管理员通过 `includeDetails` 保留具体原因；

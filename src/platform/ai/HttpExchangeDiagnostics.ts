@@ -83,6 +83,16 @@ function isExchange(value: unknown): value is AIHttpExchange {
     && (record.error === null || typeof record.error === 'string');
 }
 
+function parseDiagnosticsState(value: unknown): { version: 1; enabled: boolean; records: AIHttpExchange[] } {
+  if (typeof value !== 'object' || value === null) throw new Error('HTTP 诊断文件格式无效');
+  const state = value as Record<string, unknown>;
+  if (state.version !== 1 || typeof state.enabled !== 'boolean' || !Array.isArray(state.records)
+    || state.records.length > RETENTION || !state.records.every(isExchange)) {
+    throw new Error('HTTP 诊断文件格式无效');
+  }
+  return { version: 1, enabled: state.enabled, records: state.records.map((record) => sanitizeExchange(record)) };
+}
+
 class HttpExchangeDiagnostics {
   private enabled = false;
   private records: AIHttpExchange[] = [];
@@ -126,15 +136,9 @@ class HttpExchangeDiagnostics {
         }
       }
       if (info.exists) {
-        const saved: unknown = JSON.parse(await FileSystem.readAsStringAsync(file));
-        if (typeof saved !== 'object' || saved === null) throw new Error('文件格式无效');
-        const state = saved as Record<string, unknown>;
-        if (state.version !== 1 || typeof state.enabled !== 'boolean' || !Array.isArray(state.records)
-          || state.records.length > RETENTION || !state.records.every(isExchange)) {
-          throw new Error('文件格式无效');
-        }
+        const state = parseDiagnosticsState(JSON.parse(await FileSystem.readAsStringAsync(file)));
         this.enabled = state.enabled;
-        this.records = state.records.map((record) => sanitizeExchange(record));
+        this.records = state.records;
       }
       // 未提交的临时文件不参与恢复，避免恢复失败的写入或额外保留一份正文。
       await FileSystem.deleteAsync(`${directory}${FILE_NAME}.tmp`, { idempotent: true });
@@ -167,6 +171,39 @@ class HttpExchangeDiagnostics {
     return this.enqueue(async () => {
       await this.initialize();
       return { enabled: this.enabled, records: this.records.map((record) => ({ ...record })), error: this.error };
+    });
+  }
+
+  async exportBackupState() {
+    return this.enqueue(async () => {
+      await this.initialize();
+      // 读取或保存失败时不能把缺失记录伪装成完整备份。
+      if (this.error !== null) throw new Error(this.error);
+      return { version: 1 as const, enabled: this.enabled, records: this.records.map((record) => ({ ...record })) };
+    });
+  }
+
+  validateBackupState(state: unknown): void {
+    parseDiagnosticsState(state);
+  }
+
+  async restoreBackupState(value: unknown): Promise<void> {
+    const state = parseDiagnosticsState(value);
+    // 恢复替换整个诊断状态，旧请求不能在替换后把原数据重新写回。
+    this.generation++;
+    return this.enqueue(async () => {
+      try {
+        await this.persist(state.records, state.enabled);
+        this.initialized = true;
+        this.enabled = state.enabled;
+        this.records = state.records;
+        this.error = null;
+      } catch (error) {
+        this.setError('恢复', error);
+        throw error;
+      } finally {
+        this.notify();
+      }
     });
   }
 

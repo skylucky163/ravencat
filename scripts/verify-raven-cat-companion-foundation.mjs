@@ -22,12 +22,13 @@ async function importTypeScriptModule(relativePath) {
   });
   const targetPath = path.join(
     tmpDir,
-    `${path.basename(relativePath, path.extname(relativePath))}-${Math.random().toString(36).slice(2)}.mjs`,
+    `${path.basename(relativePath, path.extname(relativePath))}.mjs`,
   );
-  fs.writeFileSync(targetPath, output.outputText, 'utf8');
+  fs.writeFileSync(targetPath, output.outputText.replace("'./AIScheduleTiming'", "'./AIScheduleTiming.mjs'"), 'utf8');
   return import(pathToFileURL(targetPath).href);
 }
 
+await importTypeScriptModule('src/features/companion/domain/AIScheduleTiming.ts');
 const settings = await importTypeScriptModule(
   'src/features/companion/domain/CompanionSettings.ts',
 );

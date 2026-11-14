@@ -45,6 +45,8 @@
 | [react-native-safe-area-context](https://www.npmjs.com/package/react-native-safe-area-context/v/5.6.2) | 5.6.2 | MIT | 运行依赖 |
 | [react-native-screens](https://www.npmjs.com/package/react-native-screens/v/4.16.0) | 4.16.0 | MIT | 运行依赖 |
 | [react-native-svg](https://www.npmjs.com/package/react-native-svg/v/15.12.1) | 15.12.1 | MIT | 运行依赖 |
+| [react-native-view-shot](https://www.npmjs.com/package/react-native-view-shot/v/4.0.3) | 4.0.3 | MIT | 运行依赖 |
+| [react-native-webview](https://www.npmjs.com/package/react-native-webview/v/13.15.0) | 13.15.0 | MIT | 运行依赖 |
 | [react-native-worklets](https://www.npmjs.com/package/react-native-worklets/v/0.5.1) | 0.5.1 | MIT | 运行依赖 |
 | [react-test-renderer](https://www.npmjs.com/package/react-test-renderer/v/19.1.0) | 19.1.0 | MIT | 开发工具 |
 | [typescript](https://www.npmjs.com/package/typescript/v/5.9.3) | 5.9.3 | Apache-2.0 | 开发工具 |

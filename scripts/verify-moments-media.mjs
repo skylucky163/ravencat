@@ -4,18 +4,33 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
+import Ajv2020 from 'ajv/dist/2020.js';
 
 const ROOT = process.cwd();
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 let currentExecutor;
 const profile = { id: 'self', name: '用户', avatar: null, momentsCover: null };
+const assistants = ['author', 'reader', 'hidden'].map((name) => ({ name, agentId: `agent-${name}` }));
+class MediaAssetNotFoundError extends Error {}
+class MediaAssetMissingError extends Error {}
+let resolveHook = null;
 
 const mocks = {
   '@platform/persistence': { databaseCoordinator: { openTaskExecutor: () => currentExecutor } },
   '@features/profile': { getCurrentUserProfile: async () => profile, SELF_USER_PROFILE_ID: 'self' },
+  '@features/assistants': { listAIAssistants: async () => assistants },
   '@features/media': {
     releaseMediaAssetCandidates: async () => undefined,
     MEDIA_ASSET_STORAGE_BACKEND: { persistentImage: 'persistent-image' },
+    MediaAssetNotFoundError,
+    MediaAssetMissingError,
+    resolveMediaAsset: async (id) => {
+      const row = db.prepare('SELECT mime_type, status FROM media_assets WHERE id = ?').get(id);
+      if (!row) throw new MediaAssetNotFoundError(id);
+      if (row.status === 'missing') throw new MediaAssetMissingError(id);
+      if (resolveHook) await resolveHook(id);
+      return { asset: { id, mimeType: row.mime_type }, localUri: `file:///${id}` };
+    },
   },
 };
 const cache = new Map();
@@ -378,9 +393,158 @@ const detail = await repository.captureMomentDetailForAgent('agent-reader', publ
 assert.deepEqual(detail.media.map((item) => item.sortOrder), [0, 1]);
 assert.equal(detail.media[0].analysisText, '用户确认：窗边的一杯咖啡');
 
-// 产品范围门禁：AI create 仍 text-only，封面不进入 moment_settings，删除不碰 MediaAsset。
-const aiCreate = read('src/features/moments/aiTools/AICreateMomentTool.ts');
-assert.doesNotMatch(aiCreate, /mediaAssetIds|imageUrl|imageBase64/);
+// AI 从已有媒体 ID 发布图片，复用同一真实 SQLite、ACL 和提交后识别链路。
+const createTool = load('src/features/moments/aiTools/AICreateMomentTool.ts');
+const createModule = load('src/features/moments/application/CreateMoment.ts');
+const context = {
+  getAgentId: () => 'agent-author', getAIName: () => 'author', isBlocked: () => false,
+  repositories: { moment: repository }, sharedState: {}, aiConfig: {},
+};
+const schema = createTool.definition.parameters;
+assert.equal(schema.required.includes('mediaAssetIds'), false, '图片参数可选');
+assert.equal(schema.properties.mediaAssetIds.maxItems, 9);
+assert.equal(schema.properties.mediaAssetIds.uniqueItems, true);
+const validateCreateInput = new Ajv2020({ strict: false }).compile(schema);
+for (const ids of [null, 'not-an-array', [''], [3], [['nested']], Array(10).fill('id'), ['id', 'id']]) {
+  assert.equal(validateCreateInput({ content: '参数校验', mediaAssetIds: ids }), false, '工具 schema 在模型边界拒绝无效形状、数量和重复 ID');
+}
+for (const assistant of assistants) {
+  db.prepare('INSERT INTO ai_assistants VALUES (?, ?, ?)').run(assistant.agentId, assistant.agentId, assistant.name);
+}
+const assetIds = (await repository.listMedia(published.id)).map((media) => media.mediaAssetId);
+const catalogCount = () => db.prepare('SELECT COUNT(*) AS count FROM media_assets').get().count;
+const catalogBefore = catalogCount();
+const preparationsBefore = preparedSerial;
+const callsBeforeAgentPublish = executorCalls;
+const result = await createTool.execute({
+  content: '复用图片发布', mediaAssetIds: [` ${assetIds[1]} `, assetIds[0]],
+  audience: { mode: 'selected', agentIds: ['agent-reader'] },
+  agentId: 'agent-hidden',
+}, context);
+assert.equal(result.success, true);
+const agentMomentId = result.data.momentId;
+const agentMoment = await repository.getMomentForUser(agentMomentId);
+assert.equal(agentMoment.authorType, 'ai');
+assert.equal(agentMoment.authorId, 'agent-author', '作者只取可信上下文');
+assert.equal(agentMoment.content, '复用图片发布');
+assert.equal(await repository.captureMomentDetailForAgent('agent-hidden', agentMomentId), null);
+assert.deepEqual(
+  db.prepare('SELECT recipient_agent_id FROM moment_social_inbox_deliveries WHERE source_moment_id = ?').all(agentMomentId).map((row) => row.recipient_agent_id),
+  ['agent-reader'],
+);
+assert.deepEqual((await repository.listMedia(agentMomentId)).map((item) => item.mediaAssetId), [assetIds[1], assetIds[0]]);
+assert.deepEqual(
+  (await repository.listMomentTimelineForUser()).find((item) => item.id === agentMomentId).media.map((item) => item.mediaAssetId),
+  [assetIds[1], assetIds[0]], '时间线直接消费已有图片引用',
+);
+for (let attempt = 0; attempt < 20; attempt += 1) {
+  if ((await repository.listMedia(agentMomentId)).every((item) => item.analysisStatus === 'completed')) break;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+assert.equal(executorCalls - callsBeforeAgentPublish, 2, 'AI 发布后每张图片识别一次');
+assert.ok((await repository.captureMomentDetailForAgent('agent-reader', agentMomentId)).media.every((item) => item.analysisText === '成功识别'));
+assert.equal(catalogCount(), catalogBefore, '复用已有资产不创建新 catalog');
+assert.equal(preparedSerial, preparationsBefore, '复用已有资产不复制文件');
+
+// 用户可校正 AI 发布的图片，复用同一重识别、手动编辑和旧结果隔离语义。
+const agentMedia = (await repository.listMedia(agentMomentId))[0];
+analysisBehavior = async () => '重新识别 AI 发布的图片';
+assert.equal((await analysisModule.reanalyzeMomentMedia(agentMedia.id)).success, true);
+assert.equal((await repository.getMedia(agentMedia.id)).analysisText, '重新识别 AI 发布的图片');
+let finishAgentAnalysis;
+analysisBehavior = () => new Promise((resolve) => { finishAgentAnalysis = resolve; });
+const agentAnalysisInFlight = analysisModule.reanalyzeMomentMedia(agentMedia.id);
+while (!finishAgentAnalysis) await new Promise((resolve) => setTimeout(resolve, 0));
+await analysisModule.editMomentMediaAnalysis(agentMedia.id, '用户校正 AI 图片的描述');
+finishAgentAnalysis('过期的模型描述');
+assert.equal((await agentAnalysisInFlight).errorCode, 'stale_analysis_attempt');
+const agentEdited = await repository.getMedia(agentMedia.id);
+assert.equal(agentEdited.analysisSource, 'user');
+assert.equal(agentEdited.analysisText, '用户校正 AI 图片的描述');
+assert.equal(agentEdited.analysisModelConfigId, null);
+assert.equal((await repository.captureMomentDetailForAgent('agent-reader', agentMomentId)).media[0].analysisText, '用户校正 AI 图片的描述');
+await assert.rejects(analysisModule.reanalyzeMomentMedia('absent-media'), (error) => error.code === 'media_not_found');
+await assert.rejects(analysisModule.editMomentMediaAnalysis('absent-media', '描述'), (error) => error.code === 'media_not_found');
+
+for (const extra of [{}, { mediaAssetIds: [] }]) {
+  const textOnly = await createTool.execute({ content: '纯文字', ...extra }, context);
+  assert.equal(textOnly.success, true);
+  assert.deepEqual(await repository.listMedia(textOnly.data.momentId), []);
+}
+
+function factCounts() {
+  return ['moments', 'moment_audience_ai', 'moment_media', 'moment_social_inbox_deliveries', 'media_assets']
+    .map((table) => db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count);
+}
+for (const ids of [[' '], [assetIds[0], ` ${assetIds[0]} `], Array(10).fill(assetIds[0]), ['absent-id'], ['https://example.test/image.jpg']]) {
+  const before = factCounts();
+  const invalid = await createTool.execute({ content: '无效图片', mediaAssetIds: ids }, context);
+  assert.equal(invalid.success, false, `拒绝无效图片参数 ${JSON.stringify(ids)}`);
+  assert.deepEqual(factCounts(), before, '无效图片不得留下部分发布事实');
+}
+for (const [id, mimeType, status] of [['audio-id', 'audio/mpeg', 'ready'], ['missing-id', 'image/png', 'missing']]) {
+  const item = asset(id, 99);
+  db.prepare('INSERT INTO media_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    item.id, item.storageBackend, item.storageKey, item.hashAlgorithm, item.contentHash,
+    mimeType, item.byteSize, item.width, item.height, item.durationMs, status, item.createdAt, item.updatedAt,
+  );
+  const before = factCounts();
+  const invalid = await createTool.execute({ content: '不可用的图片', mediaAssetIds: [assetIds[0], id] }, context);
+  assert.equal(invalid.success, false);
+  assert.deepEqual(factCounts(), before, '后续图片无效也不得先提交前面的图片或正文');
+}
+
+// 事务中图片写入失败，正文、可见范围和 Inbox 一并回滚。
+db.exec(`CREATE TRIGGER fail_agent_media BEFORE INSERT ON moment_media
+  WHEN NEW.sort_order = 1 BEGIN SELECT RAISE(ABORT, 'agent media failure'); END;`);
+const beforeRollback = factCounts();
+await assert.rejects(createModule.createAgentMoment(repository, {
+  listAgentIds: async () => assistants.map((item) => item.agentId),
+}, {
+  agentId: 'agent-author', nameSnapshot: 'author', content: '回滚图文', mediaAssetIds: assetIds,
+  audience: { mode: 'selected', viewerAgentIds: ['agent-reader'] },
+}), /agent media failure/);
+assert.deepEqual(factCounts(), beforeRollback);
+db.exec('DROP TRIGGER fail_agent_media;');
+
+// 解析图片期间取消不能留下事实，也不能被工具转成普通发布失败。
+const imageAbort = new AbortController();
+resolveHook = async () => imageAbort.abort();
+const beforeAbort = factCounts();
+await assert.rejects(createTool.execute({ content: '取消图文', mediaAssetIds: assetIds }, {
+  ...context, abortSignal: imageAbort.signal,
+}), (error) => error.name === 'AbortError');
+resolveHook = null;
+assert.deepEqual(factCounts(), beforeAbort);
+
+// 数量上限可以真实发布；识别失败只影响语义，不影响图片和发布结果。
+const nineIds = [...assetIds];
+for (let index = 0; index < 7; index += 1) {
+  const item = asset(`nine-${index}`, index + 20);
+  db.prepare('INSERT INTO media_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    item.id, item.storageBackend, item.storageKey, item.hashAlgorithm, item.contentHash,
+    item.mimeType, item.byteSize, item.width, item.height, item.durationMs, item.status, item.createdAt, item.updatedAt,
+  );
+  nineIds.push(item.id);
+}
+await settingsModule.setMomentImageAnalysisModel(null);
+const nineResult = await createTool.execute({ content: '九张图片', mediaAssetIds: nineIds }, context);
+assert.equal(nineResult.success, true);
+assert.deepEqual((await repository.listMedia(nineResult.data.momentId)).map((item) => item.mediaAssetId), nineIds);
+for (let attempt = 0; attempt < 20; attempt += 1) {
+  if ((await repository.listMedia(nineResult.data.momentId)).every((item) => item.analysisStatus === 'failed')) break;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+assert.ok((await repository.listMedia(nineResult.data.momentId)).every((item) => item.analysisErrorCode === 'model_not_configured'));
+assert.ok(await repository.getMomentForUser(nineResult.data.momentId), '识别失败后图文动态仍然存在');
+
+// 原用户动态撤销后，AI 的图片引用和原资产继续存在。
+const beforeSharedDeletion = catalogCount();
+await repository.deleteMoment(published.id);
+assert.deepEqual((await repository.listMedia(agentMomentId)).map((item) => item.mediaAssetId), [assetIds[1], assetIds[0]]);
+assert.equal(catalogCount(), beforeSharedDeletion);
+
+// 封面不进入 moment_settings，删除不直接操作 MediaAsset catalog。
 assert.doesNotMatch(momentsSchema.MOMENT_SETTINGS_SCHEMA, /cover/i);
 assert.doesNotMatch(read('src/features/moments/infrastructure/SQLiteMomentRepository.ts'), /DELETE\s+FROM\s+media_assets/i);
 const publishView = read('src/features/moments/presentation/PublishView.tsx');

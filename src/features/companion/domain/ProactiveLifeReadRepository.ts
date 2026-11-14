@@ -1,24 +1,32 @@
 /** 主动生活只读端口；不拥有 AI 日程的业务事实。 */
+import type { AIScheduleRecurrence } from './AIScheduleTiming';
 
 export type ProactiveLifeSourceType = 'ai_schedule';
 
 /** 主动生活历史的用户可理解终态，不暴露 AI Schedule 的内部 disposition 名称。 */
 export type ProactiveLifeCompletionDisposition = 'completed' | 'interrupted' | 'unexecuted' | 'failed';
 
-export interface ProactiveLifeFutureRecord {
+interface ProactiveLifeScheduleRecord {
   sourceType: ProactiveLifeSourceType;
   sourceId: string;
+  seriesId: string | null;
   ownerAIId: string;
   plannedAt: string;
   summary: string | null;
+  recurrence: AIScheduleRecurrence | null;
 }
 
-export interface ProactiveLifeRunningRecord extends ProactiveLifeFutureRecord {
+export interface ProactiveLifeFutureRecord extends ProactiveLifeScheduleRecord {
+  /** 后续日期的规则预览仍指向当前有效日程，不代表已经创建了执行记录。 */
+  isProjected: boolean;
+}
+
+export interface ProactiveLifeRunningRecord extends ProactiveLifeScheduleRecord {
   startedAt: string;
   runId: string;
 }
 
-export interface ProactiveLifeHistoryRecord extends ProactiveLifeFutureRecord {
+export interface ProactiveLifeHistoryRecord extends ProactiveLifeScheduleRecord {
   occurredAt: string;
   terminalAt: string;
   runId: string | null;

@@ -46,9 +46,9 @@ export default function McpAssistantSelection({ assistants, selectedIds, disable
     <View style={styles.container}>
       {collapsible ? (
         <TouchableOpacity style={styles.header} accessibilityRole="button"
-          accessibilityLabel={`生效 AI：${summary}`} accessibilityState={{ expanded }}
+          accessibilityLabel={`生效 AI${required ? '（必选）' : ''}：${summary}`} accessibilityState={{ expanded }}
           onPress={() => setSelectionExpanded((current) => !current)} activeOpacity={0.7}>
-          <Text style={styles.label}>生效 AI</Text>
+          <Text style={styles.label}>生效 AI{required ? '（必选）' : ''}</Text>
           <Text style={styles.summary} numberOfLines={1}>{summary}</Text>
           <Chevron size={16} color={theme.colors.text.tertiary} />
         </TouchableOpacity>
@@ -75,7 +75,7 @@ export default function McpAssistantSelection({ assistants, selectedIds, disable
           </View>
           <Text style={styles.hint}>
             {assistants.length === 0 ? '暂无 AI，请先添加 AI 助手。'
-              : selectedIds.length === 0 ? (required ? '请至少选择一位 AI 后保存或测试连接。' : '未选择生效对象，任何 AI 都不会注入此服务。')
+              : selectedIds.length === 0 ? (required ? '请至少选择一位 AI 后测试连接。' : '未选择生效对象，任何 AI 都不会注入此服务。')
                 : '仅所选 AI 可注入并使用此服务。'}
           </Text>
         </>

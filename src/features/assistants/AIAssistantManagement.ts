@@ -246,11 +246,19 @@ function emitAIAssistantUpdated(assistant: AIProfile): void {
 }
 
 /** 服务更新已提交后刷新角色投影，事件不携带额外连接真值。 */
-export async function notifyAssistantServiceConnectionsChanged(serviceConfigId: string): Promise<void> {
-  for (const id of await aiAssistantRepository.listServiceAssistantIds(serviceConfigId)) {
-    const assistant = await aiAssistantRepository.getById(id);
-    if (assistant) emitAIAssistantUpdated(assistant);
+export async function notifyAssistantServiceConnectionsChanged(serviceConfigId: string, detachedAssistantIds?: string[]): Promise<boolean> {
+  let refreshed = true;
+  for (const id of detachedAssistantIds ?? await aiAssistantRepository.listServiceAssistantIds(serviceConfigId)) {
+    try {
+      const assistant = await aiAssistantRepository.getById(id);
+      if (assistant) {
+        for (const listener of aiAssistantUpdatedListeners) {
+          try { listener(assistant); } catch { refreshed = false; }
+        }
+      }
+    } catch { refreshed = false; }
   }
+  return refreshed;
 }
 
 export function subscribeAIAssistantUpdated(

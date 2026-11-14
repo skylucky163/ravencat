@@ -20,7 +20,7 @@ import {
 } from '../../../messages/application/ResolveChatAttachmentMedia';
 import { useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
-import ImagePreviewModal from './ImagePreviewModal';
+import { ImageViewerModal } from '@shared/ui';
 import { ChatMediaResolutionCacheContext } from '../components/chatMediaResolutionCache';
 
 interface ImageAttachmentCardProps {
@@ -129,9 +129,9 @@ export default function ImageAttachmentCard({
         ) : null}
       </Pressable>
 
-      <ImagePreviewModal
-        visible={previewVisible}
-        imageUri={resolvedUris?.fullSizeUri || null}
+      <ImageViewerModal
+        visible={previewVisible && resolvedUris !== null}
+        sources={resolvedUris ? [{ uri: resolvedUris.fullSizeUri }] : []}
         onClose={() => setPreviewVisible(false)}
       />
     </>

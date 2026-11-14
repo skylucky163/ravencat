@@ -1,7 +1,7 @@
 /**
  * Agent run 的短生命周期展示投影。
  *
- * canonical user_reply 的 assistant/reasoning/tool 事实仍只由 T3 写入数据库。
+ * assistant/reasoning/tool 在正常 T3 或中断封存时取得消息身份。
  * 这个 store 只保存当前 JS runtime 中尚未完成 reconciliation 的展示条目，
  * 不参与 MessageTimeline、分页游标或 sessionTimelineCache。应用进程重启后
  * store 自然为空，历史仍以 SQLite 为唯一来源。

@@ -1,6 +1,6 @@
 import { sharedChatRecordModuleUrl, sharedMomentModuleUrl } from './helpers/chat-sharing-fixture.mjs';
 import { prepareConsumedTurnFixture } from './helpers/sqlite-bootstrap-fixture.mjs';
-import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
+import { chatCodeBlockModuleUrl, chatCodePreviewRepositoryModuleUrl, chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 /**
  * Phase 5A ConversationTurnCoordinator 第一片：当前回合 fixture 与 T1～T4 行为验证。
  *
@@ -80,7 +80,7 @@ const coordinatorStub = `const databaseCoordinator = {
   },
 };`;
 
-const messageRepoSource = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`);
+const messageRepoSource = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from '../domain/ChatCodeBlock'", `from '${chatCodeBlockModuleUrl}'`).replaceAll("from './SQLiteChatCodePreviewRepository'", `from '${chatCodePreviewRepositoryModuleUrl}'`).replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`);
 const stubbedMessageRepoSource = messageRepoSource
   .replaceAll("from '../domain/chatMessageMetadata'", `from '${transpileToModuleUrl(
     read('src/features/chat/messages/domain/chatMessageMetadata.ts').replaceAll("from './SharedMoment'", `from '${sharedMomentModuleUrl}'`)
@@ -96,8 +96,11 @@ const stubbedMessageRepoSource = messageRepoSource
     `from '${separatorModuleUrl}'`,
   );
 const messageRepoModuleUrl = transpileToModuleUrl(stubbedMessageRepoSource);
+const turnPresentationModuleUrl = transpileToModuleUrl(read('src/features/chat/reply/infrastructure/ChatTurnPresentationSql.ts')
+  .replaceAll("from '../../messages/infrastructure/SQLiteMessageRepository'", `from '${messageRepoModuleUrl}'`)
+  .replaceAll("from '../../messages/domain/chatMessageMetadata'", `from '${messageDomainModuleUrl}'`));
 
-const turnRepoSource = read('src/features/chat/reply/infrastructure/SQLiteConversationTurnRepository.ts').replaceAll("from '../../messages/infrastructure/ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from './ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`);
+const turnRepoSource = read('src/features/chat/reply/infrastructure/SQLiteConversationTurnRepository.ts').replaceAll("from '../../messages/infrastructure/ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from './ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`).replaceAll("from './ChatTurnPresentationSql'", `from '${turnPresentationModuleUrl}'`);
 const stubbedTurnRepoSource = turnRepoSource
   .replace(
     /import\s*\{[\s\S]*?\}\s*from\s*['"]@platform\/persistence['"];/,

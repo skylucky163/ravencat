@@ -36,6 +36,7 @@ const metadata = load('src/features/chat/messages/domain/chatMessageMetadata.ts'
   './SharedMoment': sharedMoment, './SharedChatRecord': {}, './ChatSticker': load('src/features/chat/messages/domain/ChatSticker.ts'),
 });
 const presentation = load('src/features/chat/presentation/messages/components/chatMessagePresentation.ts', {
+  '../../../messages/domain/ChatCodeBlock': load('src/features/chat/messages/domain/ChatCodeBlock.ts'),
   '@features/chat/messages/domain': metadata,
 });
 const themes = ['defaultLight', 'defaultDark', 'liquidGlass', 'moonKimi', 'paperNote'].map((name) =>
@@ -101,6 +102,8 @@ const Bubble = load(`${bubbleDir}index.tsx`, {
   './OfficialReplicaProcessCard': stub('Process'), './StickerMessageCard': stub('Sticker'),
   './VoiceMessageCard': stub('Voice'), '../components/SharedMomentCard': stub('Moment'),
   '../components/SharedChatRecordView': stub('SharedRecord'),
+  '../components/ChatCodeCard': stub('CodeCard'),
+  '../../../messages/domain/ChatCodeBlock': load('src/features/chat/messages/domain/ChatCodeBlock.ts'),
   './layoutProbe': { isLayoutProbeEnabled: () => false },
   '@shopify/flash-list': recycling,
 }).default;

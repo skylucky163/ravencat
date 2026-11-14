@@ -32,7 +32,7 @@ moment_media 保存排序、资产 ID、analysis 状态/正文/source、实际�
 
 首次发布成功后每张图自动分析一次，模型调用不进入发布事务。失败不撤回 Moment 或图片，AI 读取结果明确无可靠图片语义。更换模型、历史 failed、重启或 migration 不自动批量重跑。
 
-用户可手动重新识别或编辑描述；新模型结果保存 model/source/time，重识别失败保留已有成功描述。手动编辑保存 completed/user，不要求模型确认。claim/revision CAS 拒绝旧分析覆盖手动正文、后续识别或已删媒体。
+用户可对自己或 AI 发布的时刻图片手动重新识别或编辑描述，大图查看器共用同一管理入口，不按发布者隐藏操作；这些能力只由用户界面调用。新模型结果保存 model/source/time，重识别失败保留已有成功描述。手动编辑保存 completed/user，不要求模型确认。claim/revision CAS 拒绝旧分析覆盖手动正文、后续识别或已删媒体。
 
 模型失败原因由 AI Client 脱敏后，通过 Host 的结构化错误传入 Moments，与失败状态在同一次 CAS 中保存。大图的「失败原因」展示已保存说明；手动重试直接展示本次原因，即使因保留可靠描述而没有写入失败状态。成功识别或手动编辑清除旧原因。145 升级只追加可空原因列，历史失败保持未知，不补造接口原文、不重新请求模型；AI 详情继续只消费图片语义，不读取接口诊断。
 
@@ -75,7 +75,7 @@ AI 的发布、查询、详情、评论/reply、like/unlike 与删除通过唯�
 
 Moment 事件只进入 Inbox。AI 在正常获授权的 Chat/AI 日程执行机会中决定是否读取、互动，不恢复随机 participant、XML 行为协议、独立 Moments 模型 run 或 Moment→Chat 主动私聊旁路。
 
-当前 AI 发布为文本，不提供 AI 图片库/生成/上传或定位来源。Ambient Wake、创建后 audience 编辑、历史编辑与群聊图片支持不是当前完成条件，不提前建设接口或兼容层。
+AI 发布工具 `aiCreateMoment` 接受可选 `mediaAssetIds`，按传入顺序最多引用 9 张已有图片；省略或空数组仍发布纯文字，正文必填。Application 校验 ID、重复和数量，并通过 Media resolver 确认文件可用及图片类型；不接受路径或 URL。图片引用与 Moment、audience、Inbox 同事务提交，提交后复用用户发布的 one-shot 分析，分析失败不撤回发布。图片来源沿用已有消息、下载与生图能力，不另建 Moments 图片库；定位仍不提供 AI 入口。Ambient Wake、创建后 audience 编辑与历史编辑不属于当前能力。
 
 ## 7. 升级、验收与长期不变量
 

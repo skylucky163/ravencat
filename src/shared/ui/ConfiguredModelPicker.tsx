@@ -17,9 +17,10 @@ interface Props {
   onSelect(modelConfigId: string | null): Promise<void>;
   subscribeChanged(listener: () => void): () => void;
   disabled?: boolean;
+  onManageModels?(): void;
 }
 
-export default function ConfiguredModelPicker({ title, description, unconfiguredLabel = '未选择模型', clearSelectionLabel = '取消选择', getSettings, onSelect, subscribeChanged, disabled = false }: Props) {
+export default function ConfiguredModelPicker({ title, description, unconfiguredLabel = '未选择模型', clearSelectionLabel = '取消选择', getSettings, onSelect, subscribeChanged, disabled = false, onManageModels }: Props) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
   const [settings, setSettings] = useState<ModelSelectionSettings | null>(null);
@@ -87,7 +88,7 @@ export default function ConfiguredModelPicker({ title, description, unconfigured
       description={description} models={settings?.models ?? []} selectedModel={settings?.selectedModelId}
       loading={loading} error={error} disabled={disabled || saving} onRetry={() => { void reload(); }}
       onSelect={id => { void select(id); }} onClear={settings ? () => { void select(null); } : undefined}
-      clearSelectionLabel={clearSelectionLabel} />
+      clearSelectionLabel={clearSelectionLabel} onManageModels={onManageModels} />
   </>;
 }
 

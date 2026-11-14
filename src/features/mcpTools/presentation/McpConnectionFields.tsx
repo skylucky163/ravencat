@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { AppTextInput, ModalSheet } from '@shared/ui';
+import { AppTextInput, Button, InputField, ModalSheet } from '@shared/ui';
 import { useTheme, useThemedStyles, type PresentationTheme } from '@shared/theme';
 import type { McpServerAuthMode } from '../domain/McpServerConfig';
 import { parseMcpServerImport, type McpServerImportDraft } from '../application/ParseMcpServerImport';
@@ -18,20 +18,35 @@ interface Props {
 }
 
 const createStyles = (theme: PresentationTheme) => StyleSheet.create({
-  label: { fontSize: 14, color: theme.colors.text.primary, marginBottom: 8 },
-  input: {
-    borderWidth: 1, borderColor: theme.colors.border.light, borderRadius: theme.radius.md,
-    padding: 12, fontSize: 14, color: theme.colors.text.primary,
-    backgroundColor: theme.colors.surface.default, marginBottom: 16,
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 },
+  title: { flex: 1, fontSize: 15, fontWeight: '600', color: theme.colors.text.primary },
+  importButton: { paddingVertical: 8, paddingLeft: 8 },
+  importText: { color: theme.colors.brand.primary, fontSize: 13, fontWeight: '500' },
+  label: { fontSize: 14, fontWeight: '500', color: theme.colors.text.secondary, marginBottom: 8 },
+  authOptions: {
+    flexDirection: 'row', padding: 4, gap: 4,
+    borderRadius: theme.radius.md, backgroundColor: theme.colors.surface.muted,
   },
-  row: { flexDirection: 'row', gap: 12, marginBottom: 16 },
-  button: { padding: 12, borderRadius: theme.radius.md, backgroundColor: theme.colors.surface.default },
-  selected: { borderWidth: 1, borderColor: theme.colors.brand.primary },
-  buttonText: { color: theme.colors.brand.primary, fontSize: 14 },
-  hint: { color: theme.colors.text.secondary, fontSize: 12, marginBottom: 16 },
-  dialog: { padding: 20 },
-  json: { minHeight: 160, textAlignVertical: 'top' },
-  error: { color: theme.colors.feedback.error, marginBottom: 12 },
+  authOption: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 10, borderRadius: theme.radius.sm },
+  selected: { backgroundColor: theme.colors.surface.default },
+  optionText: { color: theme.colors.text.secondary, fontSize: 14 },
+  selectedText: { color: theme.colors.brand.primary, fontWeight: '600' },
+  disabled: { opacity: 0.5 },
+  tokenField: { marginTop: 16 },
+  tokenInput: {
+    paddingHorizontal: 12, paddingVertical: 12, fontSize: 16,
+    color: theme.colors.text.primary, backgroundColor: theme.colors.surface.input, borderRadius: theme.radius.md,
+  },
+  hint: { color: theme.colors.text.tertiary, fontSize: 12, lineHeight: 18, marginTop: 8 },
+  dialogScroll: { flexShrink: 1 },
+  dialog: { padding: 20, gap: 16 },
+  jsonField: { marginBottom: 0 },
+  jsonInput: { minHeight: 160, maxHeight: 280 },
+  dialogActions: { flexDirection: 'row', gap: 12, paddingHorizontal: 20, paddingBottom: 20, flexShrink: 0 },
+  dialogButton: { flex: 1, paddingHorizontal: 12 },
+  draft: { padding: 14, borderRadius: theme.radius.md, backgroundColor: theme.colors.surface.muted },
+  draftName: { color: theme.colors.text.primary, fontSize: 15 },
+  error: { color: theme.colors.feedback.error, fontSize: 13, lineHeight: 18 },
 });
 
 export default function McpConnectionFields(props: Props) {
@@ -53,44 +68,56 @@ export default function McpConnectionFields(props: Props) {
     }
   };
   return <>
-    <TouchableOpacity style={[styles.button, { marginBottom: 16 }]} disabled={props.disabled} onPress={() => setOpen(true)}>
-      <Text style={styles.buttonText}>从官方配置 JSON 导入</Text>
-    </TouchableOpacity>
-    <Text style={styles.label}>Server URL</Text>
-    <AppTextInput style={styles.input} value={props.url} onChangeText={props.onUrlChange}
-      placeholder="请输入 MCP Server 地址" placeholderTextColor={theme.colors.text.tertiary}
-      autoCapitalize="none" autoCorrect={false} keyboardType="url" editable={!props.disabled} />
+    <View style={styles.header}>
+      <Text style={styles.title}>连接设置</Text>
+      <TouchableOpacity style={[styles.importButton, props.disabled && styles.disabled]}
+        accessibilityRole="button" accessibilityLabel="从官方配置 JSON 导入"
+        disabled={props.disabled} onPress={() => setOpen(true)}>
+        <Text style={styles.importText}>导入 JSON</Text>
+      </TouchableOpacity>
+    </View>
+    <InputField label="服务地址" value={props.url} onChangeText={props.onUrlChange}
+      placeholder="https://example.com/mcp" autoCapitalize="none" autoCorrect={false}
+      keyboardType="url" editable={!props.disabled} />
     <Text style={styles.label}>认证方式</Text>
-    <View style={styles.row}>
+    <View style={styles.authOptions} accessibilityRole="radiogroup" accessibilityLabel="认证方式">
       {(['none', 'bearer_token'] as const).map((mode) => <TouchableOpacity key={mode}
-        style={[styles.button, props.authMode === mode && styles.selected]} disabled={props.disabled}
+        style={[styles.authOption, props.authMode === mode && styles.selected, props.disabled && styles.disabled]}
+        accessibilityRole="radio" accessibilityLabel={mode === 'none' ? '无认证' : 'Bearer Token'}
+        accessibilityState={{ checked: props.authMode === mode, disabled: props.disabled }} disabled={props.disabled}
         onPress={() => props.onAuthModeChange(mode)}>
-        <Text style={styles.buttonText}>{mode === 'none' ? '无认证' : 'Bearer Token'}</Text>
+        <Text style={[styles.optionText, props.authMode === mode && styles.selectedText]}>
+          {mode === 'none' ? '无认证' : 'Bearer Token'}
+        </Text>
       </TouchableOpacity>)}
     </View>
-    {props.authMode === 'bearer_token' && <>
+    {props.authMode === 'bearer_token' && <View style={styles.tokenField}>
       <Text style={styles.label}>Token</Text>
-      <AppTextInput style={styles.input} value={props.bearerToken} onChangeText={props.onTokenChange}
-        placeholder={props.hasSavedToken ? '已保存，留空保留；更换地址时需重新填写' : '粘贴 Token，无需 Bearer 前缀'}
+      <AppTextInput style={styles.tokenInput} value={props.bearerToken} onChangeText={props.onTokenChange}
+        accessibilityLabel="Bearer Token" placeholder={props.hasSavedToken ? '已保存，可留空' : '粘贴 Token'}
         placeholderTextColor={theme.colors.text.tertiary} secureTextEntry autoCapitalize="none"
         autoCorrect={false} editable={!props.disabled} />
-      <Text style={styles.hint}>Token 保存在设备安全存储中。恢复备份或换机后需要重新填写。</Text>
-    </>}
-    <ModalSheet visible={open} onClose={close} title="粘贴官方 MCP 配置">
-      <ScrollView contentContainerStyle={styles.dialog} keyboardShouldPersistTaps="handled">
-        <AppTextInput style={[styles.input, styles.json]} value={json} onChangeText={(value) => { setJson(value); setDrafts([]); }}
-          multiline autoCapitalize="none" autoCorrect={false} placeholder={'{"mcpServers": { ... }}'}
-          placeholderTextColor={theme.colors.text.tertiary} />
-        {error && <Text style={styles.error}>{error}</Text>}
+      <Text style={styles.hint}>
+        {props.hasSavedToken ? '留空保留已保存的令牌，更换地址需重新填写。' : '只粘贴令牌，不含 Bearer 前缀。'}
+      </Text>
+    </View>}
+    <ModalSheet visible={open} onClose={close} title="导入 MCP 配置">
+      <ScrollView style={styles.dialogScroll} contentContainerStyle={styles.dialog} keyboardShouldPersistTaps="handled">
+        <Text style={styles.hint}>粘贴官方 mcpServers JSON，导入后再选择生效 AI。</Text>
+        <InputField label="配置 JSON" style={styles.jsonField} inputStyle={styles.jsonInput}
+          value={json} onChangeText={(value) => { setJson(value); setDrafts([]); setError(null); }}
+          multiline autoGrow autoCapitalize="none" autoCorrect={false} placeholder={'{"mcpServers": { ... }}'} />
+        {error && <Text style={styles.error} accessibilityRole="alert">{error}</Text>}
         {drafts.length > 0 && <Text style={styles.hint}>选择要填写到当前页面的服务：</Text>}
-        {drafts.map((draft) => <TouchableOpacity key={draft.name} style={styles.button} onPress={() => select(draft)}>
-          <Text style={styles.buttonText}>{draft.name}</Text>
+        {drafts.map((draft) => <TouchableOpacity key={draft.name} style={styles.draft}
+          accessibilityRole="button" onPress={() => select(draft)}>
+          <Text style={styles.draftName}>{draft.name}</Text>
         </TouchableOpacity>)}
-        <View style={styles.row}>
-          <TouchableOpacity style={styles.button} onPress={parse}><Text style={styles.buttonText}>读取配置</Text></TouchableOpacity>
-          <TouchableOpacity style={styles.button} onPress={close}><Text style={styles.buttonText}>取消</Text></TouchableOpacity>
-        </View>
       </ScrollView>
+      <View style={styles.dialogActions}>
+        <Button title="取消" variant="secondary" style={styles.dialogButton} onPress={close} />
+        <Button title="读取配置" style={styles.dialogButton} onPress={parse} />
+      </View>
     </ModalSheet>
   </>;
 }

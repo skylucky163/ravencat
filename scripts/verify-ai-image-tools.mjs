@@ -41,7 +41,10 @@ const processingModule = load('src/features/stickers/infrastructure/SQLiteAIStic
 });
 const { ConversationTurnRepository } = load('src/features/chat/reply/infrastructure/SQLiteConversationTurnRepository.ts', {
   './ChatReplyVersionSql': load('src/features/chat/reply/infrastructure/ChatReplyVersionSql.ts'),
-  '@platform/persistence': {}, '../../messages/infrastructure/ChatMessageMutationSql': load('src/features/chat/reply/infrastructure/ChatTurnPresentationSql.ts'),
+  '@platform/persistence': {}, '../../messages/infrastructure/ChatMessageMutationSql': {},
+  './ChatTurnPresentationSql': load('src/features/chat/reply/infrastructure/ChatTurnPresentationSql.ts', {
+    '../../messages/infrastructure/SQLiteMessageRepository': {}, '../../messages/domain/chatMessageMetadata': {},
+  }),
   '../../messages/infrastructure/SQLiteMessageRepository': {}, '../domain/ConversationTurn': {}, '../../messages/domain': {},
 });
 const turns = new ConversationTurnRepository();
@@ -356,13 +359,17 @@ db.close();
 const legacy = new DatabaseSync(':memory:');
 legacy.exec('PRAGMA foreign_keys=ON');
 for (const [key, sql] of Object.entries(SCHEMAS)) {
-  if (['stickers', 'aiStickerTasks', 'aiDownloadedImages'].includes(key)) continue;
+  if (['stickers', 'aiStickerTasks', 'aiDownloadedImages', 'modelServices'].includes(key)) continue;
   legacy.exec(sql);
 }
 // 119 的真实结构没有后来新增的设置列，不能把当前 schema 冒充旧库。
+legacy.exec(loadSqliteModule('modelServiceSchema').LEGACY_MODEL_SERVICE_SCHEMA);
+legacy.exec('ALTER TABLE moments DROP COLUMN edited_at; ALTER TABLE moments DROP COLUMN edit_revision;');
 legacy.exec('ALTER TABLE ai_assistants DROP COLUMN show_token_usage; ALTER TABLE ai_assistants DROP COLUMN nickname; ALTER TABLE ai_assistants DROP COLUMN show_action_steps; ALTER TABLE ai_assistants DROP COLUMN streaming_reply;');
 legacy.exec('ALTER TABLE chat_summary_request_settings DROP COLUMN model_config_id; ALTER TABLE chat_summary_request_settings DROP COLUMN group_trigger_count; ALTER TABLE chat_summary_request_settings DROP COLUMN primary_limit;');
 legacy.exec('ALTER TABLE group_chat_members DROP COLUMN muted; ALTER TABLE group_chat_members DROP COLUMN joined_during_plan_id;');
+// 170 新增的跟进设置不属于 119 旧库，由真实升级流程添加。
+legacy.exec('ALTER TABLE raven_cat_contact_settings DROP COLUMN follow_up_enabled; ALTER TABLE raven_cat_contact_settings DROP COLUMN follow_up_interval_minutes;');
 for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) legacy.exec(`ALTER TABLE ${table} DROP COLUMN service_config_id;`);
 const schema = loadSqliteModule('stickerSchema');
 const oldStickers = schema.STICKERS_SCHEMA.replace('media_asset_id TEXT NOT NULL CHECK', 'media_asset_id TEXT NOT NULL UNIQUE CHECK')
@@ -616,6 +623,7 @@ assert.equal((await search.searchStickersForAI({ assistantId: 'ai-two', query: '
 
 // 历史模型原文保留图片身份；预览文字不暴露 ID，旧 URI 附件不伪造媒体身份。
 const { projectChatContextMessage } = load('src/features/chat/summary/domain/ChatContext.ts', {
+  '../../messages/domain/ChatCodeBlock': load('src/features/chat/messages/domain/ChatCodeBlock.ts'),
   '../../messages/domain/chatMessageMetadata': chatMetadata, '../../messages/domain/ChatSticker': chatSticker,
   '../../messages/domain/SharedChatRecord': sharedRecord,
   '../../messages/domain/SharedMoment': sharedMoment,
@@ -832,3 +840,5 @@ assert.equal(getErrorDisplayInfo('image input is not supported').title, '图片�
 assert.equal(getErrorDisplayInfo('Unexpected response \uFFFD (request_id: 123-403-abc)').message,
   '模型服务暂时无法完成回复，请稍后再试。');
 assert.equal(getErrorDisplayInfo('temperature must be 1').type, 'param');
+
+await import('./verify-image-generation.mjs');

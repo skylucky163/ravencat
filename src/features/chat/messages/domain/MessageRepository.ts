@@ -44,6 +44,7 @@ export interface UpsertStatefulTimelineEntryInput {
 /** 模型响应证据与执行终态分开：收到响应不代表工具成功。 */
 export interface ChatAgentActivityEvidence {
   runId: string;
+  firstVisibleAt: string | null;
   respondedAt: string | null;
   terminalCode: string | null;
 }

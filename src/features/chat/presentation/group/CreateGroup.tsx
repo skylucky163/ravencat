@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import { KeyboardAvoidingContainer, Button, InputField, AIAvatar, GroupAvatar, ModelPickerModal, showAppDialog } from '@shared/ui';
 import { createCommonStyles } from '@shared/ui/commonStyles';
-import { useTheme, useThemedStyles } from '@shared/theme';
+import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
 import { createStyles } from './CreateGroup.styles';
 import type { GroupChatDetails } from '../../group/domain/GroupChat';
 import { createGroupChat } from '../../group/application';
@@ -266,10 +266,10 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
 
         <ScrollView
           style={commonStyles.screenContainer}
-          contentContainerStyle={styles.contentContainer}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <ThemedSurface variant="card" style={[commonStyles.formSurface, styles.contentContainer]}>
           {/* 群聊头像 */}
           <View style={styles.avatarSection}>
             <TouchableOpacity
@@ -304,7 +304,7 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
           {/* 群管理员 */}
           <View style={styles.section}>
             <Text style={commonStyles.sectionTitle}>群管理员</Text>
-            <ServiceConnectionPicker baseUrl={adminUrl} apiKey={adminApiKey} onFill={service => { setAdminServiceConfigId(service.id); setAdminUrl(service.baseUrl); setAdminApiKey(service.apiKey); resetModelFlow(); }} disabled={isTesting || isLoadingModels || isSaving} />
+            <ServiceConnectionPicker baseUrl={adminUrl} apiKey={adminApiKey} serviceConfigId={adminServiceConfigId} onFill={service => { setAdminServiceConfigId(service.id); setAdminUrl(service.baseUrl); setAdminApiKey(service.apiKey); resetModelFlow(); }} disabled={isTesting || isLoadingModels || isSaving} />
           </View>
           <View style={styles.section}>
             <InputField
@@ -383,6 +383,7 @@ export default function CreateGroup({ aiList, onBack, onCreated }: CreateGroupPr
               ))
             )}
           </View>
+          </ThemedSurface>
         </ScrollView>
       </KeyboardAvoidingContainer>
       <ModelPickerModal

@@ -1,5 +1,6 @@
 /** 同一投影决定摘要与尚未总结原文；对话计数，应用事件随所属范围交接。 */
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
+import { buildChatCodeWorkReference } from '../../messages/domain/ChatCodeBlock';
 import { buildChatSystemEventModelText, buildSessionPreviewTextFromMessage, buildVoiceMessageModelText, buildReplyQuoteModelText, getMessageAttachments, getMessageSticker, getMessageSharedRecord, getMessageSharedMoment, isCallStatusMessageMetadata, isTogetherListeningMessageMetadata, parseMessageMetadata } from '../../messages/domain/chatMessageMetadata';
 import { buildStickerModelText } from '../../messages/domain/ChatSticker';
 import { buildSharedChatRecordText, type SharedChatRecord } from '../../messages/domain/SharedChatRecord';
@@ -42,7 +43,7 @@ export function projectChatContextMessage(message: ChatMessage, cursor: ChatCano
   const sharedRecord = getMessageSharedRecord(message);
   const sharedMoment = getMessageSharedMoment(message);
   const text = sharedMoment ? buildSharedMomentText(sharedMoment) : sharedRecord ? buildSharedChatRecordText(sharedRecord, message.text) : voice || (sticker ? buildStickerModelText(sticker)
-    : message.isMe ? buildSessionPreviewTextFromMessage(message) : message.text);
+    : message.isMe ? buildSessionPreviewTextFromMessage(message) : buildChatCodeWorkReference(message) ?? message.text);
   // 历史原文只投影素材引用，不读文件；图片 ID 留在模型上下文，列表预览保持展示语义。
   const imageReferences = getMessageAttachments(message).flatMap(attachment =>
     attachment.type === 'image' && attachment.mediaAssetId

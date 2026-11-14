@@ -16,6 +16,7 @@ interface UseAddAIFormStateOptions {
 }
 
 interface UseAddAIFormStateResult {
+  serviceConfigId: string;
   name: string;
   setName: (name: string) => void;
   apiKey: string;
@@ -86,6 +87,7 @@ export default function useAddAIFormState({ onAdded, onBack }: UseAddAIFormState
   ]);
 
   return {
+    serviceConfigId,
     fillServiceConnection: service => { setServiceConfigId(service.id); setApiBaseUrl(service.baseUrl); setApiKey(service.apiKey); },
     name,
     setName,

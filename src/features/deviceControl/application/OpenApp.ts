@@ -26,7 +26,7 @@ export type OpenAppFailureReason =
   | 'app_not_launchable'
   | 'launch_failed';
 
-/** 预期的业务失败统一收敛为一个 error contract，供未来 open_app Tool 单点处理。 */
+/** 预期的业务失败统一收敛为一个 error contract，由 open_app Tool 单点处理。 */
 export class OpenAppError extends Error {
   readonly reason: OpenAppFailureReason;
 

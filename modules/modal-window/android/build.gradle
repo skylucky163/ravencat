@@ -1,0 +1,25 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.modalwindow'
+version = '0.1.0'
+
+android {
+  namespace 'expo.modules.modalwindow'
+  defaultConfig {
+    minSdkVersion 33
+    versionCode 1
+    versionName '0.1.0'
+  }
+  testOptions { unitTests.includeAndroidResources = true }
+}
+
+dependencies {
+  compileOnly 'com.facebook.react:react-android'
+  testImplementation 'com.facebook.react:react-android'
+  testImplementation 'org.mockito:mockito-core:5.14.2'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.14.1'
+}

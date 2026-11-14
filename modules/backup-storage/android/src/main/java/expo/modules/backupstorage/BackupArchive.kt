@@ -26,7 +26,6 @@ internal object BackupArchive {
   private val magic = byteArrayOf(0x52, 0x41, 0x56, 0x45, 0x4E, 0x42, 0x4B, 0x50)
   private const val maxHeaderBytes = 64 * 1024
   private const val maxManifestBytes = 10 * 1024 * 1024
-  private const val maxStableSettingsBytes = 1024 * 1024
   private const val maxArchiveEntries = 100_000
 
   fun write(
@@ -153,6 +152,7 @@ internal object BackupArchive {
         throw IllegalArgumentException("备份清单包含重复路径")
       }
     }
+    // 稳定设置包含完整 HTTP 诊断正文，大小随正文增长；统一按清单长度和可用空间约束。
     val availableBytes = staging.usableSpace
     if (totalLength > availableBytes - 64L * 1024L * 1024L) {
       throw IllegalArgumentException("存储空间不足，无法展开备份")
@@ -160,9 +160,6 @@ internal object BackupArchive {
     if (!result.containsKey("database/raven.db") ||
       !result.containsKey("settings/stable-settings.json")) {
       throw IllegalArgumentException("备份包缺少必要内容")
-    }
-    if (result.getValue("settings/stable-settings.json") > maxStableSettingsBytes) {
-      throw IllegalArgumentException("备份稳定设置过大")
     }
     return result
   }

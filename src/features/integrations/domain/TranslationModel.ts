@@ -33,10 +33,6 @@ export interface TranslationModelConfig {
   maxTokens: number | null;
 }
 
-export interface ResolvedTranslationModel extends TranslationModelConfig {
-  modelConfigId: string;
-}
-
 export function readTranslationMetadata(json: string): TranslationMetadata {
   const value: unknown = JSON.parse(json);
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('翻译参数必须是 JSON 对象');

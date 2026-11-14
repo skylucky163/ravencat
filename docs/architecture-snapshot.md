@@ -33,7 +33,8 @@
                 ├── context-settings.tsx
                 ├── edit.tsx
                 ├── model-settings.tsx
-                └── moments.tsx
+                ├── moments.tsx
+                └── works.tsx
             └── [aiId].tsx
         ├── auxiliary-models
             ├── capabilities
@@ -44,8 +45,6 @@
             └── services
                 ├── [serviceId].tsx
                 └── index.tsx
-        ├── backup
-            └── index.tsx
         ├── bubble-skin.tsx
         ├── bubble-skins.tsx
         ├── calls
@@ -68,6 +67,8 @@
                     ├── edit.tsx
                     ├── index.tsx
                     └── settings.tsx
+            ├── code
+                └── [previewId].tsx
             └── groups
                 ├── [groupId]
                     ├── admin-settings.tsx
@@ -79,7 +80,9 @@
                         └── index.tsx
                 ├── [groupId].tsx
                 └── new.tsx
+        ├── data-management.tsx
         ├── favorites.tsx
+        ├── image-generation.tsx
         ├── index.tsx
         ├── mcp-tools
             ├── [serverId].tsx
@@ -92,6 +95,7 @@
             └── trigger.tsx
         ├── moments
             ├── [momentId].tsx
+            ├── edit.tsx
             ├── publish.tsx
             └── settings.tsx
         ├── navigation-error.tsx
@@ -171,6 +175,7 @@
                 ├── SQLiteHostRepository.ts
                 └── SQLiteModelServiceRepository.ts
             ├── ManageAuxiliaryModelConfigs.ts
+            ├── ModelServiceErrors.ts
             ├── ModelServices.ts
             ├── presentation
                 ├── auxiliaryModels
@@ -181,7 +186,10 @@
                     ├── AuxiliaryModelPoolScreen.tsx
                     ├── constants.ts
                     ├── index.ts
+                    ├── ModelFormSection.tsx
+                    ├── modelServiceDraft.ts
                     ├── ModelServiceEditScreen.tsx
+                    ├── ModelServiceKeyEditor.tsx
                     ├── ModelServiceListScreen.tsx
                     ├── ServiceConnectionPicker.tsx
                     ├── speechModelDraft.ts
@@ -251,10 +259,10 @@
                 ├── pickExternalBackupArtifact.ts
                 └── stableSettingsBackupState.ts
             └── presentation
+                ├── BackupPanel.styles.ts
+                ├── BackupPanel.tsx
                 ├── BackupRestoreModal.styles.ts
-                ├── BackupRestoreModal.tsx
-                ├── BackupScreen.styles.ts
-                └── BackupScreen.tsx
+                └── BackupRestoreModal.tsx
         ├── calls
             ├── aiTools
                 ├── LookAtUserTool.ts
@@ -436,6 +444,7 @@
                     ├── AttachmentParser.ts
                     ├── CanonicalChatSourceQueries.ts
                     ├── ChatAttachmentMime.ts
+                    ├── ChatCodePreview.ts
                     ├── ChatMessageRuntime.ts
                     ├── ChatReadQueries.ts
                     ├── ChatStatistics.ts
@@ -455,6 +464,7 @@
                     ├── ReceiveExternalAIMessage.ts
                     ├── RecordAssistantNicknameChange.ts
                     ├── ResolveChatAttachmentMedia.ts
+                    ├── SaveChatImagesToGallery.ts
                     ├── SearchChatMessages.ts
                     ├── SendUserMessage.ts
                     ├── ShareChatMessages.ts
@@ -467,6 +477,8 @@
                 ├── domain
                     ├── AgentTimelineIdentity.ts
                     ├── ChatAttachment.ts
+                    ├── ChatCodeBlock.ts
+                    ├── ChatCodePreview.ts
                     ├── ChatMessage.ts
                     ├── ChatMessageActions.ts
                     ├── ChatMessageContext.ts
@@ -482,12 +494,14 @@
                     ├── MessageTimeSeparator.ts
                     ├── SharedChatRecord.ts
                     ├── SharedContent.ts
-                    └── SharedMoment.ts
+                    ├── SharedMoment.ts
+                    └── SubstantiveUserMessage.ts
                 ├── events
                     └── ChatEvents.ts
                 └── infrastructure
                     ├── ChatMessageMutationSql.ts
                     ├── ChatTimelineSql.ts
+                    ├── SQLiteChatCodePreviewRepository.ts
                     └── SQLiteMessageRepository.ts
             ├── presentation
                 ├── conversation
@@ -523,6 +537,10 @@
                     ├── NumberInputPresetsSection.tsx
                     └── useGroupAdminSettings.ts
                 ├── messages
+                    ├── ChatCodeLibraryScreen.tsx
+                    ├── chatCodePreviewDocument.ts
+                    ├── ChatCodePreviewScreen.tsx
+                    ├── ChatCodeSourceView.tsx
                     ├── ChatDetail
                         ├── ChatAttachmentDraftFiles.ts
                         ├── index.tsx
@@ -545,6 +563,8 @@
                         ├── ChatAttachmentComposerTray.tsx
                         ├── ChatBackground.tsx
                         ├── chatBottomAnchorExperiment.ts
+                        ├── ChatCodeCard.tsx
+                        ├── ChatCodeNavigation.tsx
                         ├── ChatContentShareSheet.tsx
                         ├── ChatEmojiPanel.tsx
                         ├── chatEmojiPanelStyles.ts
@@ -593,6 +613,7 @@
                         ├── useChatFavoriteAction.ts
                         ├── useChatMessageSelection.ts
                         ├── useChatMessageShare.ts
+                        ├── useChatSaveImagesAction.ts
                         ├── useChatStickerAction.ts
                         ├── useChatTimelineSync.ts
                         └── useMessageHistoryState.ts
@@ -604,8 +625,6 @@
                         ├── CollapseArrow.tsx
                         ├── FileAttachmentCard.tsx
                         ├── ImageAttachmentCard.tsx
-                        ├── imagePreviewGeometry.ts
-                        ├── ImagePreviewModal.tsx
                         ├── index.tsx
                         ├── layoutProbe.ts
                         ├── MessageBubbleContent.tsx
@@ -621,8 +640,7 @@
                         ├── supplementStyles.ts
                         ├── textStyles.ts
                         ├── TokenInfo.tsx
-                        ├── VoiceMessageCard.tsx
-                        └── ZoomableImage.tsx
+                        └── VoiceMessageCard.tsx
                 └── shell
                     ├── arrivedConversationPreview.ts
                     ├── ChatRouterContext.tsx
@@ -761,12 +779,14 @@
                 ├── AISchedule.ts
                 ├── AIScheduleContext.ts
                 ├── AIScheduleRepository.ts
+                ├── AIScheduleTiming.ts
                 ├── CompanionRepositories.ts
                 ├── CompanionSettings.ts
                 ├── CompanionState.ts
                 └── ProactiveLifeReadRepository.ts
             ├── index.ts
             ├── infrastructure
+                ├── AIScheduleTimingPersistence.ts
                 ├── CompanionNativeAdapter.ts
                 ├── SQLiteAIScheduleRepository.ts
                 ├── SQLiteCompanionSettingsRepository.ts
@@ -775,11 +795,13 @@
             └── presentation
                 ├── AIScheduleDetail.styles.ts
                 ├── AIScheduleDetailContent.tsx
+                ├── AIScheduleRecurrenceEditor.tsx
                 ├── CompanionBlacklistScreen.tsx
                 ├── CompanionControls.tsx
                 ├── CompanionDiagnosticsReport.ts
                 ├── CompanionDiagnosticsSheet.styles.ts
                 ├── CompanionDiagnosticsSheet.tsx
+                ├── CompanionFollowUpSettings.tsx
                 ├── CompanionSettingsScreen.tsx
                 ├── CompanionSettingsShared.styles.ts
                 ├── CompanionSystemAccessScreen.tsx
@@ -911,16 +933,24 @@
                 ├── AIImageTools.ts
                 ├── CommitCroppedImageSelection.ts
                 ├── CreateMediaAsset.ts
+                ├── GenerateImageForUser.ts
+                ├── GenerateImageTool.ts
+                ├── ImageGenerationModels.ts
+                ├── ImageGenerationReference.ts
                 ├── MediaAssetBacking.ts
                 ├── MediaAssetCatalog.ts
                 ├── MediaAssetLifecycle.ts
                 ├── MediaAssetResolver.ts
                 ├── MediaAssetRuntime.ts
                 ├── MediaImageToolResult.ts
-                └── PreparedMediaAssetBatch.ts
+                ├── PreparedMediaAssetBatch.ts
+                └── PrepareGeneratedImage.ts
             ├── composition.ts
             ├── domain
                 ├── AIDownloadedImageRepository.ts
+                ├── AIGeneratedImageRepository.ts
+                ├── ImageGenerationConfig.ts
+                ├── ImageGenerationSettingsRepository.ts
                 ├── MediaAsset.ts
                 ├── MediaAssetLifecycle.ts
                 └── MediaAssetRepository.ts
@@ -928,8 +958,16 @@
             ├── infrastructure
                 ├── PersistentMediaAssetBackings.ts
                 ├── SQLiteAIDownloadedImageRepository.ts
+                ├── SQLiteAIGeneratedImageRepository.ts
+                ├── SQLiteImageGenerationSettingsRepository.ts
                 └── SQLiteMediaAssetRepository.ts
             └── presentation
+                ├── ImageGenerationCanvas.tsx
+                ├── ImageGenerationParametersForm.tsx
+                ├── imageGenerationPixelDocument.ts
+                ├── ImageGenerationPixelEffect.tsx
+                ├── imageGenerationPixelShader.ts
+                ├── ImageGenerationScreen.tsx
                 └── MediaAssetImage.tsx
         ├── memory
             ├── aiTools
@@ -987,6 +1025,7 @@
                 ├── AICreateMomentTool.ts
                 ├── AIDeleteOwnMomentCommentTool.ts
                 ├── AIDeleteOwnMomentTool.ts
+                ├── AIEditOwnMomentTool.ts
                 ├── AILikeMomentTool.ts
                 ├── AIReplyMomentCommentTool.ts
                 ├── AIUnlikeMomentTool.ts
@@ -998,6 +1037,7 @@
             ├── application
                 ├── CreateMoment.ts
                 ├── CreateUserMomentWithMedia.ts
+                ├── EditMoment.ts
                 ├── index.ts
                 ├── MomentAccess.ts
                 ├── MomentActorResolver.ts
@@ -1021,6 +1061,7 @@
                 └── SQLiteMomentRepository.ts
             ├── presentation
                 ├── AssistantMomentsScreen.tsx
+                ├── EditMomentScreen.tsx
                 ├── index.ts
                 ├── momentActionFeedback.ts
                 ├── MomentAudienceDraft.ts
@@ -1035,7 +1076,6 @@
                 ├── MomentItem.tsx
                 ├── MomentMediaViewerModal.tsx
                 ├── MomentNavigation.tsx
-                ├── MomentsCoverPreviewModal.tsx
                 ├── MomentsHeader.tsx
                 ├── MomentsSettingsView.tsx
                 ├── MomentsTab.tsx
@@ -1099,6 +1139,8 @@
                 ├── SQLiteUserProfileRepository.ts
                 └── SQLiteWallpaperRepository.ts
             └── presentation
+                ├── DataManagementScreen.styles.ts
+                ├── DataManagementScreen.tsx
                 ├── index.ts
                 ├── ProfileContent.tsx
                 ├── ProfileDetails.styles.ts
@@ -1327,7 +1369,9 @@
                 └── walletVisualizationColors.ts
         └── webTools
             ├── application
+                ├── DeepSeekOfficialTools.ts
                 ├── KimiOfficialTools.ts
+                ├── OfficialToolObservation.ts
                 ├── SearchConfiguration.ts
                 ├── WebAgentTools.ts
                 └── WebToolsRuntime.ts
@@ -1352,6 +1396,7 @@
             ├── agent
                 ├── ApplicationSettingsTools.ts
                 ├── assertImageToolRunCurrent.ts
+                ├── ChatCodeWorkTools.ts
                 ├── createAgentToolRegistry.ts
                 ├── GroupManagementTools.ts
                 ├── HostAgentRunAssembly.ts
@@ -1400,7 +1445,9 @@
         ├── navigation
             ├── AssistantModelSettingsRouteContent.tsx
             ├── AuxiliaryModelsRouteContent.tsx
+            ├── ChatCodeNavigationBoundary.tsx
             ├── externalNavigation.ts
+            ├── ModelManagementNavigationBoundary.tsx
             ├── MomentSharingBoundary.tsx
             ├── ProfileRouteContent.tsx
             ├── PromptCenterRouteContent.tsx
@@ -1477,14 +1524,19 @@
             ├── BaseAIClient.ts
             ├── baseUrl.ts
             ├── connectionTest.ts
+            ├── DeepSeekToolsClient.ts
             ├── errorMapping.ts
             ├── HttpExchangeCapture.ts
             ├── HttpExchangeDiagnostics.ts
+            ├── ImageGenerationClient.ts
+            ├── imageGenerationConfig.ts
+            ├── ImageGenerationRequest.ts
+            ├── ImageGenerationStream.ts
             ├── index.ts
-            ├── KimiClient.ts
             ├── modelDiscovery.ts
-            ├── moonshotEndpoint.ts
             ├── MoonshotToolsClient.ts
+            ├── officialToolsEndpoint.ts
+            ├── OfficialToolsHttpClient.ts
             ├── OpenAIClient.ts
             └── types.ts
         ├── device
@@ -1521,6 +1573,7 @@
             ├── randomUUID.ts
             ├── RealtimeSpeechAudioSource.ts
             ├── RebaseLegacyMediaReference.ts
+            ├── SaveImageToGallery.ts
             ├── SystemCalendar.ts
             ├── TemporarySpeechAudioStore.ts
             ├── TextSelection.tsx
@@ -1566,6 +1619,7 @@
                 ├── callRingtoneSchema.ts
                 ├── chatBubbleSkinPresetMigration.ts
                 ├── chatBubbleSkinSchema.ts
+                ├── chatCodePreviewSchema.ts
                 ├── chatFavoriteSchema.ts
                 ├── chatRegenerationSchema.ts
                 ├── chatReplyVersionSchema.ts
@@ -1587,6 +1641,7 @@
                 ├── memoryV3Schema.ts
                 ├── migrations.ts
                 ├── modelSelectionSchema.ts
+                ├── modelServiceGroupSchema.ts
                 ├── modelServiceSchema.ts
                 ├── momentsSchema.ts
                 ├── promptingSchema.ts
@@ -1698,12 +1753,18 @@
             ├── floatingTabBarMetrics.ts
             ├── GroupAvatar.tsx
             ├── HeaderAddButton.tsx
+            ├── imageViewer
+                ├── imagePreviewGeometry.ts
+                ├── ImageViewerModal.tsx
+                └── ZoomableImage.tsx
             ├── index.ts
             ├── InputField.tsx
             ├── KeyboardAvoidingContainer.tsx
             ├── ListItem.tsx
             ├── MimeAwareImage.tsx
             ├── ModalSheet.tsx
+            ├── ModelManagementNavigation.tsx
+            ├── ModelPickerField.tsx
             ├── ModelPickerModal.tsx
             ├── modelSelectionTypes.ts
             ├── NavigationHeader.tsx
@@ -2002,6 +2063,23 @@
         ├── index.ts
         └── src
             └── DeviceObserverModule.ts
+    ├── gallery-writer
+        ├── android
+            └── src
+                ├── main
+                    └── java
+                        └── expo
+                            └── modules
+                                └── gallerywriter
+                                    ├── GalleryImageStore.kt
+                                    └── GalleryWriterModule.kt
+                └── test
+                    └── java
+                        └── expo
+                            └── modules
+                                └── gallerywriter
+                                    └── GalleryImageStoreTest.kt
+        └── index.ts
     ├── kimiphone-notifications
         ├── android
             └── src
@@ -2071,6 +2149,23 @@
                                 └── messagebubble
                                     ├── BubbleTouchTest.kt
                                     └── NineSliceRendererTest.kt
+        └── index.tsx
+    ├── modal-window
+        ├── android
+            └── src
+                ├── main
+                    └── java
+                        └── expo
+                            └── modules
+                                └── modalwindow
+                                    ├── ModalWindowModule.kt
+                                    └── ModalWindowView.kt
+                └── test
+                    └── java
+                        └── expo
+                            └── modules
+                                └── modalwindow
+                                    └── ModalWindowTest.kt
         └── index.tsx
     ├── native-text-selection
         └── android

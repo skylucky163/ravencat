@@ -7,6 +7,7 @@ INSERT OR IGNORE INTO model_service_settings (id) VALUES (1);
 INSERT OR IGNORE INTO memory_model_settings (id) VALUES (1);
 INSERT OR IGNORE INTO speech_recognition_settings (id) VALUES (1);
 INSERT OR IGNORE INTO translation_settings (id) VALUES (1);
+INSERT OR IGNORE INTO media_image_generation_settings (id) VALUES (1);
 INSERT OR IGNORE INTO memory_v3_state (id, version) VALUES (1, 3);
 INSERT OR IGNORE INTO memory_embedding_index_control (id) VALUES (1);
 INSERT OR IGNORE INTO sticker_embedding_index_control (id) VALUES (1);

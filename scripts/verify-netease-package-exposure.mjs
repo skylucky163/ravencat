@@ -136,6 +136,14 @@ const placeholderTool = (name) => ({
 const featureProxy = new Proxy({}, {
   get: (_target, property) => placeholderTool(String(property)),
 });
+// Registry 同时校验小红书目录；读取真实定义，不调用原生能力，也不按导出名猜工具名。
+const xiaohongshuTools = loadTypeScriptModule('src/features/phoneTools/aiTools/XiaohongshuNoteTools.ts', {
+  '@features/assistants': {},
+  '@platform/device': {},
+  '@shared/runtime/abortSignal': {},
+  '../application/CurrentProtectedAppsPolicy': {},
+  '../application/ProtectedAppsPolicy': {},
+});
 let defaultToolPermissions = {};
 let toolPermissionOverrides = [];
 const permissionWrites = [];
@@ -153,12 +161,16 @@ const aiAssistantRepository = {
 const registration = loadTypeScriptModule(
   'src/host/composition/agent/createAgentToolRegistry.ts',
   {
-    '@platform/ai': loadTypeScriptModule('src/platform/ai/moonshotEndpoint.ts', {}),
-    '@features/prompting': { readPromptDefaults: async () => ({ toolPermissions: defaultToolPermissions }) },
+    '@platform/ai': loadTypeScriptModule('src/platform/ai/officialToolsEndpoint.ts', {}),
+    '@features/prompting': { readPromptDefaults: async () => ({
+      toolPermissions: defaultToolPermissions,
+      appToolPackages: { xiaohongshu: true, neteaseMusic: true },
+    }) },
     '@features/webTools': featureProxy,
     '@features/media': featureProxy,
     './ApplicationSettingsTools': { applicationSettingsTools: [] },
     './GroupManagementTools': { groupManagementTools: [] },
+    './ChatCodeWorkTools': featureProxy,
     './ShareMomentTool': { ShareMomentTool: { name: 'share_moment', definition: { name: 'share_moment', description: '', parameters: { type: 'object' } }, execute: async () => ({ status: 'success', modelContent: 'prepared' }) } },
     '@shared/aiTools': {},
     '@features/assistants': new Proxy({
@@ -177,8 +189,7 @@ const registration = loadTypeScriptModule(
     '@features/companion': featureProxy,
     '@features/phoneTools': new Proxy({
       getPhoneToolPackageById: catalog.getPhoneToolPackageById,
-      XiaohongshuPrepareTextNoteTool: placeholderTool('xiaohongshu_prepare_text_note'),
-      XiaohongshuPublishPreparedNoteTool: placeholderTool('xiaohongshu_publish_prepared_note'),
+      ...xiaohongshuTools,
     }, {
       get: (target, property) => target[property] ?? placeholderTool(String(property)),
     }),
@@ -261,7 +272,7 @@ toolPermissionOverrides = [];
 // 真实 Host 装配和 Prompting 用例共用权限目录，页面写入必须被下一次授权冻结消费。
 let promptingDependencies;
 const { configurePromptingRuntime } = loadTypeScriptModule('src/host/composition/configurePromptingRuntime.ts', {
-  '@platform/ai': loadTypeScriptModule('src/platform/ai/moonshotEndpoint.ts', {}),
+  '@platform/ai': loadTypeScriptModule('src/platform/ai/officialToolsEndpoint.ts', {}),
   '@features/prompting/composition': {
     configurePromptingRuntimeDependencies: (dependencies) => { promptingDependencies = dependencies; },
     sqlitePromptingRepository: {},
@@ -274,6 +285,7 @@ const { configurePromptingRuntime } = loadTypeScriptModule('src/host/composition
     getHostAICooldownStatus: async () => ({ appointment: { isInCooldown: false } }),
   },
   '@features/mcpTools': {},
+  '@features/chat': { getAssistantChatSummaryGenerationState: async () => ({ primaryEnabled: true, secondaryEnabled: false }) },
   '../prompt': { validateBuiltInPromptArchitecture: () => {} },
   './agent': registration,
 });

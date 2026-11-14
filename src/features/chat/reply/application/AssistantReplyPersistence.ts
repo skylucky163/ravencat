@@ -173,14 +173,15 @@ export async function persistCompletedAssistantReply({
 }
 
 /**
- * 回复归一化：模型输出即纯文本正文，分段完全由代码决定。
- * 不做任何格式校验——没有格式，就不存在格式错误。
+ * 模型原文只经过客户端的正文／代码围栏分段，不要求额外消息封套。
+ * 不修补未闭合代码，也不在终态改变已经交付的内容边界。
  */
 export function normalizeAssistantResponseText(
   text: string,
   policy: Pick<AIReplyPolicy, 'bubbleDeliveryMode'>,
 ): NormalizedAssistantResponse {
-  const normalizedText = text.trim();
+  // 外层缩进和未闭合代码的末尾空白都参与流式边界；终态不能重新解释原文。
+  const normalizedText = text.trim().length > 0 ? text : '';
   return {
     text: normalizedText,
     segments: segmentAssistantReplyText(normalizedText, policy.bubbleDeliveryMode),

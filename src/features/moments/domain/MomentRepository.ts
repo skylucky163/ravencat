@@ -27,6 +27,9 @@ export interface Moment {
   /** 用户手填的显示地点；没有地点时是 `null`，不制造伪位置。 */
   locationLabel: string | null;
   createdAt: string;
+  /** 原帖编辑事实；图片描述的单独修改不计入原帖编辑。 */
+  editedAt: string | null;
+  editRevision: number;
   audienceMode: MomentAudienceMode;
 }
 
@@ -152,6 +155,31 @@ export interface InsertMomentCommentInput {
   content: string;
 }
 
+/** 省略的字段保持原值；所有提供字段与编辑标记同事务提交。 */
+export interface EditMomentInput {
+  momentId: string;
+  actorType: MomentActorType;
+  actorId: string;
+  expectedRevision?: number;
+  content?: string;
+  locationLabel?: string | null;
+  audience?: MomentAudience;
+  media?: readonly CreateMomentMediaReferenceInput[];
+}
+
+export interface EditMomentResult {
+  moment: Moment;
+  changed: boolean;
+  removedMediaAssetIds: string[];
+  addedMediaIds: string[];
+}
+
+export interface MomentEditSnapshot {
+  moment: Moment;
+  media: MomentMedia[];
+  audience: MomentAudience;
+}
+
 export interface InsertMomentLikeInput {
   momentId: string;
   actorType: MomentActorType;
@@ -229,6 +257,9 @@ export interface IMomentRepository {
     input: CreateMomentInput
   ): Promise<Moment>;
   deleteMoment(momentId: string): Promise<boolean>;
+  getMomentEditSnapshotForUser(momentId: string): Promise<MomentEditSnapshot | null>;
+  editMoment(input: EditMomentInput): Promise<EditMomentResult>;
+  editMomentInTransaction(transaction: DatabaseTransactionExecutor, input: EditMomentInput): Promise<EditMomentResult>;
 
   listMedia(momentId: string): Promise<MomentMedia[]>;
   getMedia(mediaId: string): Promise<MomentMedia | null>;

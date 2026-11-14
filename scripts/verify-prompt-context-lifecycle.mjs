@@ -77,7 +77,8 @@ const { buildAIScheduleTriggerBlocks } = load('src/features/companion/applicatio
   '@features/chat': load('src/features/chat/reply/application/AutonomousReplyContract.ts'),
 });
 const scheduleBlocks = buildAIScheduleTriggerBlocks({ scheduleId: 'due-schedule', remindAt: '2026-10-16T01:00:00Z',
-  triggeredAt: '2026-10-16T01:00:03Z', summary: '约好的问候', details: '看看用户现在怎样', sourceExcerpt: null });
+  triggeredAt: '2026-10-16T01:00:03Z', summary: '约好的问候', details: '看看用户现在怎样', sourceExcerpt: null,
+  triggerKind:'scheduled',recurrence:null,unanswered:[],followUpEnabled:false,followUpIntervalMinutes:10 });
 const autonomous = await assembler.assembleChatPromptPack({ ...params, currentInput: '', additionalBlocks: scheduleBlocks,
   runtimeContext: { inputSource: 'application', forceAppendUserText: true, triggerSource: 'raven_cat_ai_schedule' } });
 assert.equal(autonomous.currentInput, null);

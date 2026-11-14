@@ -42,6 +42,10 @@ export function describeMomentPublishFailure(error: unknown): string {
   return describe(error, GENERIC_PUBLISH_FAILURE_MESSAGE);
 }
 
+export function describeMomentEditFailure(error: unknown): string {
+  return describe(error, '保存失败，请稍后重试。');
+}
+
 export function describeMomentCommentFailure(error: unknown): string {
   return describe(error, GENERIC_COMMENT_FAILURE_MESSAGE);
 }

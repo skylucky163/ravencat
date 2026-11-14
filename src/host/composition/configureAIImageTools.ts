@@ -1,15 +1,27 @@
 import { Asset } from 'expo-asset';
 import { getCurrentUserProfile } from '@features/profile';
-import { listAIAssistantSummaries } from '@features/assistants';
+import { listAIAssistantSummaries, getAuxiliaryModelConfigById, listAuxiliaryModelConfigs, subscribeAuxiliaryModelsChanged } from '@features/assistants';
 import { resolveChatImageModelInput } from '@features/chat/composition';
-import { configureAIImageRuntime, SQLiteAIDownloadedImageRepository } from '@features/media/composition';
+import { configureAIImageRuntime, SQLiteAIDownloadedImageRepository, SQLiteAIGeneratedImageRepository,
+  configureImageGenerationModels, notifyImageGenerationModelsChanged, SQLiteImageGenerationSettingsRepository } from '@features/media/composition';
 import { getDefaultAIAvatarAsset, getDefaultUserAvatarAsset } from '@shared/avatar/avatarRegistry';
 import { assertImageToolRunCurrent } from './agent/assertImageToolRunCurrent';
 
+let configured = false;
+
 /** 默认头像与当前头像引用均来自现有展示契约，不建立另一份头像数据。 */
 export function configureAIImageTools(): void {
+  if (configured) return;
+  configured = true;
+  configureImageGenerationModels({
+    repository: new SQLiteImageGenerationSettingsRepository(),
+    getModel: id => getAuxiliaryModelConfigById({ id }),
+    listModels: () => listAuxiliaryModelConfigs({ capabilityKind: 'image_generation' }),
+  });
+  subscribeAuxiliaryModelsChanged(notifyImageGenerationModelsChanged);
   configureAIImageRuntime({
     downloads: new SQLiteAIDownloadedImageRepository(),
+    generated: new SQLiteAIGeneratedImageRepository(),
     assertCurrent: assertImageToolRunCurrent,
     async resolveAvatar(target, assistantId, selector) {
       let owner: { name: string; avatar: string | null; avatarMediaAssetId: string | null };

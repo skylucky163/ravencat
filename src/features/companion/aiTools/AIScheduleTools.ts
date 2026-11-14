@@ -1,4 +1,4 @@
-/** 主理 AI 管理自身持久日程的五个正常 Agent-native Tools。 */
+/** 主理 AI 管理自身持久日程及其系统日历关联的正常工具。 */
 
 import { runAsCurrentHostAuthority } from '@features/assistants';
 import type { AgentToolExecutionContext, AgentToolExecutionResult } from '@shared/aiTools';
@@ -7,15 +7,34 @@ import {
   cancelAIScheduleWithProjection,
   createAIScheduleWithProjection,
   updateAIScheduleWithProjection,
+  removeAIScheduleCalendarEvents,
 } from '../application/AIScheduleProjectionOwner';
 import type { AIScheduleProjectionOutcome, AIScheduleCalendarOutcome } from '../application/AIScheduleProjectionOwner';
 import type { AIScheduleApplicationErrorCode } from '../application/AIScheduleApplication';
 import {
   getAIScheduleQuery,
   listAISchedulesQuery,
+  setAIScheduleFollowUpInterval,
 } from '../application/AIScheduleApplication';
 import type { AISchedule, AIScheduleStatus } from '../domain/AISchedule';
-import type { AIScheduleListCursor, AIScheduleListPage } from '../domain/AIScheduleRepository';
+import type { AIScheduleListCursor, AIScheduleListPage, RemoveAIScheduleCalendarInput } from '../domain/AIScheduleRepository';
+import type { AIScheduleRecurrence } from '../domain/AIScheduleTiming';
+
+const recurrenceParameter = {
+  type: ['object', 'null'],
+  description: '固定重复规则；null 为一次性。时间按 IANA 时区与 hour/minute 计算，系统维护下一期，无需 AI 再创建。每月遇到不存在的日期落到月底。remind_at 是第一期时间，须与规则一致。',
+  properties: {
+    frequency: { type: 'string', enum: ['daily', 'weekly', 'monthly'] },
+    timeZone: { type: 'string', description: 'IANA 时区，例如 Asia/Shanghai' },
+    hour: { type: 'integer', minimum: 0, maximum: 23 },
+    minute: { type: 'integer', minimum: 0, maximum: 59 },
+    weekdays: { type: 'array', items: { type: 'integer', minimum: 0, maximum: 6 }, minItems: 1, maxItems: 7, uniqueItems: true, description: '每周必填；0 周日，1 周一，依此类推' },
+    monthDay: { type: 'integer', minimum: 1, maximum: 31, description: '每月必填，保留原始日期意图' },
+    until: { type: 'string', description: '可选，带时区的结束时间（含）；不填则持续重复' },
+  },
+  required: ['frequency', 'timeZone', 'hour', 'minute'],
+  additionalProperties: false,
+} as const;
 
 type ProjectionAwareAISchedule = AISchedule & {
   calendarStatus: AIScheduleCalendarOutcome;
@@ -40,6 +59,7 @@ export const CreateAIScheduleTool = {
         summary: { type: 'string', description: '用于列表浏览的简短事件摘要，最多 160 字符' },
         details: { type: 'string', description: '未来理解事件所需的背景，最多 4000 字符' },
         system_calendar: { type: 'boolean', default: true, description: '默认 true：同时创建内部 AI 日程和系统日历到点提醒。用户拒绝日历授权或偏好仅内部提醒时设 false；不可因缺权限自行静默降级' },
+        recurrence: recurrenceParameter,
         source_message_ids: {
           type: 'array',
           items: { type: 'string' },
@@ -101,7 +121,7 @@ export const UpdateAIScheduleTool = {
   name: 'update_ai_schedule',
   definition: {
     name: 'update_ai_schedule',
-    description: '修改尚未到期的 AI 日程，保留原日程 ID 与来源快照',
+    description: '修改尚未到期的日程（包括重复规则），保留原 ID。重复系列只修改下一期即对后续生效，已执行历史不变。只想移除系统日历事件并保留内部提醒时，使用 remove_ai_schedule_calendar_events，可处理历史和整个系列，不要取消日程。当前正在执行本日程时，可单独传 next_follow_up_minutes 调整本轮结束后的下一次未回复续轮间隔，不改变用户默认值或开关。',
     parameters: {
       type: 'object',
       properties: {
@@ -110,6 +130,8 @@ export const UpdateAIScheduleTool = {
         summary: { type: 'string', description: '可选，新的简短摘要' },
         details: { type: 'string', description: '可选，新的详情' },
         system_calendar: { type: 'boolean', description: '可选，不传则保留原设置。true 同步系统日历，false 仅保留内部日程并移除关联系统事件；已有系统事件的修改或移除需要日历权限' },
+        recurrence: recurrenceParameter,
+        next_follow_up_minutes: { type: 'integer', minimum: 2, maximum: 43200, description: '仅对当前 run 正在执行的 schedule_id 可用；单独传此字段，从本轮结束后计时，仅调整下一次续轮。不能开启用户关闭的续轮。' },
       },
       required: ['schedule_id'],
       additionalProperties: false,
@@ -122,17 +144,55 @@ export const CancelAIScheduleTool = {
   name: 'cancel_ai_schedule',
   definition: {
     name: 'cancel_ai_schedule',
-    description: '取消尚未到期的 AI 日程；历史记录会永久保留',
+    description: '取消尚未到期的 AI 日程；取消重复系列的下一期会停止整个系列后续重复，已执行历史保留。取消未回复续轮会结束当前未回复等待，不取消其他正常日程。',
     parameters: idParameters(),
   },
   execute: executeCancel,
 } as const;
+
+export const RemoveAIScheduleCalendarEventsTool = {
+  name: 'remove_ai_schedule_calendar_events',
+  definition: {
+    name: 'remove_ai_schedule_calendar_events',
+    description: '只移除自己创建的 AI 日程关联的手机系统日历事件，保留应用内日程、提醒、重复规则及历史。支持单条、整个重复系列或本人所有日程（含历史）。同时关闭所选日程的系统日历关联，整个系列后续期次保持仅应用内；不取消任何内部日程，不删除用户其他日历事件。用户要求仅应用内时优先使用此工具，不要调用 cancel_ai_schedule。之后新建日程仍须尊重用户偏好，传 system_calendar=false。缺日历权限时也先关闭关联，但旧系统事件需要恢复权限后才能移除，必须如实告知。',
+    parameters: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['schedule', 'series', 'all'], description: 'schedule 仅指定一期；series 指定日程所属整个重复系列（含历史和下一期）；all 本人所有日程关联。只有用户明确要求全部清理时使用 all。' },
+        schedule_id: { type: 'string', description: 'scope 为 schedule/series 时必填，可使用历史一期的 ID；scope=all 时不传。' },
+      },
+      required: ['scope'],
+      additionalProperties: false,
+    },
+  },
+  execute: executeRemoveCalendarEvents,
+} as const;
+
+async function executeRemoveCalendarEvents(
+  args: { scope: RemoveAIScheduleCalendarInput['scope']; schedule_id?: string },
+  context: AgentToolExecutionContext,
+): ToolResult<{ matchedCount: number; updatedCount: number; removedCount: number; pendingCount: number | null; calendar: string }> {
+  const authority = await authorized(context, () => removeAIScheduleCalendarEvents({
+    ownerAIId: context.task.assistantId, scope: args.scope, scheduleId: args.schedule_id,
+  }));
+  if (authority.status === 'not_current_host') return notCurrentHost();
+  const outcome = authority.value;
+  if (outcome.status === 'error') return error(outcome.code);
+  const data = { matchedCount: outcome.matchedCount, updatedCount: outcome.updatedCount,
+    removedCount: outcome.removedCount, pendingCount: outcome.pendingCount, calendar: outcome.calendar };
+  const saved = `已将 ${outcome.matchedCount} 条匹配日程设为仅应用内（本次新关闭关联 ${outcome.updatedCount} 条）；应用内提醒、重复规则和历史均保留，未取消任何内部日程。`;
+  const calendar = outcome.calendar === 'synced'
+    ? `已移除 ${outcome.removedCount} 条日程对应的系统日历事件；匹配日程共 ${outcome.matchedCount} 条。`
+    : `内部关联已关闭，但旧系统日历事件尚未全部移除（${outcome.calendar}，本次已移除 ${outcome.removedCount} 项，待处理 ${outcome.pendingCount ?? '数量暂不可读取'}）。请如实告知用户：恢复日历权限或服务后回到应用同步，或再次调用本工具；不要取消内部日程来代替清理，也不要声称系统日历已经清空。`;
+  return { status: 'success', data, modelContent: `${saved}\n${calendar}\n若用户希望以后新建也只在应用内提醒，创建时显式传 system_calendar=false。` };
+}
 
 interface CreateArgs {
   remind_at: string;
   summary: string;
   details: string;
   system_calendar?: boolean;
+  recurrence?: AIScheduleRecurrence | null;
   source_message_ids?: string[];
 }
 
@@ -145,6 +205,7 @@ async function executeCreate(
   const authority = await authorized(context, () => createAIScheduleWithProjection({
     ownerAIId: context.task.assistantId,
     remindAt: args.remind_at,
+    recurrence: args.recurrence,
     summary: args.summary,
     details: args.details,
     systemCalendar: args.system_calendar ?? true,
@@ -210,12 +271,27 @@ interface UpdateArgs {
   summary?: string;
   details?: string;
   system_calendar?: boolean;
+  recurrence?: AIScheduleRecurrence | null;
+  next_follow_up_minutes?: number;
 }
 
 async function executeUpdate(
   args: UpdateArgs,
   context: AgentToolExecutionContext,
-): ToolResult<ProjectionAwareAISchedule> {
+): ToolResult<ProjectionAwareAISchedule | { scheduleId: string; nextFollowUpMinutes: number }> {
+  if (args.next_follow_up_minutes !== undefined) {
+    if (args.remind_at !== undefined || args.summary !== undefined || args.details !== undefined
+      || args.system_calendar !== undefined || args.recurrence !== undefined) return error('invalid_content');
+    const authority = await authorized(context, () => setAIScheduleFollowUpInterval({
+      scheduleId: args.schedule_id, ownerAIId: context.task.assistantId,
+      runId: context.runId, minutes: args.next_follow_up_minutes!,
+    }));
+    if (authority.status === 'not_current_host') return notCurrentHost();
+    const outcome = authority.value;
+    if (outcome.status === 'error') return error(outcome.code);
+    return { status: 'success', data: { scheduleId: outcome.schedule.scheduleId, nextFollowUpMinutes: args.next_follow_up_minutes },
+      modelContent: `下一次未回复续轮间隔已设为 ${args.next_follow_up_minutes} 分钟，从本轮结束后计算；只有用户已开启续轮且仍未回复时才生效。用户默认值和系统日历未改变。` };
+  }
   const authority = await authorized(context, () => updateAIScheduleWithProjection({
     scheduleId: args.schedule_id,
     ownerAIId: context.task.assistantId,
@@ -223,6 +299,7 @@ async function executeUpdate(
     summary: args.summary,
     details: args.details,
     systemCalendar: args.system_calendar,
+    recurrence: args.recurrence,
   }));
   if (authority.status === 'not_current_host') return notCurrentHost();
   const outcome = authority.value;
@@ -318,10 +395,10 @@ function error<T>(code: ScheduleToolErrorCode): AgentToolExecutionResult<T> {
     not_scheduled: '这条 AI 日程已进入不可修改的历史状态。',
     not_claimed: '这条 AI 日程当前未被 claim，不能 consume。',
     already_past: '这条日程的原 remindAt 已经到达，过去的时间事实不能再更新或取消。',
-    invalid_time: '时间必须是带 Z 或 UTC offset 的有效未来绝对时间。',
+    invalid_time: '时间必须是带 Z 或 UTC offset 的有效未来绝对时间；重复规则须使用合法 IANA 时区，第一期时间与规则一致且不晚于 until。调整续轮间隔时必须为 2 至 43200 分钟的整数。',
     invalid_range: '查询范围必须至少 1 天、最多 3 个月，且分页参数必须有效。',
     invalid_source: '来源消息不存在、不属于当前会话，或不是可保存的 canonical user/assistant 消息。',
-    invalid_content: 'summary/details 为空、超出长度上限，或 update 没有提供任何修改。',
+    invalid_content: '日程内容为空、超出长度上限或未提供修改；移除日历关联时，scope 必须为 schedule/series/all，schedule/series 需要有效 schedule_id，all 不传 schedule_id。',
     already_claimed: '这条 AI 日程已经被另一个 run claim，本次没有取得执行权。',
     already_terminal: '这条 AI 日程已经完成或进入终态，本次不会重复收口。',
     run_mismatch: '当前 run 不是这条 AI 日程的 claim owner。',

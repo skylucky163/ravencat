@@ -14,6 +14,7 @@ import {
   buildVoiceMessageModelText,
   buildReplyQuoteModelText,
   buildChatSystemEventModelText,
+  buildChatCodeWorkReference,
   getMessageAttachments,
   getMessageSticker,
   getMessageVoice,
@@ -130,7 +131,7 @@ export class PromptHistoryBuilder {
     // 未消费输入区间由 Chat 的固定输入组装器拥有；查询前就排除它，不重复读取后再丢弃。
     const toInputId = protectedIds.reduce((min, id) => Math.min(min, id), upperBound?.messageId ?? Number.MAX_SAFE_INTEGER);
     const interrupted = fromInputId >= toInputId ? []
-      : await getChatInterruptedTurnContext(params.sessionId, fromInputId, toInputId);
+      : await getChatInterruptedTurnContext(params.sessionId, fromInputId, toInputId, 'history');
     const contextByInput = new Map<number, typeof interrupted>();
     for (const run of interrupted) {
       const context = contextByInput.get(run.inputHighWatermark) ?? [];
@@ -448,7 +449,7 @@ export class PromptHistoryBuilder {
       ? voiceText
       : sticker
       ? buildStickerModelText(sticker)
-      : String(message.text || '').trim();
+      : (buildChatCodeWorkReference(message) ?? String(message.text || '').trim());
     if (!text) {
       return '';
     }

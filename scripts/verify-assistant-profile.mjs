@@ -63,7 +63,8 @@ const { default: useProfile } = load('src/features/assistants/presentation/profi
 const { useAIAssistantProfile } = load('src/features/assistants/presentation/profile/useAIAssistantProfile.ts', {
   react, '../../AIAssistantManagement': commands,
 });
-const sharedUI = Object.fromEntries(['AIAvatar', 'AIInfoCard', 'Button', 'EmptyState', 'InputField', 'KeyboardAvoidingContainer'].map(name => [name, name]));
+const sharedUI = Object.fromEntries(['AIAvatar', 'AIInfoCard', 'Button', 'EmptyState', 'InputField', 'KeyboardAvoidingContainer', 'ImageViewerModal'].map(name => [name, name]));
+sharedUI.showAppDialog = () => {};
 const theme = { colors: { brand: { primary: '#123', onPrimary: '#fff' }, text: { secondary: '#666', tertiary: '#999' },
   icon: { primary: '#123', secondary: '#999' }, background: { app: '#fff', screen: '#fff' }, surface: { default: '#fff' } },
   effects: { glass: { enabled: false } }, spacing: { sm: 4, lg: 16 }, radius: { sm: 4 }, shadow: { md: {} } };
@@ -71,7 +72,7 @@ const commonDependencies = {
   react, 'react-native': native, 'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
   '@shared/theme': { ThemedSurface: 'ThemedSurface', useThemedStyles: () => ({}), useTheme: () => theme },
   '@shared/avatar/avatarConstants': { AVATAR_SHAPE: { circle: 'circle' } },
-  '@features/media': { MediaAssetImage: 'MediaAssetImage' },
+  '@features/media': { MediaAssetImage: 'MediaAssetImage', resolveMediaAsset: async mediaAssetId => ({ localUri: `file://${mediaAssetId}` }) },
   '../../../../../assets/stars.jpg': 7,
   '@shared/ui': sharedUI,
   '@shared/ui/NavigationHeader': { default: 'NavigationHeader' },
@@ -133,8 +134,11 @@ try {
   assert.ok(renderer.root.findAllByType('Text').some(node => readText(node) === '公开名称（我的昵称）'));
   await act(async () => { renderer.root.findAllByType('Button').find(node => node.props.title === '发消息').props.onPress(); });
   assert.equal(dismissed.at(-1), '/chat/ai', '发消息回到当前 AI 的聊天页');
-  await act(async () => { renderer.root.findAllByType('Pressable').find(node => node.props.accessibilityLabel === '查看 AI 的朋友圈').props.onPress(); });
+  assert.ok(renderer.root.findAllByType('Text').some(node => readText(node) === '时刻'), '主页入口文案为「时刻」');
+  await act(async () => { renderer.root.findAllByType('Pressable').find(node => node.props.accessibilityLabel === '查看时刻').props.onPress(); });
   assert.equal(pushed.at(-1), '/assistants/ai/moments', '朋友圈打开当前 AI');
+  await act(async () => { renderer.root.findByProps({ accessibilityLabel: '打开作品库' }).props.onPress(); });
+  assert.equal(pushed.at(-1), '/assistants/ai/works', '主页打开当前 AI 的作品库');
   await act(async () => { renderer.root.findByType('AssistantSettingsEntries').props.onOpenModelSettings(); });
   assert.equal(pushed.at(-1), '/assistants/ai/model-settings');
   await act(async () => { renderer.root.findByType('AssistantSettingsEntries').props.onOpenContextSettings(); });
@@ -212,8 +216,9 @@ try {
 } finally { if (renderer) await act(async () => { renderer.unmount(); }); }
 
 const { default: MomentsHeader } = load('src/features/moments/presentation/MomentsHeader.tsx', {
-  ...commonDependencies, '@features/assistants': { AssistantSpaceCover: SpaceCover },
-  '@expo/vector-icons': { Ionicons: 'Icon' }, './MomentsCoverPreviewModal': { default: 'CoverPreview' },
+  ...commonDependencies,
+  '@features/assistants': { AssistantSpaceCover: SpaceCover, DEFAULT_ASSISTANT_SPACE_COVER_SOURCE: 7 },
+  '@expo/vector-icons': { Ionicons: 'Icon' },
   './useMomentsCover': { useMomentsCover: () => { throw new Error('AI 朋友圈不能读取用户封面'); } },
 });
 const { default: MomentsScreen } = load('src/features/moments/presentation/AssistantMomentsScreen.tsx', {
@@ -247,7 +252,7 @@ await act(async () => {
 });
 assert.deepEqual(renderer.root.findAllByType('MediaAssetImage').map(node => node.props.mediaAssetId), ['shared-space-cover', 'shared-space-cover']);
 assert.equal(renderer.root.findAllByType('Image').length, 0);
-assert.equal(renderer.root.findAllByType('CoverPreview').length, 0);
+assert.equal(renderer.root.findAllByType('ImageViewer').length, 0, '封面预览默认关闭，点击才打开');
 await act(async () => { renderer.unmount(); });
 assert.equal(listeners.size, 0);
 
@@ -272,6 +277,8 @@ renderer.root.findByType('ChatMenuRouteScreen').props.onOpenConversationSettings
 assert.equal(pushed.at(-1), '/assistants/primary/chat-settings');
 renderer.root.findByType('ChatMenuRouteScreen').props.onOpenSummary();
 assert.equal(pushed.at(-1), '/chat/primary/summary', '更多与主页使用相同摘要地址');
+renderer.root.findByType('ChatMenuRouteScreen').props.onOpenCodeLibrary();
+assert.equal(pushed.at(-1), '/assistants/primary/works', '聊天更多按当前 AI 打开共用作品库路由');
 await act(async () => { renderer.unmount(); });
 
 const { Avatar } = load('src/features/chat/presentation/messages/MessageBubble/Avatar.tsx', {

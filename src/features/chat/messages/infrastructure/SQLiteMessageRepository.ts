@@ -30,7 +30,9 @@ import { deleteReplyVersionsForMessages, editSelectedReplyVersion } from '../../
 import type { ChatRecordStatistics } from '../domain/ChatRecordStatistics';
 import type { ChatMessageRecord, ChatMessageSearchInput, ChatMessageSearchPage } from '../domain/ChatMessageSearch';
 import type { ChatMessageContext, ChatMessageContextInput } from '../domain/ChatMessageContext';
-import { buildGroupMentionModelText } from '../domain/chatMessageMetadata';
+import { buildGroupMentionModelText, parseMessageMetadata } from '../domain/chatMessageMetadata';
+import { readChatCodeBlock, canRenderChatCode, chatCodePreviewId, chatCodeTitle } from '../domain/ChatCodeBlock';
+import { chatCodePreviewRepository } from './SQLiteChatCodePreviewRepository';
 
 interface MessageRow {
   turn_presentation_state?: string;
@@ -282,8 +284,8 @@ export class MessageRepository implements IMessageRepository {
   async listAgentActivityEvidence(runIds: readonly string[]) {
     const rows = await databaseCoordinator.openTaskExecutor({
       name: 'chat.agent-activity-evidence', feature: 'chat', priority: 'interactive',
-    }).getAllAsync<{ run_id: string; responded_at: string | null; terminal_code: string | null }>(
-      `WITH legacy AS (SELECT turn_run_id AS run_id,
+    }).getAllAsync<{ run_id: string; responded_at: string | null; terminal_code: string | null; first_visible_at: string | null }>(
+      `WITH legacy AS (SELECT turn_run_id AS run_id, NULL AS first_visible_at,
               MIN(CASE WHEN json_extract(metadata_json, '$.phase') = 'responded'
                          OR (json_extract(metadata_json, '$.phase') IN ('reasoning', 'assistant') AND length(text) > 0)
                          OR json_extract(metadata_json, '$.type') = 'toolStatus'
@@ -294,6 +296,13 @@ export class MessageRepository implements IMessageRepository {
          AND json_valid(metadata_json) AND json_extract(metadata_json, '$.type') IN ('agentActivity', 'toolStatus')
        GROUP BY turn_run_id), current_runs AS (
          SELECT r.run_id,
+           (SELECT MIN(at) FROM (
+             SELECT json_extract(i.shown_json, '$.createdAt') AS at FROM chat_turn_display_items i
+             WHERE i.run_id=r.run_id AND json_extract(i.shown_json, '$.kind')='assistant'
+               AND length(json_extract(i.shown_json, '$.text'))>0
+             UNION ALL SELECT m.created_at AS at FROM messages m WHERE m.turn_run_id=r.run_id
+               AND m.sender_type='assistant' AND m.status='sent' AND m.delivery_status='delivered'
+           )) AS first_visible_at,
            (SELECT MIN(json_extract(i.shown_json, '$.createdAt')) FROM chat_turn_display_items i
              WHERE i.run_id = r.run_id AND i.shown_json IS NOT NULL
                AND length(json_extract(i.shown_json, '$.text')) > 0) AS responded_at,
@@ -309,7 +318,8 @@ export class MessageRepository implements IMessageRepository {
          WHERE NOT EXISTS (SELECT 1 FROM current_runs c WHERE c.run_id = legacy.run_id)`,
       [JSON.stringify(runIds), JSON.stringify(runIds)],
     );
-    return rows.map((row) => ({ runId: row.run_id, respondedAt: row.responded_at, terminalCode: row.terminal_code }));
+    return rows.map((row) => ({ runId: row.run_id, respondedAt: row.responded_at, terminalCode: row.terminal_code,
+      firstVisibleAt: row.first_visible_at }));
   }
 
   async interruptInactiveAgentActivities(activeRunIds: readonly string[], occurredAt: string): Promise<string[]> {
@@ -1019,13 +1029,14 @@ export class MessageRepository implements IMessageRepository {
     previousMessage: { createdAt: string } | null,
   ): Promise<ChatMessage> {
     // 后续用户输入或另一轮 AI 消息一旦落地，旧候选永久转为只读，删除后续消息也不解锁。
-    if (message.senderType === 'assistant' || message.senderType === 'user') {
+    // 已有时间线位置的封存／版本采用不是新增发言，不得锁定后续候选或撤销其重写 owner。
+    if (!message.timelineAnchor && (message.senderType === 'assistant' || message.senderType === 'user')) {
       await transaction.runAsync(`UPDATE chat_reply_version_sets SET locked = 1
         WHERE session_id = ? AND current_run_id IS NOT ?
           AND json_extract(CASE WHEN json_valid(?) THEN ? END, '$.type') IS NOT 'callStatus'`,
       [message.sessionId, message.turnRunId ?? null, message.metadataJson ?? null, message.metadataJson ?? null]);
     }
-    if (message.senderType === 'assistant') {
+    if (!message.timelineAnchor && message.senderType === 'assistant') {
       // 旁路回复已成为新后续时，旧重写不能再把替换结果提交到它后面。
       const replaced = await transaction.getFirstAsync(`SELECT 1 FROM chat_regeneration_requests
         WHERE session_id = ? AND source_run_id IS NOT ?
@@ -1085,6 +1096,18 @@ export class MessageRepository implements IMessageRepository {
     );
     if (!row) {
       throw new Error(`Failed to retrieve inserted message with id ${result.lastInsertRowId}`);
+    }
+    // 完整 HTML 与正式消息同事务取得稳定 ID；UI 是否打开不影响源码保存。
+    if (resolvedMessage.senderType === 'assistant' && row.status === 'sent') {
+      const block = readChatCodeBlock(resolvedMessage.text);
+      if (block && canRenderChatCode(block)) {
+        await chatCodePreviewRepository.saveInTransaction(transaction, {
+          id: chatCodePreviewId({ id: row.id, clientMessageId: resolvedMessage.clientMessageId }),
+          agentId: resolvedMessage.agentId ?? null,
+          language: block.language, source: block.source, title: chatCodeTitle(block),
+          canRender: true, createdAt: resolvedMessage.createdAt,
+        }, row.id);
+      }
     }
     return this.mapRowToEntity(row);
   }
@@ -1726,6 +1749,7 @@ export class MessageRepository implements IMessageRepository {
       metadataJson: row.metadata_json,
       turnRunId: row.turn_run_id,
       turnItemIndex: row.turn_item_index,
+      timelineAnchor: parseMessageMetadata({ metadataJson: row.metadata_json })?.timelineAnchor,
     };
   }
 }

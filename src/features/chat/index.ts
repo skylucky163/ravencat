@@ -115,7 +115,6 @@ export {
   updateGroupChatPinned,
   updateGroupChatProfile,
   getActiveGroupSpeechPlan,
-  getGroupParticipantDirectory,
   invokeGroupChat,
   markGroupConversationAsRead,
   sendGroupUserMessage,
@@ -227,10 +226,8 @@ export { buildSharedChatRecordText } from './messages/domain/SharedChatRecord';
 export { buildSharedMomentText } from './messages/domain/SharedMoment';
 export { getMessageSharedMoment } from './messages/domain/chatMessageMetadata';
 export type { SharedMoment } from './messages/domain/SharedMoment';
-export type { SharedContent } from './messages/domain/SharedContent';
 export { useChatContentShare } from './presentation/messages/components/useChatContentShare';
 export type { ChatShareTarget } from './messages/application/ShareChatMessages';
-export { listChatShareTargets } from './messages/application/ShareChatMessages';
 export { default as ChatContentShareSheet } from './presentation/messages/components/ChatContentShareSheet';
 export { ChatShareNavigationProvider } from './presentation/messages/components/ChatShareNavigation';
 export { getMessageSharedRecord } from './messages/domain/chatMessageMetadata';
@@ -251,11 +248,6 @@ export type {
   GroupSpeechTask,
   GroupChatDetails,
 } from './group/domain/GroupChat';
-export type {
-  GroupAssistantParticipant,
-  GroupParticipantDirectory,
-  GroupUserParticipant,
-} from './group/domain/GroupParticipantDirectory';
 export type {
   ConversationKind,
   ConversationRef,
@@ -314,9 +306,7 @@ export { ChatSummaryRouteScreen, ChatSummaryEditorRouteScreen, ChatSummarySettin
 export { default as AssistantChatSettingsScreen } from './presentation/conversation/AssistantChatSettingsScreen';
 export { default as AssistantContextSettingsScreen } from './presentation/conversation/AssistantContextSettingsScreen';
 export { ChatImageModelPicker } from './presentation/conversation/ChatImageModelPicker';
-export { getChatSummaryContext, getChatBackgroundContexts, createChatSummary, editChatSummary, deleteChatSummary, clearChatSummary,
-  updateChatSummarySettings, searchChatSummaries, getChatSummarySettings, getAssistantChatSummaryGenerationState, setFixedChatContextStart, retryChatSummaryTask,
-} from './summary/application/ChatSummary';
+export { getChatSummaryContext, getChatBackgroundContexts, getChatSummarySettings, getAssistantChatSummaryGenerationState } from './summary/application/ChatSummary';
 export { subscribeChatSummaryChanged } from './summary/application/ChatSummaryRuntime';
 export type { ChatSummarySegment, ChatSummarySnapshot, ChatSummarySettings, ChatSummarySettingsPatch, ChatSummarySearchInput, ChatSummarySearchPage } from './summary/domain/ChatSummaryRepository';
 export type { ChatSummaryTask, ChatSummaryCallDiagnostics } from './summary/domain/ChatSummaryRepository';
@@ -333,3 +323,9 @@ export {
   getAssistantMessageArrivalSnapshot,
   subscribeAssistantMessageArrival,
 } from './reply/delivery/AssistantMessageArrival';
+export { ChatCodeNavigationProvider } from './presentation/messages/components/ChatCodeNavigation';
+export { default as ChatCodePreviewScreen } from './presentation/messages/ChatCodePreviewScreen';
+export { default as ChatCodeLibraryScreen } from './presentation/messages/ChatCodeLibraryScreen';
+export { ChatCodeWorkError } from './messages/domain/ChatCodePreview';
+export { buildChatCodeWorkReference } from './messages/domain/ChatCodeBlock';
+export { chatCodeCoverUri, getOwnChatCodeWork, listOwnChatCodeWorks, setOwnChatCodeInLibrary, editOwnChatCodeWork } from './messages/application/ChatCodePreview';

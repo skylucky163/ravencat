@@ -1,6 +1,6 @@
 import { databaseCoordinator, type DatabaseTransactionExecutor } from '@platform/persistence';
 import type { ChatFavoriteRepository } from '../domain/ChatFavoriteRepository';
-import type { ChatFavorite, ChatFavoriteCategory, ChatFavoriteCursor, ChatFavoritePage, ChatFavoriteSnapshot } from '../domain/ChatFavorite';
+import type { ChatFavorite, ChatFavoriteCategory, ChatFavoriteCursor, ChatFavoritePage, ChatFavoriteSearch, ChatFavoriteSnapshot } from '../domain/ChatFavorite';
 import { getChatFavoriteCategory } from '../domain/ChatFavorite';
 import { isChatVoiceMessageMetadata } from '../../messages/domain/chatMessageMetadata';
 import type { MediaAssetChatAttachment } from '../../messages/domain/ChatAttachment';
@@ -23,8 +23,10 @@ function parseSnapshot(json: string): ChatFavoriteSnapshot {
   if (!value || typeof value !== 'object') throw new Error('收藏记录损坏');
   const snapshot = value as Record<string, unknown>;
   if (!['sourceName', 'authorName', 'messageCreatedAt', 'text'].every(key => typeof snapshot[key] === 'string')
+    || !['sourceAssistantId', 'sourceGroupId', 'authorAgentId'].every(key => snapshot[key] === null || typeof snapshot[key] === 'string')
     || (snapshot.authorKind !== 'user' && snapshot.authorKind !== 'assistant')
     || (snapshot.replyToText !== null && typeof snapshot.replyToText !== 'string')
+    || (snapshot.reasoningText !== undefined && typeof snapshot.reasoningText !== 'string')
     || !Array.isArray(snapshot.attachments) || !snapshot.attachments.every(isAttachment)
     || (snapshot.voice !== null && !isChatVoiceMessageMetadata({ kind: 'voice', voice: snapshot.voice }))) {
     throw new Error('收藏记录损坏');
@@ -58,10 +60,33 @@ export class SQLiteChatFavoriteRepository implements ChatFavoriteRepository {
     await transaction.runAsync('INSERT INTO chat_favorites (id, source_message_id, category, saved_at, snapshot_json) VALUES (?, ?, ?, ?, ?)',
       [favorite.id, favorite.sourceMessageId, favorite.category, favorite.savedAt, JSON.stringify(favorite.snapshot)]);
   }
-  async list(category: ChatFavoriteCategory | null, cursor: ChatFavoriteCursor | null): Promise<ChatFavoritePage> {
+  async list(category: ChatFavoriteCategory | null, cursor: ChatFavoriteCursor | null, search: ChatFavoriteSearch | null): Promise<ChatFavoritePage> {
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (category) { clauses.push('category = ?'); params.push(category); }
+    if (search) {
+      // 仅搜索业务文字，不扫描媒体 ID、文件路径或图片元数据；instr 将 % 和 _ 作为普通字符。
+      clauses.push(`(
+        instr(lower(json_extract(snapshot_json, '$.sourceName')), ?) > 0
+        OR instr(lower(json_extract(snapshot_json, '$.authorName')), ?) > 0
+        OR json_extract(snapshot_json, '$.sourceAssistantId') IN (SELECT value FROM json_each(?))
+        OR json_extract(snapshot_json, '$.sourceGroupId') IN (SELECT value FROM json_each(?))
+        OR json_extract(snapshot_json, '$.authorAgentId') IN (SELECT value FROM json_each(?))
+        OR (? = 1 AND json_extract(snapshot_json, '$.authorKind') = 'user')
+        OR (category <> 'image' AND (
+          instr(lower(json_extract(snapshot_json, '$.text')), ?) > 0
+          OR instr(lower(json_extract(snapshot_json, '$.replyToText')), ?) > 0
+          OR instr(lower(json_extract(snapshot_json, '$.reasoningText')), ?) > 0
+          OR EXISTS (SELECT 1 FROM json_each(snapshot_json, '$.attachments') AS attachment
+            WHERE json_extract(attachment.value, '$.type') = 'file' AND (
+              instr(lower(json_extract(attachment.value, '$.fileName')), ?) > 0
+              OR instr(lower(json_extract(attachment.value, '$.parsedText')), ?) > 0
+            ))
+        ))
+      )`);
+      params.push(search.text, search.text, JSON.stringify(search.sourceAssistantIds), JSON.stringify(search.sourceGroupIds),
+        JSON.stringify(search.authorAgentIds), Number(search.includeUserAuthor), search.text, search.text, search.text, search.text, search.text);
+    }
     if (cursor) { clauses.push('(saved_at, id) < (?, ?)'); params.push(cursor.savedAt, cursor.id); }
     const rows = await this.database.getAllAsync<FavoriteRow>(`SELECT * FROM chat_favorites ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY saved_at DESC, id DESC LIMIT ?`, [...params, PAGE_SIZE + 1]);
     const items = rows.slice(0, PAGE_SIZE).map(map);

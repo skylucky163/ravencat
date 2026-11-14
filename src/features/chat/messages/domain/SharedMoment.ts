@@ -11,6 +11,7 @@ export function isSharedMoment(value: unknown): value is SharedMoment {
     && typeof moment.author.actorId === 'string' && typeof moment.author.name === 'string'
     && typeof moment.author.displayName === 'string' && (moment.author.avatar === null || (moment.author.avatar && typeof moment.author.avatar.mediaAssetId === 'string'))
     && typeof moment.content === 'string' && typeof moment.createdAt === 'string'
+    && (moment.editedAt === undefined || moment.editedAt === null || typeof moment.editedAt === 'string')
     && (moment.locationLabel === null || typeof moment.locationLabel === 'string')
     && Array.isArray(moment.images) && moment.images.every(image => image && typeof image.mediaAssetId === 'string'
       && (image.analysisText === null || typeof image.analysisText === 'string'));
@@ -23,6 +24,7 @@ export function buildSharedMomentText(moment: SharedMoment, currentAgentId?: str
     JSON.stringify({ momentId: moment.momentId, author: { kind: author.actorType, id: author.actorId, name: author.name,
       ...(currentAgentId === undefined ? {} : { isSelf: author.actorType === 'ai' && author.actorId === currentAgentId }) }, timestamp: moment.createdAt,
       content: moment.content, location: moment.locationLabel,
+      ...(moment.editedAt === undefined ? {} : { editedAt: moment.editedAt, editStatus: moment.editedAt ? '已编辑' : '未编辑' }),
       images: moment.images.map(image => ({ mediaAssetId: image.mediaAssetId,
         description: image.analysisText ?? '[分享时尚无可靠图片语义，不得猜测图片内容]' })) }),
     '[时刻分享结束]',

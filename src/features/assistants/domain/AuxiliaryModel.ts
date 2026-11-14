@@ -4,6 +4,7 @@ export const CAPABILITY_KINDS = [
   'summary',
   'embedding',
   'ocr',
+  'image_generation',
   'stt',
   'tts',
   'translation',

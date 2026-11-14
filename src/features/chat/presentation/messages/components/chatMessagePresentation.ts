@@ -2,13 +2,15 @@
 
 import type { ChatMessage } from '@features/chat/messages/domain/ChatMessage';
 import { parseMessageMetadata } from '@features/chat/messages/domain';
+import { readChatCodeBlock } from '../../../messages/domain/ChatCodeBlock';
 import type { ChatInteractionProfile } from '@shared/theme';
 
 /** logicalMessageId 归属模型轮次；语音、表情等独立输出不属于文字分段。 */
 function isAssistantTextMessage(message: ChatMessage): boolean {
   const metadata = parseMessageMetadata(message);
   return !message.isMe && message.senderType === 'assistant'
-    && !metadata?.type && (!metadata?.kind || metadata.kind === 'reply');
+    && !metadata?.type && (!metadata?.kind || metadata.kind === 'reply')
+    && !readChatCodeBlock(message.text);
 }
 
 export function shouldCollapseAssistantSegment(
@@ -30,13 +32,17 @@ export function collapseAssistantSegmentsForPresentation(
     return messages;
   }
 
+  // 代码前后的解释文字属于不同展示区间，不能跨卡片合并到较早的位置。
+  let boundary = 0;
+  const groupKeys = messages.map(message => {
+    if (message.senderType === 'assistant' && readChatCodeBlock(message.text)) boundary++;
+    return shouldCollapseAssistantSegment(message, interactionProfile)
+      ? `${boundary}:${getAssistantPresentationGroupKey(message)}` : null;
+  });
   const segmentGroups = new Map<string, ChatMessage[]>();
-  for (const message of messages) {
-    if (!shouldCollapseAssistantSegment(message, interactionProfile)) {
-      continue;
-    }
-
-    const groupKey = getAssistantPresentationGroupKey(message);
+  for (const [index, message] of messages.entries()) {
+    const groupKey = groupKeys[index];
+    if (!groupKey) continue;
     const group = segmentGroups.get(groupKey);
     if (group) {
       group.push(message);
@@ -52,19 +58,19 @@ export function collapseAssistantSegmentsForPresentation(
   const renderedGroupKeys = new Set<string>();
   const collapsedMessages: ChatMessage[] = [];
 
-  for (const message of messages) {
-    if (!shouldCollapseAssistantSegment(message, interactionProfile)) {
+  for (const [index, message] of messages.entries()) {
+    const groupKey = groupKeys[index];
+    if (!groupKey) {
       collapsedMessages.push(message);
       continue;
     }
 
-    const groupKey = getAssistantPresentationGroupKey(message);
     if (renderedGroupKeys.has(groupKey)) {
       continue;
     }
 
     renderedGroupKeys.add(groupKey);
-    const group = segmentGroups.get(groupKey) || [message];
+    const group = segmentGroups.get(groupKey)!;
     collapsedMessages.push(mergeAssistantSegmentsForPresentation(group));
   }
 

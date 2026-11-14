@@ -1,5 +1,5 @@
 import { prepareConsumedTurnFixture } from './helpers/sqlite-bootstrap-fixture.mjs';
-import { chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
+import { chatCodeBlockModuleUrl, chatCodePreviewRepositoryModuleUrl, chatReplyVersionModuleUrl, chatMutationModuleUrl, chatTimelineModuleUrl, installChatTimelineSchema } from './chat-timeline-fixture.mjs';
 import { arrivalModuleUrl, arrival } from './chat-message-arrival-fixture.mjs';
 /**
  * Phase 5A ConversationTurnCoordinator 第二片：Chat 应用层行为验证。
@@ -61,6 +61,7 @@ const turnDomainModuleUrl = transpileToModuleUrl(
   read('src/features/chat/reply/domain/ConversationTurn.ts'),
 );
 const messageDomainModuleUrl = transpileToModuleUrl(`
+  export function parseMessageMetadata(message) { return message.metadataJson ? JSON.parse(message.metadataJson) : null; }
   export function buildGroupMentionModelText(text) { return text; }
   export function buildSessionPreviewTextFromMessage(message) {
     const metadata = message?.metadataJson ? JSON.parse(message.metadataJson) : null;
@@ -87,7 +88,7 @@ const coordinatorStub = `const databaseCoordinator = {
   },
 };`;
 
-const messageRepoSource = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`);
+const messageRepoSource = read('src/features/chat/messages/infrastructure/SQLiteMessageRepository.ts').replaceAll("from '../domain/ChatCodeBlock'", `from '${chatCodeBlockModuleUrl}'`).replaceAll("from './SQLiteChatCodePreviewRepository'", `from '${chatCodePreviewRepositoryModuleUrl}'`).replaceAll("from './ChatTimelineSql'", `from '${chatTimelineModuleUrl}'`).replaceAll("from './ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from '../../reply/infrastructure/ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`);
 const stubbedMessageRepoSource = messageRepoSource
   .replace("from '../domain/chatMessageMetadata'", `from '${messageDomainModuleUrl}'`)
   .replace(
@@ -99,9 +100,12 @@ const stubbedMessageRepoSource = messageRepoSource
     `from '${separatorModuleUrl}'`,
   );
 const messageRepoModuleUrl = transpileToModuleUrl(stubbedMessageRepoSource);
+const turnPresentationModuleUrl = transpileToModuleUrl(read('src/features/chat/reply/infrastructure/ChatTurnPresentationSql.ts')
+  .replaceAll("from '../../messages/infrastructure/SQLiteMessageRepository'", `from '${messageRepoModuleUrl}'`)
+  .replaceAll("from '../../messages/domain/chatMessageMetadata'", `from '${messageDomainModuleUrl}'`));
 const { MessageRepository } = await import(messageRepoModuleUrl);
 
-const turnRepoSource = read('src/features/chat/reply/infrastructure/SQLiteConversationTurnRepository.ts').replaceAll("from '../../messages/infrastructure/ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from './ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`);
+const turnRepoSource = read('src/features/chat/reply/infrastructure/SQLiteConversationTurnRepository.ts').replaceAll("from '../../messages/infrastructure/ChatMessageMutationSql'", `from '${chatMutationModuleUrl}'`).replaceAll("from './ChatReplyVersionSql'", `from '${chatReplyVersionModuleUrl}'`).replaceAll("from './ChatTurnPresentationSql'", `from '${turnPresentationModuleUrl}'`);
 const stubbedTurnRepoSource = turnRepoSource
   .replace(
     /import\s*\{[\s\S]*?\}\s*from\s*['"]@platform\/persistence['"];/,
@@ -170,7 +174,7 @@ const committedAssistantSegmentDeliveryModuleUrl = transpileToModuleUrl(
   committedAssistantSegmentDeliverySource,
 );
 const segmentationModuleUrl = transpileToModuleUrl(
-  read('src/features/chat/reply/application/AssistantReplySegmentation.ts'),
+  read('src/features/chat/reply/application/AssistantReplySegmentation.ts').replaceAll("from '../../messages/domain/ChatCodeBlock'", `from '${chatCodeBlockModuleUrl}'`),
 );
 const metadataStubUrl = transpileToModuleUrl(`
 export function buildMessageMetadata(aiConfig, runtimeContext, extra = {}) {
@@ -254,7 +258,10 @@ arrival.configureAssistantMessageArrivalRuntime({
 });
 
 const commitCanonicalUserMessageSource = read('src/features/chat/messages/application/CommitCanonicalUserMessage.ts');
+const substantiveUserMessageModuleUrl = transpileToModuleUrl(read('src/features/chat/messages/domain/SubstantiveUserMessage.ts')
+  .replace("from './chatMessageMetadata'", `from '${messageDomainModuleUrl}'`));
 const stubbedCommitCanonicalUserMessageSource = commitCanonicalUserMessageSource
+  .replace("from '../domain/SubstantiveUserMessage'", `from '${substantiveUserMessageModuleUrl}'`)
   .replace(
     /import\s*\{[\s\S]*?\}\s*from\s*['"]@platform\/persistence['"];/,
     coordinatorStub,

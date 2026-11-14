@@ -148,7 +148,7 @@ const Card = load('src/features/chat/presentation/messages/MessageBubble/ImageAt
   '@expo/vector-icons': { Ionicons: 'Icon' },
   '@shopify/flash-list': { useRecyclingState },
   '@shared/theme': { useTheme: () => theme, useThemedStyles: (factory) => factory(theme) },
-  './ImagePreviewModal': { default: 'Preview', __esModule: true },
+  '@shared/ui': { ImageViewerModal: 'Preview' },
   '../components/chatMediaResolutionCache': mediaCacheModule,
   '../../../messages/application/ResolveChatAttachmentMedia': {
     resolveChatImageAttachmentUris(reference) {
@@ -163,7 +163,12 @@ const props = (id) => ({
 function render(value, Component = Card) {
   cursor = 0;
   effects = [];
-  const tree = Component(value);
+  // 外层薄包装（key 驱动重建）不进入树：展开到实现组件，并按 key 语义重建 hook 槽位。
+  let tree = Component(value);
+  if (tree && typeof tree.type === 'function') {
+    if (tree.props?.key !== render.key) { render.key = tree.props?.key; slots.length = 0; }
+    tree = tree.type(tree.props);
+  }
   effects.forEach((effect) => effect());
   return tree;
 }
@@ -308,11 +313,16 @@ tree = renderSticker('sticker-a');
 assert.equal(find(tree, 'ActivityIndicator'), undefined, '表情包重新挂载也不重复转圈');
 assert.equal(stickerRequestCount, stickerRequestsBeforeRevisit);
 ChatMediaResolutionCacheContext.value = createChatMediaResolutionCache();
+// 新会话列表意味着卡片整体重新挂载，旧一层的地址不能沿用。
+slots.forEach((slot) => slot.cleanup?.());
+slots.length = 0;
 tree = renderSticker('sticker-a');
 assert.ok(find(tree, 'ActivityIndicator'), '不同会话列表不共享媒体地址缓存');
 await finishSticker('sticker-a');
 assert.equal(find(renderSticker('sticker-a'), 'Image').props.source.uri, 'file:///sticker-a');
 ChatMediaResolutionCacheContext.value = null;
+slots.forEach((slot) => slot.cleanup?.());
+slots.length = 0;
 tree = renderSticker('sticker-a');
 assert.ok(find(tree, 'ActivityIndicator'), '列表外的卡片独立解析，不依赖列表 Provider');
 await finishSticker('sticker-a');

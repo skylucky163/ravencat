@@ -20,6 +20,8 @@ export interface InputFieldProps {
   placeholder?: string;
   style?: StyleProp<ViewStyle>;
   inputStyle?: StyleProp<TextStyle>;
+  /** 与输入框同行的尾部操作；标签、提示与错误仍由字段统一排版。 */
+  rightAccessory?: React.ReactNode;
   maxLength?: number;
   keyboardType?: 'default' | 'number-pad' | 'decimal-pad' | 'numeric' | 'email-address' | 'phone-pad' | 'url';
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
@@ -61,6 +63,14 @@ const createStyles = (theme: PresentationTheme) =>
       backgroundColor: 'rgba(255, 255, 255, 0.14)',
       color: theme.colors.text.inverse,
     },
+    inputRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+    inputWithAccessory: {
+      flex: 1,
+      minWidth: 0,
+    },
     textArea: {
       height: 80,
       paddingTop: 12,
@@ -85,6 +95,7 @@ export default function InputField({
   placeholder,
   style,
   inputStyle,
+  rightAccessory,
   maxLength,
   keyboardType,
   autoCapitalize,
@@ -97,26 +108,30 @@ export default function InputField({
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
 
+  const input = (
+    <AppTextInput
+      style={[styles.input, rightAccessory && styles.inputWithAccessory, multiline && !autoGrow && styles.textArea, onDark && styles.inputOnDark, inputStyle, error && { borderWidth: 1, borderColor: theme.colors.feedback.error }]}
+      value={value}
+      onChangeText={onChangeText}
+      onBlur={onBlur}
+      placeholder={placeholder}
+      placeholderTextColor={onDark ? ON_DARK_PLACEHOLDER : theme.colors.text.tertiary}
+      multiline={multiline}
+      autoGrow={autoGrow}
+      maxLength={maxLength}
+      keyboardType={keyboardType}
+      autoCapitalize={autoCapitalize}
+      autoCorrect={autoCorrect}
+      editable={editable}
+      numberOfLines={numberOfLines}
+      textAlignVertical={textAlignVertical}
+    />
+  );
+
   return (
     <View style={[styles.container, style]}>
       {label ? <Text style={[styles.label, onDark && styles.labelOnDark]}>{label}</Text> : null}
-      <AppTextInput
-        style={[styles.input, multiline && !autoGrow && styles.textArea, onDark && styles.inputOnDark, inputStyle, error && { borderWidth: 1, borderColor: theme.colors.feedback.error }]}
-        value={value}
-        onChangeText={onChangeText}
-        onBlur={onBlur}
-        placeholder={placeholder}
-        placeholderTextColor={onDark ? ON_DARK_PLACEHOLDER : theme.colors.text.tertiary}
-        multiline={multiline}
-        autoGrow={autoGrow}
-        maxLength={maxLength}
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-        autoCorrect={autoCorrect}
-        editable={editable}
-        numberOfLines={numberOfLines}
-        textAlignVertical={textAlignVertical}
-      />
+      {rightAccessory ? <View style={styles.inputRow}>{input}{rightAccessory}</View> : input}
       {error ? <Text accessibilityRole="alert" style={[styles.hint, { color: theme.colors.feedback.error }]}>{error}</Text> : null}
       {hint ? <Text style={styles.hint}>{hint}</Text> : null}
     </View>

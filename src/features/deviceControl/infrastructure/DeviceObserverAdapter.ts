@@ -9,8 +9,6 @@ import {
 export const deviceObserverAdapter: DeviceObserverPort = {
   addConnectionStateListener: (listener) =>
     deviceObserver.addConnectionStateListener(listener),
-  addWindowStateListener: (listener) =>
-    deviceObserver.addWindowStateListener(listener),
   getConnectionState: () => deviceObserver.getConnectionState(),
   getCurrentWindowState: () => deviceObserver.getCurrentWindowState(),
   getInstalledLaunchableApps: async () => {

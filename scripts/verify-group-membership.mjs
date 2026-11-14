@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
 import { bootstrapSqlite, createSqliteExecutor } from './helpers/sqlite-bootstrap-fixture.mjs';
 import { createCoordinatedSqliteFixture, databaseErrors } from './helpers/coordinated-sqlite-fixture.mjs';
+import { loadTypeScriptModule } from './helpers/load-typescript-module.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const db = new DatabaseSync(':memory:');
@@ -31,16 +32,31 @@ function load(relative) {
     if (filename.endsWith('createAgentToolRegistry.ts')) {
       if (specifier === '@features/memory') return load('src/features/memory/aiTools/MemoryAgentTools.ts');
       if (specifier === '@features/phoneTools/neteaseComposition') return { productionNetEaseChildTools: [] };
-      if (specifier === '@features/phoneTools') return new Proxy(load('src/features/phoneTools/toolPackages/ToolPackageCatalog.ts'), {
-        get: (target, key) => {
-          if (Object.hasOwn(target, key)) return target[key];
-          const name = ({ XiaohongshuPrepareTextNoteTool: 'xiaohongshu_prepare_text_note',
-            XiaohongshuPublishPreparedNoteTool: 'xiaohongshu_publish_prepared_note' })[key] ?? String(key);
-          return { name, definition: { name, parameters: { type: 'object' } } };
-        },
-      });
+      if (specifier === '@features/phoneTools') {
+        // 只读取真实工具定义；本测试不执行原生、权限或宿主能力。
+        const xiaohongshuTools = loadTypeScriptModule('src/features/phoneTools/aiTools/XiaohongshuNoteTools.ts', {
+          '@features/assistants': {},
+          '@platform/device': {},
+          '@shared/runtime/abortSignal': {},
+          '../application/CurrentProtectedAppsPolicy': {},
+          '../application/ProtectedAppsPolicy': {},
+        });
+        return new Proxy({
+          ...load('src/features/phoneTools/toolPackages/ToolPackageCatalog.ts'),
+          ...xiaohongshuTools,
+        }, {
+          get: (target, key) => {
+            if (Object.hasOwn(target, key)) return target[key];
+            const name = String(key);
+            return { name, definition: { name, parameters: { type: 'object' } } };
+          },
+        });
+      }
       if (specifier === './ShareMomentTool') return { ShareMomentTool: { name: 'share_moment', definition: { name: 'share_moment', description: '', parameters: { type: 'object' } } } };
       if (specifier === './ApplicationSettingsTools') return { applicationSettingsTools: [] };
+      if (specifier === './ChatCodeWorkTools') return new Proxy({}, { get: (_target, key) => ({
+        name: String(key), definition: { name: String(key), description: String(key), parameters: { type: 'object' } },
+      }) });
       if (specifier === '@platform/agentRuntime') return load('src/platform/agentRuntime/AgentToolRegistry.ts');
       if (specifier.startsWith('@features/')) return new Proxy({}, { get: (_target, key) => ({
         name: String(key), definition: { name: String(key), description: String(key), parameters: { type: 'object' } },

@@ -134,5 +134,9 @@
   {
     "file": "webrtc-vad-2.0.10-LICENSE.txt",
     "source": "https://raw.githubusercontent.com/gkonovalov/android-vad/2.0.10/webrtc/src/main/jni/webrtc_vad/LICENSE"
+  },
+  {
+    "file": "img-fx-0.6.0-LICENSE.txt",
+    "source": "https://raw.githubusercontent.com/Jakubantalik/img-fx/2098279964046e23bad86d9f42f41a3b06dca735/LICENSE"
   }
 ]

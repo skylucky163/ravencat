@@ -2,13 +2,13 @@
 import { createRuntimeSlot } from '@shared/runtime/RuntimeSlot';
 import type { ModelSelectionSettings } from '@shared/ui/modelSelectionTypes';
 import type { TranslationSettingsRepository } from '../domain/TranslationSettingsRepository';
-import type { ResolvedTranslationModel } from '../domain/TranslationModel';
+import type { TranslationModelConfig } from '../domain/TranslationModel';
 
 interface Dependencies {
   repository: TranslationSettingsRepository;
   getSelection(modelConfigId: string | null): Promise<ModelSelectionSettings>;
   requireModel(modelConfigId: string): Promise<void>;
-  resolveModel(modelConfigId: string): Promise<ResolvedTranslationModel | null>;
+  resolveModel(modelConfigId: string): Promise<TranslationModelConfig | null>;
 }
 const slot = createRuntimeSlot<Dependencies>('Translation models');
 const listeners = new Set<() => void>();
@@ -26,7 +26,7 @@ export async function selectTranslationModel(modelConfigId: string | null): Prom
   await deps.repository.setModelId(modelConfigId);
   notifyTranslationModelsChanged();
 }
-export async function resolveTranslationModel(): Promise<ResolvedTranslationModel> {
+export async function resolveTranslationModel(): Promise<TranslationModelConfig> {
   const deps = slot.get();
   const id = await deps.repository.getModelId();
   if (id === null) throw new Error('请先在翻译模型列表中选择聊天翻译使用的模型');

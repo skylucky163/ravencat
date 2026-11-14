@@ -76,7 +76,7 @@ const AppTextInput = load('src/shared/ui/AppTextInput.tsx', {
 const ModalSheet = load('src/shared/ui/ModalSheet.tsx', {
   react: React, 'react-native': native, '@shared/theme': themeApi,
   'react-native-safe-area-context': { useSafeAreaInsets: () => ({ bottom: 0 }) },
-  './KeyboardAvoidingContainer': { __esModule: true, default: 'Avoiding' },
+  '../../../modules/modal-window': { ModalWindow: 'ModalWindow' },
 }).default;
 const Settings = load('src/features/miniPrograms/presentation/PaperNoteChatFooterSettings.tsx', {
   react: React,
@@ -192,7 +192,6 @@ const beforeCancel = focuses;
 await act(async () => button('编辑聊天底栏文字').props.onPress());
 await act(async () => renderer.root.findByType('Modal').props.onShow());
 await act(async () => renderer.root.findByType('Modal').props.onRequestClose());
-assert.equal(renderer.root.findByType('Avoiding').props.enabled, false, '退出动画期间已停止窗口避让');
 await finishAnimations();
 assert.equal(focuses, beforeCancel, '入场中关闭会取消待执行聚焦，不能在关闭后弹出键盘');
 await act(async () => renderer.unmount());

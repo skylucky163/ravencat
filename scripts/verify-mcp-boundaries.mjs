@@ -2289,15 +2289,30 @@ const uiScreenMocks = {
   'react-native': { ...Object.fromEntries(['ActivityIndicator', 'ScrollView', 'Switch', 'Text', 'TextInput', 'TouchableOpacity', 'View'].map((name) => [name, name])),
     StyleSheet: { create: (styles) => styles, hairlineWidth: 1 } },
   'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
-  '@shared/theme': { ThemedSurface: 'ThemedSurface', useTheme: () => ({ radius: { md: 12 }, colors: { text: { tertiary: '#888' } } }), useThemedStyles: () => ({}) },
-  '@shared/ui/NavigationHeader': { default: 'NavigationHeader' },
-  '@shared/ui': { Toggle: 'Toggle', showAppDialog: (dialog) => { uiAlerts.push(dialog); } },
+  'lucide-react-native': { ChevronDown: 'ChevronDown', ChevronUp: 'ChevronUp' },
+  '@shared/theme': { ThemedSurface: 'ThemedSurface', useTheme: () => ({ radius: { md: 12, lg: 16 },
+    colors: { text: { tertiary: '#888' }, brand: { primary: '#6688ff' } } }), useThemedStyles: () => ({}) },
+  '@shared/ui/NavigationHeader': { default: ({ rightButton, ...props }) => React.createElement('NavigationHeader', props, rightButton) },
+  '@shared/ui': {
+    Card: 'Card', InputField: 'InputField', KeyboardAvoidingContainer: 'KeyboardAvoidingContainer', Toggle: 'Toggle',
+    Button: ({ title, disabled, onPress }) => React.createElement('TouchableOpacity', { disabled, onPress },
+      React.createElement('Text', null, title)),
+    showAppDialog: (dialog) => { uiAlerts.push(dialog); },
+  },
   './McpConnectionFields': { default: 'McpConnectionFields' },
   './McpAssistantSelection': { default: 'McpAssistantSelection' },
   '@features/assistants': { listAIAssistantSummaries: async () => [{ id: 'assistant-1', name: '测试 AI' }] },
   '../application/McpConfigError': configErrorModule,
   '../application/GetMcpServer': { getMcpServer: async () => { uiServerLoads += 1; return uiSavedServer; } },
-  '../application/SaveMcpServer': { saveMcpServer: async (input) => { uiSaves.push(input); return uiSavedServer; } },
+  '../application/SaveMcpServer': { saveMcpServer: async (input) => {
+    if (input.id === null && input.assistantIds.length === 0) {
+      throw new configErrorModule.McpConfigError('ASSISTANT_REQUIRED', '新增 MCP 服务请至少选择一位生效 AI');
+    }
+    uiSaves.push(input);
+    uiSavedServer = { ...uiSavedServer, name: input.name, url: input.url, description: input.description,
+      assistantIds: input.assistantIds, authMode: input.authMode, enabled: input.id === null || input.enabled };
+    return uiSavedServer;
+  } },
   '../application/DeleteMcpServer': { deleteMcpServer: async () => undefined },
   '../application/SetMcpServerEnabled': { setMcpServerEnabled: async (id, enabled) => {
     uiToggleWrites.push({ id, enabled });
@@ -2305,12 +2320,14 @@ const uiScreenMocks = {
     return uiSavedServer;
   } },
   '../application/TestMcpServerConnection': { testMcpServerConnection: async (id, protocolEra) => {
-    uiTests.push({ id, protocolEra });
+    uiTests.push({ id, protocolEra, configuration: structuredClone(uiSavedServer) });
     if (uiTestFailure) throw new Error(uiTestFailure);
     const protocolVersion = protocolEra === 'legacy' ? '2025-06-18' : '2026-07-28';
     uiSavedServer = { ...uiSavedServer, enabled: true, connectionStatus: 'available',
       lastProtocolEra: protocolEra, lastNegotiatedProtocolVersion: protocolVersion };
-    return { server: uiSavedServer, serverInfo: null, tools: [], durationMs: 1, protocolVersion };
+    return { server: uiSavedServer, serverInfo: { name: '测试服务', version: '1.0' },
+      tools: [{ remoteName: 'ui_tool', localName: 'mcp.ui-server.ui_tool', description: '测试工具说明' }],
+      durationMs: 1, protocolVersion };
   } },
   '../application/SetMcpToolGrant': { listMcpDiscoveredToolGrants: async () => [
     { remoteToolName: 'ui_tool', localToolName: 'mcp.ui-server.ui_tool', description: '', stale: false, canAuthorize: true, enabled: true },
@@ -2336,12 +2353,34 @@ const pressTest = async (label = '传统握手测试') => {
 assert.equal(ui.root.findByType('McpAssistantSelection').props.required, true);
 assert.deepEqual(ui.root.findByType('McpAssistantSelection').props.selectedIds, []);
 const testButton = ui.root.findAllByType('TouchableOpacity').find((node) => node.findAllByType('Text').some((label) => label.props.children === '新版协议测试'));
-assert.equal(testButton.props.disabled, true, '未选择 AI 时不能测试并自动创建服务');
+assert.equal(testButton.props.disabled, false, '未选择 AI 时允许点击测试以说明原因');
 const legacyTestButton = ui.root.findAllByType('TouchableOpacity').find((node) => node.findAllByType('Text').some((label) => label.props.children === '传统握手测试'));
-assert.equal(legacyTestButton.props.disabled, true, '传统握手同样需要先选择生效 AI');
+assert.equal(legacyTestButton.props.disabled, false, '传统握手也应响应未选择 AI 时的点击');
+for (const label of ['传统握手测试', '新版协议测试']) {
+  await pressTest(label);
+  assert.equal(uiAlerts.at(-1).title, 'MCP 操作失败');
+  assert.match(uiAlerts.at(-1).message, /生效 AI.*至少选择一位 AI/u, `${label} 必须弹窗说明选择要求`);
+  assert.equal(uiSaves.length, 0, '未选择 AI 不能创建服务');
+  assert.equal(uiTests.length, 0, '未选择 AI 不能发起连接');
+  await act(async () => { uiAlerts.at(-1).buttons[0].onPress(); });
+}
 await act(async () => { ui.root.findByType('McpAssistantSelection').props.onToggle('assistant-1', true); });
 await pressTest();
+assert.equal(uiAlerts.at(-1).title, '连接成功');
+assert.equal(uiAlerts.at(-1).message, undefined, '成功弹窗不附带工具或协议详情');
+assert.equal(ui.root.findAllByType('Text').some((node) => node.props.children === 'ui_tool'), false,
+  '测试成功后不自动展开具体工具');
+await act(async () => {
+  ui.root.findByProps({ accessibilityLabel: '工具授权' }).props.onPress();
+});
+assert.ok(ui.root.findAllByType('Text').some((node) => node.props.children === 'ui_tool'),
+  '用户可主动展开查看授权');
+await act(async () => {
+  ui.root.findByProps({ label: '服务简介（可选）' }).props.onChangeText('连接成功后修改的简介');
+});
 await pressTest();
+assert.equal(ui.root.findAllByType('Text').some((node) => node.props.children === 'ui_tool'), false,
+  '再次测试后收起工具详情');
 assert.equal(uiSaves[0].enabled, true, '新增页测试保存时默认启用服务');
 assert.deepEqual(uiSaves[0].assistantIds, ['assistant-1']);
 assert.deepEqual(uiSaves[1].assistantIds, ['assistant-1']);
@@ -2349,6 +2388,8 @@ assert.equal(uiSaves[0].id, null);
 assert.equal(uiSaves[0].bearerToken, 'ui-token');
 assert.equal(uiSaves[1].id, 'ui-server');
 assert.equal(uiSaves[1].bearerToken, undefined);
+assert.equal(uiTests.at(-1).configuration.description, '连接成功后修改的简介',
+  '成功连接后修改并重新测试，也必须使用已保存的最新参数');
 assert.equal(uiServerLoads, 0, '新建页不能再启动编辑页加载并覆盖刚完成的测试结果');
 uiTestFailure = '新版 HTTP 500';
 await pressTest('新版协议测试');
@@ -2359,7 +2400,10 @@ assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.
   && node.props.children.join('') === '传统握手 · 2025-06-18'), '新版失败后仍显示已验证的传统链路');
 assert.equal(uiAlerts.at(-1).title, 'MCP 操作失败');
 assert.equal(uiAlerts.at(-1).message, '新版 HTTP 500', '测试失败直接弹出原因，不依赖页面滚动位置');
-assert.ok(ui.root.findAllByType('Text').some((node) => node.props.children === 'ui_tool'), '失败后保留已有工具授权列表');
+await act(async () => {
+  ui.root.findByProps({ accessibilityLabel: '工具授权' }).props.onPress();
+});
+assert.ok(ui.root.findAllByType('Text').some((node) => node.props.children === 'ui_tool'), '失败后仍可展开已有工具授权列表');
 const toolGrantToggle = () => ui.root.findAllByType('Toggle')
   .find((node) => node.props.accessibilityLabel === '允许 AI 请求：ui_tool');
 assert.ok(toolGrantToggle(), '工具授权行把开关放在工具名右侧');
@@ -2372,17 +2416,44 @@ assert.equal(uiAlerts.at(-1).message, '新版 HTTP 500');
 await act(async () => { uiAlerts.at(-1).onDismiss(); });
 await act(async () => { ui.unmount(); });
 
-let uiSaveBacks = 0;
+let uiTestBacks = 0;
+const savesBeforeInitialFailure = uiSaves.length;
 await act(async () => { ui = create(React.createElement(uiScreenModule.default,
-  { serverId: null, onBack: () => { uiSaveBacks += 1; } })); });
+  { serverId: null, onBack: () => { uiTestBacks += 1; } })); });
 await act(async () => {
-  ui.root.findByType('McpConnectionFields').props.onImport({ name: '直接保存', url: 'https://ui.example/mcp', authMode: 'none' });
+  ui.root.findByType('McpConnectionFields').props.onImport({ name: '首次连接失败', url: 'https://ui.example/mcp',
+    authMode: 'bearer_token', bearerToken: 'first-token' });
   ui.root.findByType('McpAssistantSelection').props.onToggle('assistant-1', true);
 });
-await pressTest('保存');
+uiTestFailure = '首次 HTTP 500';
+await pressTest('新版协议测试');
 assert.equal(uiSaves.at(-1).id, null);
-assert.equal(uiSaves.at(-1).enabled, true, '新增页直接保存默认启用');
-assert.equal(uiSaveBacks, 1, '保存后返回服务列表');
+assert.equal(uiSavedServer.name, '首次连接失败', '首次测试失败也保留已保存配置');
+assert.equal(uiAlerts.at(-1).message, '首次 HTTP 500');
+await act(async () => { uiAlerts.at(-1).onDismiss(); });
+await act(async () => {
+  ui.root.findByProps({ label: '服务名称' }).props.onChangeText('修改后的服务');
+  ui.root.findByProps({ label: '服务简介（可选）' }).props.onChangeText('修改后的简介');
+  ui.root.findByType('McpConnectionFields').props.onUrlChange('https://updated.example/mcp');
+  ui.root.findByType('McpConnectionFields').props.onTokenChange('updated-token');
+});
+await pressTest();
+assert.equal(uiSaves.at(-1).id, 'ui-server', '失败后修改并重测必须更新同一服务');
+assert.equal(uiSaves.at(-1).bearerToken, 'updated-token');
+assert.equal(uiSavedServer.name, '修改后的服务');
+assert.equal(uiSavedServer.url, 'https://updated.example/mcp');
+assert.equal(uiTests.at(-1).configuration.description, '修改后的简介', '再次失败也必须保留最新参数');
+uiTestFailure = null;
+await act(async () => { uiAlerts.at(-1).onDismiss(); });
+await act(async () => {
+  ui.root.findByProps({ label: '服务名称' }).props.onChangeText('再次修改的服务');
+});
+await pressTest();
+assert.equal(uiSavedServer.name, '再次修改的服务', '成功测试也保留本次最新参数');
+assert.equal(uiSaves.at(-1).id, 'ui-server');
+assert.equal(uiSaves.length, savesBeforeInitialFailure + 3, '连续重测只更新原服务，不另建记录');
+assert.equal(uiAlerts.at(-1).title, '连接成功');
+assert.equal(uiTestBacks, 0, '测试后停留在配置页，允许继续修改和重测');
 await act(async () => { ui.unmount(); });
 
 uiSavedServer = { ...uiSavedServer, enabled: false };
@@ -2395,18 +2466,16 @@ uiTestFailure = null;
 await pressTest('新版协议测试');
 assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.children)
   && node.props.children.join('') === '新版协议 · 2026-07-28'), '两条都成功时显示最后成功测试的链路');
-assert.ok(ui.root.findAllByType('Text').some((node) => Array.isArray(node.props.children)
-  && node.props.children.join('') === '协议版本：2026-07-28'), '成功结果显示实际协议版本');
+assert.equal(uiAlerts.at(-1).title, '连接成功', '新版协议测试同样只提示连接成功');
+assert.equal(ui.root.findAllByType('Toggle').length, 0, '重开配置与测试成功均默认收起工具授权');
 assert.deepEqual(ui.root.findByType('McpAssistantSelection').props.selectedIds, ['assistant-1'], '编辑页恢复已保存的选择');
 await act(async () => { ui.root.findByType('McpAssistantSelection').props.onToggle('assistant-1', false); });
-const saveButton = ui.root.findAllByType('TouchableOpacity').find((node) => node.findAllByType('Text').some((label) => label.props.children === '保存'));
-assert.equal(saveButton.props.disabled, false, '已有服务允许清空生效对象');
-await act(async () => { saveButton.props.onPress(); });
+await pressTest('新版协议测试');
 assert.deepEqual(uiSaves.at(-1).assistantIds, []);
-assert.equal(uiSaves.at(-1).enabled, true, '配置页保存沿用当前启停状态；服务开关只在工具列表');
+assert.equal(uiSaves.at(-1).enabled, true, '测试前自动保存当前配置；服务开关只在工具列表');
 await act(async () => { ui.unmount(); });
 
-let centerServer = { ...uiSavedServer, enabled: false, enabledToolCount: 2 };
+let centerServer = { ...uiSavedServer, assistantIds: ['assistant-1'], enabled: false, enabledToolCount: 2 };
 let centerNavigations = 0;
 const selectionWrites = [];
 const { canCommitPresentationLoad } = loadTypeScriptModule('src/shared/utils/presentationLoadRevision.ts');
@@ -2438,7 +2507,7 @@ assert.deepEqual(ui.root.findByType('McpAssistantSelection').props.selectedIds, 
 assert.equal(centerNavigations, 0, '勾选对象不能触发进入服务配置');
 assert.equal(centerServer.enabled, false, '对象修改不应修改连接或服务开关');
 const centerToggle = () => ui.root.findAllByType('Toggle')
-  .find((node) => node.props.accessibilityLabel === '启用测试服务');
+  .find((node) => node.props.accessibilityLabel === `启用${centerServer.name}`);
 assert.ok(centerToggle(), '服务列表逐项提供启停开关');
 assert.equal(centerToggle().props.value, false);
 await act(async () => { centerToggle().props.onValueChange(true); });
@@ -2476,9 +2545,165 @@ assert.equal(selectionHeader().props.accessibilityLabel, '生效 AI：未选择'
 await act(async () => { selectionHeader().props.onPress(); });
 assert.equal(checkboxRows().length, 0, '可再次收起多选');
 await act(async () => { ui.unmount(); });
-await act(async () => { ui = create(React.createElement(selectionModule.default, { ...selectionProps, collapsible: false, required: true })); });
-assert.equal(checkboxRows().length, 1, '新增服务直接展示必选对象');
+await act(async () => { ui = create(React.createElement(selectionModule.default,
+  { ...selectionProps, selectedIds: [], required: true })); });
+assert.equal(checkboxRows().length, 0, '新增服务的必选 AI 也默认收起');
+assert.equal(selectionHeader().props.accessibilityLabel, '生效 AI（必选）：未选择');
+await act(async () => { selectionHeader().props.onPress(); });
+assert.equal(checkboxRows().length, 1, '展开后可以选择生效 AI');
+await act(async () => { checkboxRows()[0].props.onPress(); });
+assert.deepEqual(selectionWrites.at(-1), { assistantId: 'assistant-1', enabled: true });
 await act(async () => { ui.unmount(); });
+// MCP 凭据经 Host 与稳定设置往返；真实 SQLite 区分归档快照和活动库引用。
+{
+  const firstRef = 'mcp.token.11111111-1111-4111-8111-111111111111';
+  const disabledRef = 'mcp.token.22222222-2222-4222-8222-222222222222';
+  const activeRef = 'mcp.token.33333333-3333-4333-8333-333333333333';
+  const unrelatedRef = 'web.search.44444444-4444-4444-8444-444444444444';
+  const secureValues = new Map([[firstRef, 'first-token'], [disabledRef, 'disabled-token'],
+    [activeRef, 'active-token'], [unrelatedRef, 'search-key']]);
+  let failedReference = null;
+  const credentials = loadTypeScriptModule('src/features/mcpTools/infrastructure/SecureStoreMcpCredentialStore.ts', {
+    'expo-crypto': { randomUUID: () => { throw new Error('恢复不能创建新凭据引用'); } },
+    'expo-secure-store': {
+      getItemAsync: async reference => secureValues.get(reference) ?? null,
+      setItemAsync: async (reference, token) => {
+        if (reference === failedReference) throw new Error('安全存储写入失败');
+        secureValues.set(reference, token);
+      },
+      deleteItemAsync: async reference => { secureValues.delete(reference); },
+    },
+  });
+  const snapshotDb = new DatabaseSync(':memory:');
+  const activeDb = new DatabaseSync(':memory:');
+  for (const db of [snapshotDb, activeDb]) db.exec('CREATE TABLE mcp_servers (credential_ref TEXT, enabled INTEGER)');
+  snapshotDb.prepare('INSERT INTO mcp_servers VALUES (?, ?)').run(firstRef, 1);
+  snapshotDb.prepare('INSERT INTO mcp_servers VALUES (?, ?)').run(disabledRef, 0);
+  snapshotDb.prepare('INSERT INTO mcp_servers VALUES (?, ?)').run(firstRef, 0);
+  snapshotDb.exec('INSERT INTO mcp_servers VALUES (NULL, 1)');
+  activeDb.prepare('INSERT INTO mcp_servers VALUES (?, ?)').run(activeRef, 1);
+  const executor = db => ({ getAllAsync: async query => db.prepare(query).all() });
+  const persistence = { databaseCoordinator: {
+    openTaskExecutor: () => executor(activeDb),
+    readSnapshotAsync: async (_task, uri, callback) => {
+      assert.equal(uri, 'file:///snapshot.db');
+      return callback(executor(snapshotDb));
+    },
+  } };
+  const repository = loadTypeScriptModule('src/features/mcpTools/infrastructure/SQLiteMcpServerConfigRepository.ts', {
+    '@platform/persistence': persistence,
+    '../domain/McpServerConfig': {},
+    '../application/McpConfigError': configErrorModule,
+  });
+  const { ApplicationBackupSourceGateway } = loadTypeScriptModule('src/features/backup/infrastructure/ApplicationBackupSourceGateway.ts', {
+    '@platform/persistence': {},
+    '@platform/ai': { aiHttpDiagnostics: {
+      exportBackupState: async () => ({ version: 1, enabled: false, records: [] }),
+      validateBackupState: () => {}, restoreBackupState: async () => {},
+    } },
+    '@platform/device': { getPersistentMediaRootUri: () => 'file:///source/persistent-media/' },
+    '@platform/device/DeviceMediaService': {
+      PERSISTENT_IMAGE_CATEGORY: { chatCodeCover: 'chatCodeCover' },
+      getPersistentImageCategoryPrefix: () => 'covers/chat-code/',
+    }, '@features/media': {},
+    '@shared/theme': {
+      loadStoredThemeBackupState: async () => ({}), parseStoredThemeBackupState: state => state,
+      restoreStoredThemeBackupState: async () => {},
+    },
+    '../../../../modules/ravencat-floating-layer': {
+      getBubbleSkinBackupSource: async () => ({ settingsJson: '{}', rootUri: 'file:///skins/' }),
+      validateBubbleSkinBackupSettings: async () => {}, restoreBubbleSkinBackupSettings: async () => {},
+    },
+    './stableSettingsBackupState': loadTypeScriptModule('src/features/backup/infrastructure/stableSettingsBackupState.ts'),
+  });
+  const { createBackupSourceGateway } = loadTypeScriptModule('src/host/composition/createBackupSourceGateway.ts', {
+    '@platform/persistence': persistence,
+    '@features/backup/composition': { ApplicationBackupSourceGateway },
+    '@features/media/composition': { SQLiteMediaAssetRepository: class { async listBackupAssets() { return []; } } },
+    '@features/calls/composition': { CALL_SNAPSHOT_BACKUP_EXCLUSIONS: [], callRepository: { assertBackupSnapshotHasNoFiles: async () => {} } },
+    '@features/webTools/composition': {
+      readSearchCredentialReferences: async () => [], readSearchCredentialsBackup: async () => [],
+      validateSearchCredentialsBackup: () => {}, restoreSearchCredentialsBackup: async () => {},
+    },
+    '@features/mcpTools/composition': { ...repository, ...credentials },
+    '@features/chat/composition': { readChatCodeCoverFileReferences: async () => [] },
+  });
+  const gateway = createBackupSourceGateway();
+  const { stableSettingsJson } = await gateway.readNonDatabaseSources('file:///snapshot.db');
+  const payload = JSON.parse(stableSettingsJson);
+  assert.deepEqual(new Map(payload.mcpCredentials.map(entry => [entry.reference, entry.token])),
+    new Map([[firstRef, 'first-token'], [disabledRef, 'disabled-token']]),
+    '包含停用服务、去重引用，排除活动库新配置与其他安全存储数据');
+  const validate = state => gateway.validateStableSettingsJson(JSON.stringify(state),
+    'file:///skins/', 'file:///media/', 'file:///snapshot.db');
+  await validate(payload);
+  const rollbackJson = await gateway.exportStableSettingsJson();
+  assert.deepEqual(JSON.parse(rollbackJson).mcpCredentials, [{ reference: activeRef, token: 'active-token' }]);
+
+  secureValues.clear();
+  await gateway.restoreStableSettingsJson(stableSettingsJson);
+  const restoredResolver = loadTypeScriptModule('src/features/mcpTools/application/ResolveMcpBearerToken.ts', {
+    '@platform/mcp': { McpClientError: Error },
+    './McpToolsRuntimeDependencies': { getMcpToolsRuntimeDependencies: () => ({ credentialStore: credentials.secureStoreMcpCredentialStore }) },
+  });
+  assert.equal(await restoredResolver.resolveMcpBearerToken(firstRef), 'first-token', '空安全存储恢复后运行时可读取 Token');
+  assert.equal(await restoredResolver.resolveMcpBearerToken(disabledRef), 'disabled-token');
+  await gateway.restoreStableSettingsJson(stableSettingsJson);
+  assert.equal(secureValues.size, 2, '重复恢复保留凭据引用');
+
+  const unchanged = new Map(secureValues);
+  for (const entries of [
+    null, {}, [null], [{ reference: unrelatedRef, token: 'other' }],
+    [{ reference: 'mcp.token.bad-reference', token: 'other' }],
+    [payload.mcpCredentials[0], payload.mcpCredentials[0]],
+    ...['', 'Bearer invalid', 'line\nbreak', '中文', 1, undefined].map(token =>
+      [{ reference: firstRef, token }, payload.mcpCredentials[1]]),
+    [payload.mcpCredentials[0]],
+    [...payload.mcpCredentials, { reference: activeRef, token: 'extra' }],
+  ]) {
+    await assert.rejects(validate({ ...payload, mcpCredentials: entries }), /备份 MCP 凭据/);
+  }
+  await assert.rejects(gateway.restoreStableSettingsJson(JSON.stringify({ ...payload,
+    mcpCredentials: [{ reference: unrelatedRef, token: 'other' }] })), /备份 MCP 凭据/);
+  assert.deepEqual(secureValues, unchanged, '外部非法凭据不能产生安全存储写入');
+  const oldPayload = { ...payload }; delete oldPayload.mcpCredentials;
+  await validate(oldPayload);
+  await gateway.restoreStableSettingsJson(JSON.stringify(oldPayload));
+  assert.deepEqual(secureValues, unchanged, '旧包缺少字段时保留本机凭据');
+
+  // 通过实际恢复启动门触发中途写入失败，原快照恢复已写值和原本缺失的状态。
+  activeDb.exec('DELETE FROM mcp_servers');
+  for (const ref of [firstRef, disabledRef]) activeDb.prepare('INSERT INTO mcp_servers VALUES (?, 1)').run(ref);
+  secureValues.set(firstRef, 'original-token');
+  secureValues.delete(disabledRef);
+  const oldSettings = await gateway.exportStableSettingsJson();
+  assert.equal(JSON.parse(oldSettings).mcpCredentials.find(entry => entry.reference === disabledRef).token, null);
+  let pendingAction = { kind: 'apply_settings', stableSettingsJson };
+  let committed = false;
+  let rolledBack = false;
+  const { runPendingBackupRestoreCompletion } = loadTypeScriptModule('src/host/composition/runPendingBackupRestoreCompletion.ts');
+  failedReference = disabledRef;
+  await assert.rejects(runPendingBackupRestoreCompletion({
+    consumeRestoreFailure: async () => null, readPendingRestoreAction: async () => pendingAction,
+    initializeDatabase: async () => {}, closeDatabaseForRollback: async () => {},
+    restoreStableSettings: json => gateway.restoreStableSettingsJson(json),
+    commitActivatedRestore: async () => { committed = true; },
+    rollbackActivatedRestore: async failureMessage => {
+      failedReference = null;
+      pendingAction = { kind: 'restore_rollback_settings', stableSettingsJson: oldSettings, failureMessage };
+    },
+    completeRolledBackRestore: async () => { rolledBack = true; },
+    collectRestoreGarbage: async () => {}, reportCleanupFailure: error => { throw error; },
+  }), /原数据已回滚.*安全存储写入失败/);
+  assert.equal(committed, false);
+  assert.equal(rolledBack, true);
+  assert.equal(secureValues.get(firstRef), 'original-token');
+  assert.equal(secureValues.has(disabledRef), false);
+  await gateway.restoreStableSettingsJson(rollbackJson);
+  assert.equal(secureValues.get(activeRef), 'active-token');
+  snapshotDb.close(); activeDb.close();
+}
+
 delete globalThis.IS_REACT_ACT_ENVIRONMENT;
 
-console.log('MCP boundary 行为验证通过：官方 JSON 导入、新建页测试流程、安全凭据、真实 SQLite 事务、账号隔离、配置变更 fence、meta-tool、协议与取消边界符合契约。');
+console.log('MCP boundary 行为验证通过：官方 JSON 导入、新建页测试流程、安全凭据与备份恢复回滚、真实 SQLite 事务、账号隔离、配置变更 fence、meta-tool、协议与取消边界符合契约。');

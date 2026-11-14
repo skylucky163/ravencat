@@ -1,13 +1,14 @@
 /** 在 Host 组合根维护 Built-in Tool 的唯一注册、元数据与暴露策略。 */
 import { groupManagementTools } from './GroupManagementTools';
+import { ListCodeWorksTool, GetCodeWorkTool, SetCodeWorkInLibraryTool, EditCodeWorkTool } from './ChatCodeWorkTools';
 import { ShareMomentTool } from './ShareMomentTool';
 
 
 import { readPromptDefaults, listAssistantDirectToolNames } from '@features/prompting';
 import { createMomentToolForRun } from '@features/moments/composition';
-import { WebSearchTool, WebFetchTool, DownloadFileTool, KimiWebSearchTool, KimiWebFetchTool, KimiMewTool } from '@features/webTools';
-import { resolveMoonshotAPIBaseURL } from '@platform/ai';
-import { DownloadImageTool, QueryDownloadedImagesTool, ViewImageTool } from '@features/media';
+import { WebSearchTool, WebFetchTool, DownloadFileTool, KimiWebSearchTool, KimiWebFetchTool, KimiMewTool, KimiConvertTool, KimiRethinkTool, KimiRandomChoiceTool, KimiExcelTool, KimiDateTool, KimiBase64Tool, DeepSeekWebSearchTool, DeepSeekWebFetchTool } from '@features/webTools';
+import { resolveOfficialToolsAPIBaseURL, type OfficialToolProvider } from '@platform/ai';
+import { DownloadImageTool, QueryDownloadedImagesTool, ViewImageTool, GenerateImageTool } from '@features/media';
 import { applicationSettingsTools } from './ApplicationSettingsTools';
 import { COMPLETION_INTENT_RULE } from '@shared/aiTools';
 import type {
@@ -34,6 +35,7 @@ import {
 import {
   AICommentMomentTool,
   AICreateMomentTool,
+  AIEditOwnMomentTool,
   AIDeleteOwnMomentCommentTool,
   AIDeleteOwnMomentTool,
   AILikeMomentTool,
@@ -68,6 +70,7 @@ import {
   GetAIScheduleTool,
   ListAISchedulesTool,
   UpdateAIScheduleTool,
+  RemoveAIScheduleCalendarEventsTool,
 } from '@features/companion';
 import {
   GetForegroundAppTool,
@@ -132,7 +135,7 @@ interface BuiltInToolRegistrationBase extends LegacyAgentToolMetadata {
   /** schema 由 Host run preparation 按一次 run 的产品状态选择。 */
   dynamicRunExposure?: boolean;
   /** 接口能力只限制本次可用性，不改写持久调用权限或星标。 */
-  moonshotOnly?: boolean;
+  officialToolProvider?: OfficialToolProvider;
 }
 
 interface AgentNativeBuiltInTool {
@@ -212,7 +215,7 @@ function builtInTool(
     | 'phoneToolPackageId'
     | 'toolPackageId'
     | 'dynamicRunExposure'
-    | 'moonshotOnly'
+    | 'officialToolProvider'
   >> = {},
 ): BuiltInToolRegistration {
   return {
@@ -232,7 +235,7 @@ function builtInTool(
     phoneToolPackageId: options.phoneToolPackageId ?? null,
     toolPackageId: options.toolPackageId,
     dynamicRunExposure: options.dynamicRunExposure ?? false,
-    moonshotOnly: options.moonshotOnly,
+    officialToolProvider: options.officialToolProvider,
   };
 }
 
@@ -276,15 +279,21 @@ function agentNativeBuiltInTool(
 
 /** 生产 Built-in Tool 的唯一顺序与元数据 owner。 */
 const BUILT_IN_TOOL_REGISTRATIONS: readonly BuiltInToolRegistration[] = [
+  ...[ListCodeWorksTool, GetCodeWorkTool].map(tool => agentNativeBuiltInTool(tool, 'chat', PRIVATE_READ, { toolPackageId: 'codeWorks' })),
+  ...[SetCodeWorkInLibraryTool, EditCodeWorkTool].map(tool => agentNativeBuiltInTool(tool, 'chat', REVERSIBLE_ACTION, { toolPackageId: 'codeWorks' })),
   ...groupManagementTools.map(({ tool, hostOnly, readOnly }) => agentNativeBuiltInTool(tool, 'chat', readOnly ? PRIVATE_READ : REVERSIBLE_ACTION,
     { hostOnly, toolPackageId: 'groupChat' })),
-  builtInTool(KimiWebSearchTool, 'webTools', SAFE_READ, { defaultEnabled: false, toolPackageId: 'kimiOfficial', moonshotOnly: true }),
-  builtInTool(KimiWebFetchTool, 'webTools', SAFE_READ, { defaultEnabled: false, toolPackageId: 'kimiOfficial', moonshotOnly: true }),
-  builtInTool(KimiMewTool, 'webTools', { risk: 'safe_read', idempotency: 'not_idempotent' }, { defaultEnabled: false, toolPackageId: 'kimiOfficial', moonshotOnly: true }),
+  builtInTool(KimiWebSearchTool, 'webTools', SAFE_READ, { defaultEnabled: false, toolPackageId: 'kimiOfficial', officialToolProvider: 'moonshot' }),
+  builtInTool(KimiWebFetchTool, 'webTools', SAFE_READ, { defaultEnabled: false, toolPackageId: 'kimiOfficial', officialToolProvider: 'moonshot' }),
+  ...[KimiMewTool, KimiConvertTool, KimiRethinkTool, KimiRandomChoiceTool, KimiExcelTool, KimiDateTool, KimiBase64Tool].map((tool) => builtInTool(tool, 'webTools', { risk: 'safe_read', idempotency: 'not_idempotent' },
+    { defaultEnabled: false, toolPackageId: 'kimiOfficial', officialToolProvider: 'moonshot' })),
+  builtInTool(DeepSeekWebSearchTool, 'webTools', SAFE_READ, { defaultEnabled: false, toolPackageId: 'deepseekOfficial', officialToolProvider: 'deepseek' }),
+  builtInTool(DeepSeekWebFetchTool, 'webTools', SAFE_READ, { defaultEnabled: false, toolPackageId: 'deepseekOfficial', officialToolProvider: 'deepseek' }),
   agentNativeBuiltInTool(WebSearchTool, 'webTools', SAFE_READ),
   agentNativeBuiltInTool(WebFetchTool, 'webTools', SAFE_READ),
   agentNativeBuiltInTool(DownloadFileTool, 'webTools', REVERSIBLE_ACTION),
   agentNativeBuiltInTool(DownloadImageTool, 'media', REVERSIBLE_ACTION, { directChatOnly: true, groupChatAllowed: true }),
+  agentNativeBuiltInTool(GenerateImageTool, 'media', EXTERNAL_SIDE_EFFECT, { directChatOnly: true, groupChatAllowed: true, callForbidden: false, defaultEnabled: true, toolPackageId: 'media' }),
   agentNativeBuiltInTool(QueryDownloadedImagesTool, 'media', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true }),
   agentNativeBuiltInTool(ViewImageTool, 'media', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true }),
   ...applicationSettingsTools.map(({ tool, owner, hostOnly, mutating }) => agentNativeBuiltInTool(
@@ -306,6 +315,7 @@ const BUILT_IN_TOOL_REGISTRATIONS: readonly BuiltInToolRegistration[] = [
   builtInTool(AILikeMomentTool, 'moments', REVERSIBLE_WRITE),
   builtInTool(AICommentMomentTool, 'moments', REVERSIBLE_WRITE),
   builtInTool(AICreateMomentTool, 'moments', REVERSIBLE_WRITE),
+  builtInTool(AIEditOwnMomentTool, 'moments', REVERSIBLE_WRITE),
   builtInTool(AIReplyMomentCommentTool, 'moments', REVERSIBLE_WRITE),
   builtInTool(AIUnlikeMomentTool, 'moments', REVERSIBLE_WRITE),
   builtInTool(AIDeleteOwnMomentTool, 'moments', REVERSIBLE_WRITE),
@@ -363,6 +373,7 @@ const BUILT_IN_TOOL_REGISTRATIONS: readonly BuiltInToolRegistration[] = [
   agentNativeBuiltInTool(GetAIScheduleTool, 'companion', PRIVATE_READ, { hostOnly: true }),
   agentNativeBuiltInTool(UpdateAIScheduleTool, 'companion', REVERSIBLE_WRITE, { hostOnly: true }),
   agentNativeBuiltInTool(CancelAIScheduleTool, 'companion', SENSITIVE_ACTION, { hostOnly: true }),
+  agentNativeBuiltInTool(RemoveAIScheduleCalendarEventsTool, 'companion', SENSITIVE_ACTION, { hostOnly: true }),
   agentNativeBuiltInTool(SendImageTool, 'chat', EXTERNAL_SIDE_EFFECT, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'media' }),
   agentNativeBuiltInTool(
     SendVoiceMessageTool,
@@ -556,7 +567,7 @@ interface BuiltInToolPolicyEntry {
   callForbidden?: boolean;
   memoryParticipation: BuiltInToolMemoryParticipation;
   dynamicRunExposure?: boolean;
-  moonshotOnly?: boolean;
+  officialToolProvider?: OfficialToolProvider;
 }
 
 export function getPolicyAllowedToolEntriesForAI<T extends BuiltInToolPolicyEntry>(
@@ -571,7 +582,7 @@ export function getPolicyAllowedToolEntriesForAI<T extends BuiltInToolPolicyEntr
   return registrations.filter((registration) => {
     if (aiConfig.enableTools !== true) return false;
     if (!allowedToolNames.has(registration.tool.name)) return false;
-    if (registration.moonshotOnly && !resolveMoonshotAPIBaseURL(aiConfig.baseURL || aiConfig.apiBaseUrl)) return false;
+    if (registration.officialToolProvider && !resolveOfficialToolsAPIBaseURL(registration.officialToolProvider, aiConfig.baseURL || aiConfig.apiBaseUrl)) return false;
     if (registration.callForbidden && hasCallCapability) return false;
     if (registration.groupChatForbidden && aiConfig.triggerSource === 'group_chat') return false;
     if (registration.dynamicRunExposure) return false;
@@ -606,7 +617,7 @@ export interface ToolPermissionDescriptor {
   hostOnly: boolean;
   cooldownOnly?: boolean;
   packageId?: string;
-  moonshotOnly?: boolean;
+  officialToolProvider?: OfficialToolProvider;
 }
 
 /** 全部内置工具共享默认与 AI 权限；主理身份和场景限制仍由 policy 裁决。 */
@@ -623,7 +634,7 @@ export function getToolPermissionDescriptors(): ToolPermissionDescriptor[] {
       hostOnly: registration.hostOnly,
       cooldownOnly: registration.cooldownOnly,
       packageId: registration.toolPackageId,
-      moonshotOnly: registration.moonshotOnly,
+      officialToolProvider: registration.officialToolProvider,
     }));
 }
 
@@ -668,11 +679,15 @@ export function buildToolsDescription(effectiveToolNames: readonly string[]): st
     ...(hasAISchedule ? [
       'AI 日程可以让你在自己设定的时间醒来：可以自由安排日程，关注用户的日常生活或自由行动。',
       '同一件事一般只创建一条，调整已有安排仅使用本轮已授权的修改能力。',
+      ...(allowedToolNames.has('remove_ai_schedule_calendar_events') ? ['用户只想移除系统日历提醒、保留应用内日程时，使用 remove_ai_schedule_calendar_events，不要取消内部日程。用户偏好仅应用内时，后续新建传 system_calendar=false。'] : []),
       '日程提供行动机会，醒来以后仍可以决定不联系用户。不要自行套用固定 cadence。',
     ] : []),
     ...(hasStickerReply || hasVoiceReply || hasImageReply ? [COMPLETION_INTENT_RULE] : []),
     ...(hasImageReply ? [
       'send_image 发送真实图片消息；网络图片先用 download_image 保存，再传入 mediaAssetId。图片可单独作为回复，正文中的图片链接不会自动发送图片。',
+    ] : []),
+    ...(allowedToolNames.has('generate_image') ? [
+      'generate_image 使用当前生图模型创建一张新图片并返回 mediaAssetId；它只生成、不发送。需要发送时将该 ID 作为 send_image 的 media_asset_id，需要查看时交给 view_image。正文中的 Markdown 图片链接不等于已经生成或发送。',
     ] : []),
     ...(hasStickerReply ? [
       'search_stickers 与 select_sticker 用于生动表达自己的情绪，想发送的时候可以主动搜索再选择发送。',

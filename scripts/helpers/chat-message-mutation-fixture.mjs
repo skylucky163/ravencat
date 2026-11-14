@@ -49,6 +49,7 @@ export function createChatMessageMutationFixture() {
     );
   `);
   installChatTimelineSchema(db);
+  db.exec(load('src/platform/persistence/sqlite/chatCodePreviewSchema.ts').CHAT_CODE_PREVIEW_SCHEMA);
   let chain = Promise.resolve();
   const executor = {
     getAllAsync: async (sql, params = []) => db.prepare(sql).all(...params),
@@ -73,7 +74,16 @@ export function createChatMessageMutationFixture() {
       return next;
     },
   };
-  const persistence = { databaseCoordinator: { openTaskExecutor: () => executor } };
+  const persistence = { databaseCoordinator: {
+    openTaskExecutor: () => executor,
+    read: (_, task) => task(executor),
+    transaction: (_, task) => executor.withExclusiveTransactionAsync(task),
+  } };
+  const codeWorkDomain = load('src/features/chat/messages/domain/ChatCodePreview.ts');
+  const codePreviews = load('src/features/chat/messages/infrastructure/SQLiteChatCodePreviewRepository.ts', {
+    '@platform/persistence': persistence,
+    '../domain/ChatCodePreview': codeWorkDomain,
+  });
   const metadata = load(`${messageDomain}chatMessageMetadata.ts`, {
     './ChatSticker': load(`${messageDomain}ChatSticker.ts`),
     ...chatSharingDependencies,
@@ -85,6 +95,8 @@ export function createChatMessageMutationFixture() {
     './ChatTimelineSql': load('src/features/chat/messages/infrastructure/ChatTimelineSql.ts'),
     '../domain/MessageTimeSeparator': load(`${messageDomain}MessageTimeSeparator.ts`),
     '../domain/chatMessageMetadata': metadata,
+    '../domain/ChatCodeBlock': load(`${messageDomain}ChatCodeBlock.ts`),
+    './SQLiteChatCodePreviewRepository': codePreviews,
   });
   const { GroupChatRepository } = load('src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts', {
     '@platform/persistence': persistence, '@features/profile': {}, '@features/media': {}, '@features/assistants': {},
@@ -94,6 +106,8 @@ export function createChatMessageMutationFixture() {
     metadata,
     persistence,
     messages: new MessageRepository(),
+    codePreviews: codePreviews.chatCodePreviewRepository,
+    codeWorkDomain,
     groups: new GroupChatRepository(),
   };
 }

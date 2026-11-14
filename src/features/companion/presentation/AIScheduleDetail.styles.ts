@@ -20,6 +20,8 @@ export const createStyles = (theme: PresentationTheme) => {
     detailSourceExcerpt: { marginTop: theme.spacing.xs, fontSize: 13, lineHeight: 19, color: faint, opacity: fade(0.62) },
     detailError: { marginTop: theme.spacing.md, color: theme.colors.feedback.error, lineHeight: 20 },
     detailActions: { marginTop: theme.spacing.lg },
+    recurrenceEditor: { marginTop: theme.spacing.lg, gap: theme.spacing.sm },
+    recurrenceChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
     detailLoading: { paddingVertical: theme.spacing.xl, alignItems: 'center' },
   });
 };

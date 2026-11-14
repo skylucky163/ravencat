@@ -78,6 +78,10 @@ const context = (runId, targetScheduleId = null) => loadAIScheduleContext({ owne
 try {
   await add('upgrade-preserved');
   await tx.withExclusiveTransactionAsync(() => schema.migrateAIScheduleContext(tx));
+  db.exec('CREATE TABLE raven_cat_contact_settings(id TEXT PRIMARY KEY)');
+  await tx.withExclusiveTransactionAsync(() => schema.migrateAIScheduleTiming(tx));
+  db.exec(schema.RAVEN_CAT_AI_SCHEDULE_WAIT_SCHEMA);
+  db.exec("INSERT INTO raven_cat_contact_settings(id) VALUES ('default')");
   assert.equal((await repository.getByScheduleId('upgrade-preserved')).summary, '安排 upgrade-preserved');
   const expired = await add('expired', at(-40));
   const expired2 = await add('expired-2', at(-30));
@@ -89,7 +93,7 @@ try {
   }
   const edge = await add('edge', at(-15));
   assert.equal((await repository.prepareDispatch(dispatch(edge))).scheduleId, 'edge', '恰好十五分钟仍在领取窗口内');
-  const claim = await repository.claimScheduled({ ...dispatch(edge, new Date(now.getTime() + 1).toISOString()),
+  const claim = await repository.claimScheduled({ conversationId: 'test-chat', ...dispatch(edge, new Date(now.getTime() + 1).toISOString()),
     claimedAt: new Date(now.getTime() + 1).toISOString(), runId: 'expired-before-claim' });
   assert.equal(claim.status, 'already_past', '资格交接期间跨过截止时间也不得启动模型');
 
@@ -129,7 +133,7 @@ try {
   setRun('chat-retry', 'committed'); await context('after-chat');
 
   const failed = await add('model-failed', at(-1));
-  assert.equal((await repository.claimScheduled({ ...dispatch(failed), claimedAt: at(0), runId: 'failed-run' })).status, 'claimed');
+  assert.equal((await repository.claimScheduled({ conversationId: 'test-chat', ...dispatch(failed), claimedAt: at(0), runId: 'failed-run' })).status, 'claimed');
   await repository.consumeClaimed({ scheduleId: failed.scheduleId, runId: 'failed-run', consumedAt: at(0),
     completionDisposition: 'agent_terminal', failureCode: 'MODEL_REQUEST_FAILED' });
   setRun('failure-feedback', 'active');
@@ -138,7 +142,7 @@ try {
   assert.equal(await context('failure-after'), '');
 
   const interrupted = await add('interrupted-task', at(-1));
-  await repository.claimScheduled({ ...dispatch(interrupted), claimedAt: at(0), runId: 'old-autonomous' });
+  await repository.claimScheduled({ conversationId: 'test-chat', ...dispatch(interrupted), claimedAt: at(0), runId: 'old-autonomous' });
   setRun('old-autonomous', 'superseded', 'new_input'); setRun('user-wins', 'active');
   await repository.mergeClaimedRun('old-autonomous', null, at(0));
   assert.match(await context('user-wins'), /背景 interrupted-task/, '旧 run 未到 finally 时，新聊天也能得到交接背景');
@@ -148,7 +152,7 @@ try {
   assert.match(await context('user-wins'), /merged_chat/, '旧 finally 的失败信息不能覆盖已经交接的背景');
 
   const consumedEarly = await add('consumed-before-handoff', at(-1));
-  await repository.claimScheduled({ ...dispatch(consumedEarly), claimedAt: at(0), runId: 'old-consumed' });
+  await repository.claimScheduled({ conversationId: 'test-chat', ...dispatch(consumedEarly), claimedAt: at(0), runId: 'old-consumed' });
   await repository.consumeClaimed({ scheduleId: consumedEarly.scheduleId, runId: 'old-consumed', consumedAt: at(0),
     completionDisposition: 'agent_terminal' });
   await repository.mergeClaimedRun('old-consumed', null, at(0));
@@ -176,7 +180,7 @@ try {
   const inherited = await add('source-failure', at(-4));
   const failedTarget = await add('target-failure', at(-1));
   assert.equal((await repository.prepareDispatch(dispatch(inherited))).scheduleId, failedTarget.scheduleId);
-  await repository.claimScheduled({ ...dispatch(failedTarget), claimedAt: at(0), runId: 'inherited-failed-run' });
+  await repository.claimScheduled({ conversationId: 'test-chat', ...dispatch(failedTarget), claimedAt: at(0), runId: 'inherited-failed-run' });
   setRun('inherited-failed-run', 'active');
   assert.match(await context('inherited-failed-run', failedTarget.scheduleId), /背景 source-failure/);
   setRun('inherited-failed-run', 'failed');

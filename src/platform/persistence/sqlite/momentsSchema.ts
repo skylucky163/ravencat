@@ -15,7 +15,7 @@ import type { DatabaseWriteExecutor } from '../runtime';
  * 名称式身份与快照式头像，V2 不保留这套模型。
  *
  * `location_label` 只是用户手填的显示地点文本（nullable），不是定位事实：不含坐标、
- * 不含 provider place id、不回填历史 Moment。它和正文一样属于发布瞬间的不可变事实。
+ * 不含 provider place id、不回填历史 Moment。编辑与正文、图片、可见范围一起原子提交。
  */
 export const MOMENTS_SCHEMA = `
   CREATE TABLE IF NOT EXISTS moments (
@@ -26,7 +26,9 @@ export const MOMENTS_SCHEMA = `
     content TEXT NOT NULL,
     location_label TEXT,
     audience_mode TEXT NOT NULL DEFAULT 'all' CHECK (audience_mode IN ('all', 'selected', 'all_except')),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    edited_at TEXT,
+    edit_revision INTEGER NOT NULL DEFAULT 0
   );
 `;
 

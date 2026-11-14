@@ -30,11 +30,38 @@ function raw(db) {
 }
 const { SCHEMAS } = load('src/platform/persistence/sqlite/schema.ts');
 const { runMigrations, DATABASE_SCHEMA_VERSION } = load('src/platform/persistence/sqlite/migrations.ts');
+const { LEGACY_MODEL_SERVICE_SCHEMA } = load('src/platform/persistence/sqlite/modelServiceSchema.ts');
+const databaseErrors = load('src/platform/persistence/runtime/DatabaseErrors.ts');
+const serviceErrors = load('src/features/assistants/ModelServiceErrors.ts', { '@platform/persistence': databaseErrors });
+function restoreLegacyServices(db) {
+  db.exec(`ALTER TABLE model_service_configs ADD COLUMN base_url TEXT;
+    ALTER TABLE model_service_configs ADD COLUMN auth_type TEXT;
+    UPDATE model_service_configs SET name = (SELECT name FROM model_service_groups WHERE id = group_id),
+      base_url = (SELECT base_url FROM model_service_groups WHERE id = group_id),
+      auth_type = (SELECT auth_type FROM model_service_groups WHERE id = group_id);
+    DROP INDEX idx_model_service_key; DROP INDEX idx_model_service_key_ordinal;
+    ALTER TABLE model_service_configs DROP COLUMN ordinal;
+    ALTER TABLE model_service_configs DROP COLUMN group_id;
+    DROP TABLE model_service_groups;
+    CREATE UNIQUE INDEX idx_model_service_connection ON model_service_configs(base_url,api_key,auth_type,credentials_json);`);
+}
+function markHistoricalVersion(db, version) {
+  // 历史夹具不能携带后来才新增的列，否则重复加列会掩盖服务生命周期回归。
+  db.exec('ALTER TABLE moments DROP COLUMN edited_at; ALTER TABLE moments DROP COLUMN edit_revision;');
+  for (const column of ['recurrence_json','series_id','trigger_kind','conversation_id','reply_revision','next_follow_up_minutes']) {
+    db.exec(`ALTER TABLE raven_cat_ai_schedules DROP COLUMN ${column}`);
+  }
+  db.exec('ALTER TABLE raven_cat_contact_settings DROP COLUMN follow_up_enabled; ALTER TABLE raven_cat_contact_settings DROP COLUMN follow_up_interval_minutes;');
+  if (db.prepare('PRAGMA table_info(model_service_configs)').all().some(column => column.name === 'group_id')) restoreLegacyServices(db);
+  db.exec(`PRAGMA user_version=${version}`);
+}
 function database(legacy = false) {
   const db = new DatabaseSync(':memory:'); db.exec('PRAGMA foreign_keys=ON');
-  for (const schema of Object.values(SCHEMAS)) db.exec(legacy ? schema.replaceAll('service_config_id TEXT REFERENCES model_service_configs(id),', '') : schema);
+  for (const [name, schema] of Object.entries(SCHEMAS)) db.exec(legacy
+    ? (name === 'modelServices' ? LEGACY_MODEL_SERVICE_SCHEMA : schema.replaceAll('service_config_id TEXT REFERENCES model_service_configs(id),', '')) : schema);
   if (legacy) db.exec('ALTER TABLE auxiliary_model_configs ADD COLUMN enabled INTEGER DEFAULT 1;');
-  db.exec(`PRAGMA user_version=${legacy ? 156 : DATABASE_SCHEMA_VERSION}`);
+  if (legacy) markHistoricalVersion(db, 156);
+  else db.exec(`PRAGMA user_version=${DATABASE_SCHEMA_VERSION}`);
   return db;
 }
 function runtime(db) {
@@ -46,28 +73,66 @@ function runtime(db) {
       catch (error) { db.exec('ROLLBACK'); throw error; }
     }); writer = result.catch(() => {}); return result;
   } };
-  const dependencies = { '@platform/persistence': { databaseCoordinator: { openTaskExecutor: () => executor } },
+  const dependencies = { '@platform/persistence': { ...databaseErrors, databaseCoordinator: { openTaskExecutor: () => executor } },
+    '../ModelServiceErrors': serviceErrors,
     '@shared/prompt': { estimateTextTokens: text => text.length },
-    '@features/speech': { validateSpeechConfiguration: () => ({}) },
-    '@features/integrations': { validateTranslationModelConfig: () => ({}) },
+    '@features/speech': { validateSpeechConfiguration: () => ({}), readSpeechMetadata: load('src/features/speech/application/SpeechProviderCatalog.ts').readSpeechMetadata },
+    '@features/integrations': { validateTranslationModelConfig: () => ({}), readTranslationMetadata: load('src/features/integrations/domain/TranslationModel.ts').readTranslationMetadata },
+    '@platform/ai/imageGenerationConfig': load('src/platform/ai/imageGenerationConfig.ts'),
     '@features/profile': {}, '@features/media': { resolveMediaAssetReferenceUri: async ({ legacyUri }) => legacyUri } };
   const { SQLiteChatSummaryRepository } = load('src/features/chat/summary/infrastructure/SQLiteChatSummaryRepository.ts', dependencies);
   const summary = new SQLiteChatSummaryRepository(async () => []);
-  dependencies['../application/AuxiliaryModelInitialization'] = { getAuxiliaryModelInitialization: () => ({
-    initializeModelSelections: async () => {}, modelSelectionsInitialized() {},
-    invalidateModelReferencesInTransaction: (tx, id) => summary.invalidateModelReferencesInTransaction(tx, id),
-    invalidateServiceReferencesInTransaction: (tx, id) => summary.invalidateServiceReferencesInTransaction(tx, id),
-  }) };
+  let initialization;
+  dependencies['../application/AuxiliaryModelInitialization'] = { getAuxiliaryModelInitialization: () => initialization };
   const services = load('src/features/assistants/infrastructure/SQLiteModelServiceRepository.ts', dependencies);
+  services.listModelServices = async () => (await services.listModelServiceGroups()).flatMap(group => group.keys);
+  // 历史用例的单连接 fixture 使用当前分组／Key 命令准备数据，产品不保留旧单连接写入 API。
+  services.saveModelService = async (id, input) => {
+    if (!id) return (await services.createModelServiceGroup({ name: input.name, baseUrl: input.baseUrl, authType: input.authType,
+      keys: [{ name: '', apiKey: input.apiKey, credentialsJson: input.credentialsJson }] })).keys[0];
+    const current = await services.getModelService(id);
+    const groupPatch = Object.fromEntries(['name','baseUrl'].filter(key => input[key] !== undefined && input[key] !== current[key]).map(key => [key,input[key]]));
+    if (Object.keys(groupPatch).length) await services.updateModelServiceGroup(current.groupId, groupPatch);
+    const keyPatch = Object.fromEntries(['apiKey','credentialsJson'].filter(key => input[key] !== undefined).map(key => [key,input[key]]));
+    return services.saveModelServiceKey(current.groupId, id, keyPatch);
+  };
   const connection = load('src/features/assistants/domain/ModelService.ts');
   const assets = load('src/features/assistants/infrastructure/SQLiteAuxiliaryModelRepository.ts', dependencies).auxiliaryModelRepository;
   const assistants = load('src/features/assistants/infrastructure/SQLiteAssistantRepository.ts', { ...dependencies,
     './SQLiteAuxiliaryModelRepository': { auxiliaryModelRepository: assets } }).aiAssistantRepository;
   const groups = load('src/features/chat/group/infrastructure/SQLiteGroupChatRepository.ts', { ...dependencies,
     '@features/assistants': { bindModelServiceInTransaction: services.bindModelService, readModelServiceConnection: services.readModelService, getModelServiceConnection: connection.getModelServiceConnection } }).groupChatRepository;
+  const { memoryEntryRepository } = load('src/features/memory/infrastructure/SQLiteMemoryEntryRepository.ts', dependencies);
+  const { SQLiteStickerRepository } = load('src/features/stickers/infrastructure/SQLiteStickerRepository.ts', dependencies);
+  load('src/host/composition/configureAuxiliaryModelInitialization.ts', {
+    '@features/assistants/composition': { aiAssistantRepository: assistants, configureAuxiliaryModelInitialization: value => { initialization = value; } },
+    '@features/chat/composition': { groupChatRepository: groups,
+      invalidateChatSummaryModelReferencesInTransaction: (tx, id) => summary.invalidateModelReferencesInTransaction(tx, id),
+      invalidateChatSummaryServiceReferencesInTransaction: (tx, id) => summary.invalidateServiceReferencesInTransaction(tx, id) },
+    '@features/memory/composition': { memoryEntryRepository },
+    '@features/stickers/composition': { stickerRepository: new SQLiteStickerRepository(), emitStickerAnnotationPending() {}, emitStickerEmbeddingPending() {} },
+    '@features/moments/composition': { momentRepository: { initializeImageAnalysisModelInTransaction: async () => {} } },
+    '@features/speech/composition': { initializeSpeechRecognitionModelInTransaction: async () => {} },
+    '@features/integrations/composition': { initializeTranslationModelInTransaction: async () => {} },
+  }).configureAuxiliaryModelInitializationRuntime();
   return { services, connection, assets, assistants, groups, executor, summary };
 }
 const input = { capabilityKind: 'summary', name: '摘要', baseUrl: 'https://models.invalid/v1', apiKey: 'original', model: 'text-model', temperature: 0, topP: null, maxTokens: null };
+{
+  const db = database();
+  await runMigrations(raw(db));
+  const app = runtime(db);
+  const image = await app.assets.insertModelConfig({ ...input, capabilityKind: 'image_generation', name: '生图', model: 'image' });
+  assert.equal((await app.assets.listModelConfigs({ capabilityKind: 'image_generation' }))[0].id, image.id);
+  assert.equal(image.temperature, 0, '仓储信任草稿层的字段契约，不自行重写采样参数');
+  assert.equal(db.prepare('SELECT count(*) n FROM auxiliary_model_initial_defaults').get().n, 0, '生图不参与首次资产初始化');
+  assert.equal(db.prepare('SELECT model_config_id FROM media_image_generation_settings').get().model_config_id, null);
+  await app.assets.updateModelConfig(image.id, { name: '新的生图配置', temperature: null, topP: null, maxTokens: null });
+  assert.equal((await app.assets.getModelConfigById(image.id)).name, '新的生图配置');
+  await app.assets.deleteModelConfig(image.id);
+  assert.equal(await app.assets.getModelConfigById(image.id), null);
+  db.close();
+}
 {
   const db = database(); const app = runtime(db);
   const [summary, vision] = await Promise.all([app.assets.insertModelConfig(input), app.assets.insertModelConfig({ ...input, capabilityKind: 'ocr', name: '视觉', model: 'vision' })]);
@@ -76,7 +141,6 @@ const input = { capabilityKind: 'summary', name: '摘要', baseUrl: 'https://mod
   assert.equal(db.prepare('SELECT count(*) AS n FROM auxiliary_model_initial_defaults').get().n, 1, '摘要不参与首次默认初始化');
   assert.equal(db.prepare('SELECT api_key FROM auxiliary_model_configs WHERE id=?').get(summary.id).api_key, null, '引用用途不再保存凭据副本');
   const service = await app.services.getModelService(summary.serviceConfigId);
-  await assert.rejects(app.services.saveModelService(service.id, { authType: 'tencentCloud' }), /更换认证方式/);
   await app.services.saveModelService(service.id, { ...service, apiKey: 'rotated' });
   assert.equal((await app.assets.getModelConfigById(summary.id)).apiKey, 'rotated');
   assert.equal((await app.assets.getModelConfigById(vision.id)).apiKey, 'rotated');
@@ -105,7 +169,6 @@ const input = { capabilityKind: 'summary', name: '摘要', baseUrl: 'https://mod
   await app.assets.updateModelConfig(reused.id, { apiKey: null });
   assert.equal((await app.assets.getModelConfigById(reused.id)).apiKey, null, '清空凭据解除引用，不继承旧 Key');
   assert.equal((await app.assets.getModelConfigById(vision.id)).apiKey, 'rotated');
-  await assert.rejects(app.services.deleteModelService(service.id), /FOREIGN KEY/);
   const invalid = await app.assets.insertModelConfig({ ...input, baseUrl: 'unfinished' });
   assert.equal(invalid.serviceConfigId, null, '自动收录不改变原配置可保存的边界');
   await app.services.setAutoSaveModelServices(true);
@@ -162,6 +225,273 @@ const input = { capabilityKind: 'summary', name: '摘要', baseUrl: 'https://mod
   assert.equal((await app.assistants.getById('role')).apiKey, null);
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   db.close();
+}
+// 删除共享服务保留资产与选择，清空三类 owner 的连接，并且任何一步失败都原子回滚。
+{
+  const db = database(); await runMigrations(raw(db)); const app = runtime(db);
+  const service = await app.services.saveModelService(null, { name: '共享连接', ...app.connection.getModelServiceConnection(input.baseUrl, 'delete-key') });
+  const other = await app.services.saveModelService(null, { name: '保留连接', ...app.connection.getModelServiceConnection(input.baseUrl, 'other-key') });
+  await assert.rejects(app.services.saveModelService(null, { ...service }), error => error.kind === 'duplicate');
+  await assert.rejects(app.services.saveModelService(other.id, { apiKey: service.apiKey }), error => error.kind === 'duplicate');
+  assert.equal((await app.services.getModelService(other.id)).apiKey, 'other-key');
+  const assets = [];
+  for (const capabilityKind of ['summary', 'embedding', 'ocr', 'image_generation', 'tts', 'translation']) {
+    assets.push(await app.assets.insertModelConfig({ ...input, capabilityKind, serviceConfigId: service.id,
+      metadataJson: capabilityKind === 'translation' ? '{"provider":"aiModel"}' : null }));
+  }
+  db.prepare('UPDATE memory_model_settings SET embedding_model_config_id = ? WHERE id = 1').run(assets[1].id);
+  db.prepare('UPDATE sticker_system_config SET embedding_model_config_id = ?').run(assets[1].id);
+  await app.services.setAutoSaveModelServices(false);
+  const manual = await app.assets.insertModelConfig({ ...input, apiKey: 'manual-key' });
+  db.prepare(`INSERT INTO ai_assistants(id,agent_id,name,model,service_config_id,created_at,updated_at)
+    VALUES('delete-role','delete-actor','保留角色','role-model',?,'old','old')`).run(service.id);
+  db.exec(`INSERT INTO chat_conversations(id,kind) VALUES('delete-direct','direct'),('delete-group','group'),('delete-summary','direct');
+    INSERT INTO sessions(id,ai_assistant_id,name,created_at,updated_at) VALUES('delete-direct','delete-role','保留会话','old','old');
+    INSERT INTO group_chats(id,name,created_at,updated_at) VALUES('delete-group','保留群','old','old');`);
+  db.prepare(`INSERT INTO group_chat_admin_configs(group_id,name,model,system_prompt,service_config_id,created_at,updated_at)
+    VALUES('delete-group','保留管理员','admin-model','保留提示词',?,'old','old')`).run(service.id);
+  db.prepare('INSERT INTO chat_summary_request_settings(conversation_id,model_config_id) VALUES(?,?)').run('delete-summary', assets[0].id);
+  db.exec(`INSERT INTO chat_summary_state(conversation_id,processed_cursor,generation,revision,claim_id)
+    VALUES('delete-direct','kept-direct',1,2,'direct-claim'),('delete-group','kept-group',3,4,'group-claim'),('delete-summary','kept-summary',5,6,'summary-claim');`);
+  await app.services.saveModelService(service.id, { baseUrl: 'https://new.invalid/v1', apiKey: 'new-key' });
+  for (const asset of assets) {
+    const current = await app.assets.getModelConfigById(asset.id);
+    assert.equal(current.serviceConfigId, service.id); assert.equal(current.apiKey, 'new-key'); assert.equal(current.baseUrl, 'https://new.invalid/v1');
+  }
+  assert.equal((await app.assistants.getById('delete-role')).serviceConfigId, service.id);
+  assert.equal((await app.groups.getAdminConfig('delete-group')).serviceConfigId, service.id);
+  const snapshotTables = ['model_service_configs','auxiliary_model_configs','ai_assistants','group_chat_admin_configs',
+    'chat_conversations','sessions','group_chats','chat_summary_state','chat_summary_request_settings','chat_summary_work_queue','chat_summary_tasks',
+    'memory_embedding_index_control','sticker_embedding_index_control','memory_model_settings','sticker_system_config'];
+  const snapshot = () => snapshotTables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  for (const trigger of [
+    `CREATE TRIGGER reject_delete BEFORE INSERT ON chat_summary_work_queue BEGIN SELECT RAISE(ABORT,'模拟资格失败'); END`,
+    `CREATE TRIGGER reject_delete BEFORE UPDATE ON memory_embedding_index_control BEGIN SELECT RAISE(ABORT,'模拟向量资格失败'); END`,
+    `CREATE TRIGGER reject_delete BEFORE UPDATE OF service_config_id ON group_chat_admin_configs WHEN OLD.service_config_id IS NOT NULL BEGIN SELECT RAISE(ABORT,'模拟解绑失败'); END`,
+    `CREATE TRIGGER reject_delete BEFORE DELETE ON model_service_configs BEGIN SELECT RAISE(ABORT,'模拟删除失败'); END`,
+  ]) {
+    const before = snapshot(); db.exec(trigger);
+    await assert.rejects(app.services.deleteModelServiceKey(service.id), /模拟/);
+    assert.deepEqual(snapshot(), before, '资格、解绑或删除任一步失败都不能留下部分修改');
+    db.exec('DROP TRIGGER reject_delete');
+  }
+  const beforeAssets = await Promise.all(assets.map(asset => app.assets.getModelConfigById(asset.id)));
+  const beforeStates = db.prepare('SELECT * FROM chat_summary_state ORDER BY conversation_id').all();
+  const embeddingRevision = db.prepare('SELECT revision FROM memory_embedding_index_control').get().revision;
+  const stickerRevision = db.prepare('SELECT revision FROM sticker_embedding_index_control').get().revision;
+  const selections = db.prepare('SELECT * FROM chat_summary_request_settings').all();
+  const counts = snapshotTables.slice(1).map(table => db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n);
+  assert.deepEqual(await app.services.deleteModelServiceKey(service.id), ['delete-role']);
+  assert.equal(db.prepare('SELECT revision FROM memory_embedding_index_control').get().revision, embeddingRevision + 1);
+  assert.equal(db.prepare('SELECT revision FROM sticker_embedding_index_control').get().revision, stickerRevision + 1);
+  assert.equal(db.prepare('SELECT embedding_model_config_id FROM memory_model_settings').get().embedding_model_config_id, assets[1].id);
+  const resolver = load('src/features/assistants/ResolveAuxiliaryModel.ts', {
+    './infrastructure/SQLiteAuxiliaryModelRepository': { auxiliaryModelRepository: app.assets },
+    '@features/speech': load('src/features/speech/application/SpeechProviderCatalog.ts'),
+    '@features/integrations': load('src/features/integrations/domain/TranslationModel.ts'),
+  });
+  for (const asset of assets) {
+    assert.equal(await resolver.resolveAuxiliaryModel({ modelConfigId: asset.id, capabilityKind: asset.capabilityKind }), null, '删除后新任务不能解析旧连接');
+    const selection = await resolver.getAuxiliaryModelSelection({ modelConfigId: asset.id, capabilityKind: asset.capabilityKind });
+    assert.equal(selection.status, 'unavailable'); assert.equal(selection.selectedModelId, asset.id);
+  }
+  for (const asset of beforeAssets) {
+    const current = await app.assets.getModelConfigById(asset.id);
+    assert.equal(current.serviceConfigId, null); assert.equal(current.baseUrl, ''); assert.equal(current.apiKey, null);
+    const { serviceConfigId, baseUrl, apiKey, updatedAt, ...kept } = current;
+    const { serviceConfigId: _s, baseUrl: _u, apiKey: _k, updatedAt: _t, ...before } = asset;
+    assert.deepEqual(kept, before, '模型身份、参数和 metadata 保留');
+  }
+  const role = await app.assistants.getById('delete-role'), admin = await app.groups.getAdminConfig('delete-group');
+  for (const owner of [role, admin]) {
+    assert.equal(owner.serviceConfigId, null); assert.equal(owner.apiBaseUrl, null); assert.equal(owner.apiKey, null);
+  }
+  assert.equal(role.model, 'role-model'); assert.equal(admin.model, 'admin-model'); assert.equal(admin.systemPrompt, '保留提示词');
+  for (const state of beforeStates) {
+    const current = db.prepare('SELECT * FROM chat_summary_state WHERE conversation_id=?').get(state.conversation_id);
+    assert.equal(current.generation, state.generation + 1); assert.equal(current.claim_id, null); assert.equal(current.processed_cursor, state.processed_cursor);
+  }
+  assert.deepEqual(db.prepare('SELECT * FROM chat_summary_request_settings').all(), selections, '不清空摘要资产选择');
+  assert.deepEqual(snapshotTables.slice(1).map(table => db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n), counts, '不删除任何引用方或聊天数据');
+  assert.deepEqual(await app.assets.getModelConfigById(manual.id), manual, '手工连接不受影响');
+  assert.deepEqual(await app.services.getModelService(other.id), other);
+  await app.services.deleteModelServiceKey(service.id); // 重复删除是幂等的。
+  for (const enabled of [false, true]) {
+    await app.services.setAutoSaveModelServices(enabled);
+    for (const asset of assets) await app.assets.updateModelConfig(asset.id, { name: '新名称', model: 'new-model', temperature: 0.5 });
+    await app.assistants.updateModelSettings(role.id, { model: 'next-model' });
+    await app.groups.updateAdminConfig('delete-group', { model: 'next-admin' });
+    await runMigrations(raw(db));
+    assert.equal((await app.services.listModelServices()).length, 1, '参数修改、偏好切换和重启不能复活旧服务');
+  }
+  const recreated = await app.services.saveModelService(null, { ...service });
+  assert.notEqual(recreated.id, service.id);
+  for (const asset of assets) assert.equal((await app.assets.getModelConfigById(asset.id)).serviceConfigId, null, '相同连接的新服务不能恢复旧绑定');
+  await app.assets.updateModelConfig(assets[0].id, { serviceConfigId: other.id });
+  assert.equal((await app.assets.getModelConfigById(assets[0].id)).apiKey, other.apiKey, '用户主动重绑才能恢复连接');
+  const references = db.prepare(`SELECT m.name, f."from" AS column_name FROM sqlite_master m, pragma_foreign_key_list(m.name) f
+    WHERE m.type='table' AND f."table"='model_service_configs' ORDER BY m.name`).all();
+  assert.deepEqual(references.map(row => row.name), ['ai_assistants','auxiliary_model_configs','group_chat_admin_configs'], '新增引用 owner 时必须纳入服务生命周期');
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []); db.close();
+}
+
+// 已提交的保存与删除不得因投影失败被重新报告为写入失败；错误提示和日志不能包含凭据。
+{
+  const db = database(); const app = runtime(db);
+  const errors = serviceErrors;
+  const events = load('src/features/assistants/AuxiliaryModelsChanged.ts');
+  const notifications = []; let failProjection = false;
+  const commands = load('src/features/assistants/ModelServices.ts', {
+    './infrastructure/SQLiteModelServiceRepository': app.services, './AuxiliaryModelsChanged': events, './ModelServiceErrors': errors,
+    './AIAssistantManagement': { notifyAssistantServiceConnectionsChanged: async (id, detachedIds) => {
+      notifications.push({ id, detachedIds }); if (failProjection) throw new Error('projection private-key'); return true;
+    } },
+  });
+  const logs = []; const warn = console.warn;
+  console.warn = (...args) => logs.push(args);
+  try {
+    let refreshed = 0;
+    events.subscribeAuxiliaryModelsChanged(() => { throw new Error('listener private-key'); });
+    events.subscribeAuxiliaryModelsChanged(() => { refreshed++; });
+    const createInput = { name: '服务', baseUrl: input.baseUrl, authType: 'apiKey', keys: [{ name: '', apiKey: 'private-key', credentialsJson: '{}' }] };
+    const { group, refreshWarning } = await commands.createModelServiceGroupConfig(createInput);
+    const config = group.keys[0];
+    assert.ok(refreshWarning); assert.equal((await app.services.getModelService(config.id)).apiKey, 'private-key'); assert.equal(refreshed, 1);
+    await assert.rejects(commands.createModelServiceGroupConfig(createInput), error => error.kind === 'duplicate' && !error.message.includes('private-key'));
+    failProjection = true;
+    assert.ok((await commands.saveModelServiceKeyConfig(config.groupId, config.id, { apiKey: 'next-key' })).refreshWarning);
+    assert.equal((await app.services.getModelService(config.id)).apiKey, 'next-key');
+    const { AutoSaveDraftEditor } = load('src/shared/ui/AutoSaveDraftEditor.ts');
+    const editor = new AutoSaveDraftEditor({ name: config.name }, (draft, changed) => ({ patch: { name: draft.name }, accepted: changed, errors: {} }),
+      async patch => { assert.ok((await commands.updateModelServiceGroupConfig(config.groupId, patch)).refreshWarning); });
+    editor.change({ name: '已确认名称' }); assert.equal(await editor.flush(), true);
+    assert.equal(editor.getSnapshot().saveError, null); assert.equal(editor.getSnapshot().dirty, false);
+    assert.ok((await commands.deleteModelServiceKeyConfig(config.id)).refreshWarning);
+    assert.deepEqual(notifications.at(-1), { id: config.id, detachedIds: [] });
+    assert.equal((await app.services.listModelServices()).length, 0);
+    for (const [message, kind] of [
+      ['FOREIGN KEY constraint failed', 'foreign_key'], ['SQLITE_BUSY private-key', 'busy'], ['database is locked', 'locked'],
+      ['no such table: model_service_configs', 'schema'], ['database is closed', 'connection'], ['CHECK constraint failed', 'constraint'], ['private-key', 'unknown'],
+    ]) {
+      const wrapped = new databaseErrors.CoordinatedDatabaseError('unknown', { feature: 'assistants', name: 'test' }, new Error(message));
+      assert.equal(errors.describeModelServiceFailure(wrapped).kind, kind);
+      assert.equal(errors.describeModelServiceFailure(wrapped).message.includes('private-key'), false);
+    }
+    assert.equal(JSON.stringify(logs).includes('private-key'), false);
+  } finally { console.warn = warn; db.close(); }
+}
+// 一个配置共享地址，多 Key 的绑定、改名、删除、编号和回滚互相隔离。
+{
+  const db = database(); await runMigrations(raw(db)); const app = runtime(db);
+  let group = await app.services.createModelServiceGroup({ name: '中转站', baseUrl: input.baseUrl, authType: 'apiKey', keys: [
+    { name: '', apiKey: 'key-a', credentialsJson: '{}' }, { name: '识图', apiKey: 'key-b', credentialsJson: '{}' },
+    { name: '语音', apiKey: 'key-c', credentialsJson: '{}' },
+  ] });
+  assert.deepEqual(group.keys.map(key => key.keyName), ['1', '识图', '语音']);
+  const [a, b, c] = group.keys;
+  const summary = await app.assets.insertModelConfig({ ...input, serviceConfigId: a.id });
+  const embedding = await app.assets.insertModelConfig({ ...input, capabilityKind: 'embedding', serviceConfigId: b.id });
+  const voice = await app.assets.insertModelConfig({ ...input, capabilityKind: 'tts', serviceConfigId: c.id, metadataJson: '{"provider":"openaiCompatible"}' });
+  db.prepare('UPDATE memory_model_settings SET embedding_model_config_id = ? WHERE id = 1').run(embedding.id);
+  db.prepare(`INSERT INTO ai_assistants(id,agent_id,name,model,service_config_id,created_at,updated_at)
+    VALUES('multi-role','multi-actor','角色','role-model',?,'old','old')`).run(b.id);
+  db.exec(`INSERT INTO chat_conversations(id,kind) VALUES('multi-group','group');
+    INSERT INTO group_chats(id,name,created_at,updated_at) VALUES('multi-group','群','old','old');`);
+  db.prepare(`INSERT INTO group_chat_admin_configs(group_id,name,model,service_config_id,created_at,updated_at)
+    VALUES('multi-group','管理员','admin-model',?,'old','old')`).run(c.id);
+  await app.services.saveModelServiceKey(group.id, a.id, { apiKey: 'rotated-a' });
+  assert.equal((await app.assets.getModelConfigById(summary.id)).apiKey, 'rotated-a');
+  assert.equal((await app.assets.getModelConfigById(embedding.id)).apiKey, 'key-b');
+  assert.equal((await app.groups.getAdminConfig('multi-group')).apiKey, 'key-c');
+  await app.services.saveModelServiceKey(group.id, b.id, { name: '视觉' });
+  assert.equal((await app.services.getModelService(b.id)).keyName, '视觉');
+  assert.equal((await app.assistants.getById('multi-role')).serviceConfigId, b.id);
+  group = await app.services.updateModelServiceGroup(group.id, { name: '共享中转', baseUrl: 'https://multi.invalid/v2' });
+  for (const [asset, key] of [[summary,a],[embedding,b],[voice,c]]) {
+    const current = await app.assets.getModelConfigById(asset.id);
+    assert.equal(current.serviceConfigId, key.id); assert.equal(current.baseUrl, group.baseUrl);
+    assert.equal(current.model, asset.model); assert.equal(current.temperature, asset.temperature);
+  }
+  assert.equal((await app.assistants.getById('multi-role')).apiBaseUrl, group.baseUrl);
+  assert.equal((await app.groups.getAdminConfig('multi-group')).apiBaseUrl, group.baseUrl);
+  const count = (await app.services.listModelServiceGroups()).length;
+  const reused = await app.assets.insertModelConfig({ ...input, baseUrl: group.baseUrl, apiKey: 'key-b' });
+  assert.equal(reused.serviceConfigId, b.id); assert.equal((await app.services.listModelServiceGroups()).length, count, '自动收录复用具体 Key');
+  const snapshot = () => ['model_service_groups','model_service_configs','auxiliary_model_configs','ai_assistants',
+    'group_chat_admin_configs','memory_embedding_index_control','chat_summary_state','chat_summary_work_queue'].map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  const beforeDuplicate = snapshot();
+  await assert.rejects(app.services.createModelServiceGroup({ name: '重复', baseUrl: group.baseUrl, authType: 'apiKey', keys: [
+    { name: '', apiKey: 'unique-but-rolled-back', credentialsJson: '{}' }, { name: '', apiKey: 'key-b', credentialsJson: '{}' },
+  ] }), error => error.kind === 'duplicate');
+  assert.deepEqual(snapshot(), beforeDuplicate, '多个 Key 创建失败不能留下分组或部分 Key');
+  const duplicate = await Promise.allSettled([1,2].map(() => app.services.saveModelServiceKey(group.id, null, { name: '', apiKey: 'concurrent-key', credentialsJson: '{}' })));
+  assert.equal(duplicate.filter(result => result.status === 'fulfilled').length, 1, '并发新增相同 Key 只有一个 winner');
+  await app.services.deleteModelServiceKey(a.id);
+  assert.equal((await app.assets.getModelConfigById(summary.id)).serviceConfigId, null);
+  assert.equal((await app.assets.getModelConfigById(embedding.id)).serviceConfigId, b.id);
+  assert.equal((await app.assets.getModelConfigById(voice.id)).serviceConfigId, c.id);
+  assert.equal((await app.groups.getAdminConfig('multi-group')).apiKey, 'key-c');
+  const added = await app.services.saveModelServiceKey(group.id, null, { name: '', apiKey: 'key-next', credentialsJson: '{}' });
+  assert.equal(added.ordinal, 5); assert.equal(added.keyName, '5');
+  assert.equal((await app.services.getModelService(b.id)).keyName, '视觉');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'model-service-keys-'));
+  try {
+    const file = path.join(directory, 'snapshot.db'); await backup(db, file);
+    const restored = new DatabaseSync(file);
+    try {
+      await runMigrations(raw(restored));
+      assert.deepEqual(await runtime(restored).services.getModelServiceGroup(group.id), await app.services.getModelServiceGroup(group.id));
+      assert.equal((await runtime(restored).assistants.getById('multi-role')).serviceConfigId, b.id);
+    } finally { restored.close(); }
+    fs.unlinkSync(file);
+  } finally { fs.rmdirSync(directory); }
+  const beforeDelete = snapshot();
+  db.prepare(`CREATE TRIGGER reject_group_delete BEFORE DELETE ON model_service_configs WHEN OLD.id = '${added.id}' BEGIN SELECT RAISE(ABORT,'模拟整组删除失败'); END`).run();
+  await assert.rejects(app.services.deleteModelServiceGroup(group.id), /整组删除失败/);
+  assert.deepEqual(snapshot(), beforeDelete, '整组删除中后面的 Key 失败时，前面的解绑也必须回滚');
+  db.exec('DROP TRIGGER reject_group_delete');
+  await app.services.deleteModelServiceGroup(group.id);
+  assert.equal((await app.assistants.getById('multi-role')).apiKey, null);
+  assert.equal((await app.groups.getAdminConfig('multi-group')).apiKey, null);
+  assert.equal((await app.assets.getModelConfigById(embedding.id)).serviceConfigId, null);
+  assert.equal((await app.services.listModelServiceGroups()).length, 0);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []); db.close();
+}
+// 175 升级保留具体连接 ID 与引用，不按同地址合并分组；迁移失败包含 DDL 一起回滚。
+{
+  const db = database(); const app = runtime(db);
+  const a = await app.services.saveModelService(null, { name: '旧服务甲', ...app.connection.getModelServiceConnection(input.baseUrl, 'old-a') });
+  const b = await app.services.saveModelService(null, { name: '旧服务乙', ...app.connection.getModelServiceConnection(input.baseUrl, 'old-b') });
+  const asset = await app.assets.insertModelConfig({ ...input, serviceConfigId: a.id });
+  restoreLegacyServices(db); db.exec('PRAGMA user_version = 175');
+  const before = db.prepare('SELECT * FROM model_service_configs ORDER BY id').all();
+  db.exec("CREATE TRIGGER reject_group_migration BEFORE UPDATE OF name ON model_service_configs BEGIN SELECT RAISE(ABORT,'模拟分组迁移失败'); END");
+  await assert.rejects(runMigrations(raw(db)), /分组迁移失败/);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 175);
+  assert.deepEqual(db.prepare('SELECT * FROM model_service_configs ORDER BY id').all(), before);
+  assert.equal(db.prepare("SELECT name FROM sqlite_master WHERE name = 'model_service_groups'").get(), undefined);
+  db.exec('DROP TRIGGER reject_group_migration');
+  await runMigrations(raw(db));
+  assert.equal((await app.services.listModelServiceGroups()).length, 2);
+  for (const key of [a,b]) {
+    const current = await app.services.getModelService(key.id);
+    assert.equal(current.groupId, key.id); assert.equal(current.keyName, '1');
+    assert.equal(current.apiKey, key.apiKey); assert.equal(current.name, key.name); assert.equal(current.createdAt, key.createdAt); assert.equal(current.updatedAt, key.updatedAt);
+  }
+  assert.equal((await app.assets.getModelConfigById(asset.id)).serviceConfigId, a.id);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  const groups = await app.services.listModelServiceGroups(); await runMigrations(raw(db));
+  assert.deepEqual(await app.services.listModelServiceGroups(), groups); db.close();
+}
+// 表单只转换自己修改的字段；新 Key 必须完整，名称留空合法。
+{
+  const { parseServiceGroupDraft, parseServiceKeyDraft } = load('src/features/assistants/presentation/auxiliaryModels/modelServiceDraft.ts');
+  assert.deepEqual(parseServiceGroupDraft({ name: ' 新名称 ', baseUrl: 'invalid' }, ['name']).patch, { name: '新名称' });
+  assert.ok(parseServiceGroupDraft({ name: '', baseUrl: 'invalid' }, ['name','baseUrl']).errors.baseUrl);
+  const key = { name: '', apiKey: ' key ', secretId: '', appId: '' };
+  assert.deepEqual(parseServiceKeyDraft(key, [], 'apiKey', true).patch, { name: '', apiKey: 'key', credentialsJson: '{}' });
+  assert.deepEqual(parseServiceKeyDraft({ ...key, apiKey: '' }, ['name'], 'apiKey', true).accepted, []);
+  assert.deepEqual(parseServiceKeyDraft({ ...key, apiKey: '' }, ['name'], 'apiKey').patch, { name: '' });
 }
 function legacy() {
   const db = database(true);
@@ -223,7 +553,7 @@ function legacy() {
   insert.run('ai', 'translation', 'AI翻译', 'https://example.invalid/v1', 'key', 'ai-model',
     JSON.stringify({ provider: 'aiModel' }), 'old', 'old');
   await runMigrations(raw(db));
-  const services = db.prepare('SELECT id, auth_type FROM model_service_configs').all();
+  const services = db.prepare('SELECT k.id, g.auth_type FROM model_service_configs k JOIN model_service_groups g ON g.id = k.group_id').all();
   assert.equal(services.length, 1);
   assert.equal(services[0].auth_type, 'apiKey');
   assert.equal(db.prepare('SELECT name FROM pragma_table_info(?)').all('auxiliary_model_configs')
@@ -265,10 +595,12 @@ function legacy() {
     db.prepare("UPDATE auxiliary_model_configs SET service_config_id=?,base_url='',api_key=NULL WHERE id=?").run(connection.id, config.id);
     snapshots.push({ config: await app.assets.getModelConfigById(config.id), remainsShared });
   }
-  db.exec("PRAGMA user_version=157; CREATE TRIGGER reject_detach BEFORE UPDATE OF service_config_id ON auxiliary_model_configs WHEN NEW.service_config_id IS NULL BEGIN SELECT RAISE(ABORT,'模拟解除引用失败'); END");
+  markHistoricalVersion(db, 157);
+  const legacyAssetsBeforeFailure = db.prepare('SELECT * FROM auxiliary_model_configs ORDER BY id').all();
+  db.exec("CREATE TRIGGER reject_detach BEFORE UPDATE OF service_config_id ON auxiliary_model_configs WHEN NEW.service_config_id IS NULL BEGIN SELECT RAISE(ABORT,'模拟解除引用失败'); END");
   await assert.rejects(runMigrations(raw(db)), /解除引用失败/);
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, 157);
-  for (const { config } of snapshots) assert.deepEqual(await app.assets.getModelConfigById(config.id), config, '迁移失败不改变任何连接或参数');
+  assert.deepEqual(db.prepare('SELECT * FROM auxiliary_model_configs ORDER BY id').all(), legacyAssetsBeforeFailure, '迁移失败不改变任何连接或参数');
   db.exec('DROP TRIGGER reject_detach');
   await runMigrations(raw(db));
   for (const { config, remainsShared } of snapshots) {
@@ -327,7 +659,10 @@ for (const previousVersion of [157, 158]) {
   for (const mode of ['manual', 'edited', 'role', 'summary', 'group']) await historicalCopy('tts', 'elevenlabs', mode);
   await historicalCopy('tts', 'openaiCompatible', 'supported');
   await historicalCopy('translation', 'aiModel', 'supported');
-  db.exec(`PRAGMA user_version=${previousVersion};
+  markHistoricalVersion(db, previousVersion);
+  const legacyServicesBeforeFailure = db.prepare('SELECT * FROM model_service_configs ORDER BY id').all();
+  const legacyAssetsBeforeFailure = db.prepare('SELECT * FROM auxiliary_model_configs ORDER BY id').all();
+  db.exec(`
     CREATE TABLE delete_probe (count INTEGER NOT NULL); INSERT INTO delete_probe VALUES(0);
     CREATE TRIGGER reject_second_service_delete BEFORE DELETE ON model_service_configs BEGIN
       UPDATE delete_probe SET count=count+1;
@@ -336,8 +671,8 @@ for (const previousVersion of [157, 158]) {
   await assert.rejects(runMigrations(raw(db)), /服务清理失败/);
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, previousVersion);
   assert.equal(db.prepare('SELECT count FROM delete_probe').get().count, 0);
-  for (const id of [...removed, ...kept]) assert.ok(await app.services.getModelService(id), '失败保留所有服务');
-  for (const config of configurations) assert.deepEqual(await app.assets.getModelConfigById(config.id), config);
+  assert.deepEqual(db.prepare('SELECT * FROM model_service_configs ORDER BY id').all(), legacyServicesBeforeFailure, '失败保留所有服务');
+  assert.deepEqual(db.prepare('SELECT * FROM auxiliary_model_configs ORDER BY id').all(), legacyAssetsBeforeFailure);
   db.exec('DROP TRIGGER reject_second_service_delete');
   await runMigrations(raw(db));
   const listed = (await app.services.listModelServices()).map(service => service.id);

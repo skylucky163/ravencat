@@ -10,6 +10,7 @@ import type { AIScheduleApplicationErrorCode } from './AIScheduleApplication';
 import {
   claimAIScheduleForHeadless,
   consumeAIScheduleWithProjection,
+  reconcileAIScheduleProjections,
 } from './AIScheduleProjectionOwner';
 import { summarizeAutonomousAgentRun } from './AutonomousRunDiagnostic';
 import {
@@ -57,6 +58,7 @@ export async function runHeadlessAISchedule(
     return { selected, sessionId: session.id };
   });
 
+  if (authority.status !== 'not_current_host') await reconcileAIScheduleProjections();
   if (authority.status === 'not_current_host') {
     console.info('[RavenCatAIScheduleTask] AI Schedule callback 已过期', {
       scheduleId: callback.scheduleId,
@@ -69,14 +71,19 @@ export async function runHeadlessAISchedule(
   const { sessionId, selected } = authority.value;
   const runId = dependencies.generateAutonomousRunId();
   const admission = await dependencies.chat.runInConversation<HeadlessAIScheduleOutcome>(sessionId, runId,
-    { plannedAt: selected.remindAt, updatedAt: selected.updatedAt, scheduleId: selected.scheduleId }, async execution => {
-    if (execution.displacedRunId) await dependencies.repositories.aiSchedules.mergeClaimedRun(
-      execution.displacedRunId, selected.scheduleId, new Date().toISOString());
+    { plannedAt: selected.remindAt, updatedAt: selected.updatedAt, scheduleId: selected.scheduleId,
+      triggerKind: selected.triggerKind }, async execution => {
+    if (execution.displacedRunId) {
+      const [evidence] = await dependencies.chat.listAgentActivityEvidence([execution.displacedRunId]);
+      await dependencies.repositories.aiSchedules.mergeClaimedRun(
+        execution.displacedRunId, selected.scheduleId, new Date().toISOString(), evidence?.firstVisibleAt ?? null);
+    }
     // owner 交接期间主理身份或开关可能改变；真正开始时才 claim。
     const currentAuthority = await runAsCurrentHostAuthority(callback.hostAIId, () =>
       claimAndTrackAIScheduleRun(runId, () => claimAIScheduleForHeadless({
         scheduleId: selected.scheduleId, ownerAIId: callback.hostAIId, runId,
         claimedAt: new Date().toISOString(), expectedRemindAt: selected.remindAt,
+        conversationId: sessionId,
         projectionToken: selected.updatedAt,
       })));
     if (currentAuthority.status === 'not_current_host') return { status: 'ignored', reason: 'not_current_host' };
@@ -95,11 +102,13 @@ export async function runHeadlessAISchedule(
   }, signal).catch(async error => {
     await dependencies.repositories.aiSchedules.mergeScheduled(selected.scheduleId, null, new Date().toISOString(),
       signal?.aborted ? 'execution_interrupted' : 'dispatch_failed');
+    await reconcileAIScheduleProjections();
     throw error;
   });
   if (admission.status !== 'ran') {
     await dependencies.repositories.aiSchedules.mergeScheduled(selected.scheduleId,
       admission.status === 'superseded' ? admission.scheduleId : null, new Date().toISOString());
+    await reconcileAIScheduleProjections();
     return { status: 'ignored', reason: admission.status === 'superseded' ? 'merged_schedule' : 'merged_chat' };
   }
   return admission.value;
@@ -135,11 +144,13 @@ async function runClaimedAISchedule(input: {
       input.runId,
       completionDisposition,
       async () => {
+        const [evidence] = await getCompanionRuntimeDependencies().chat.listAgentActivityEvidence([input.runId]);
         const outcome = await consumeAIScheduleWithProjection({
           scheduleId: input.claimedSchedule.scheduleId,
           runId: input.runId,
           consumedAt: new Date().toISOString(),
           completionDisposition,
+          firstVisibleAt: evidence?.firstVisibleAt ?? null,
           failureCode: result && result.terminalCode !== 'COMPLETED' ? result.terminalCode
             : result?.steps.some(step => step.toolCalls.some(call => call.outcome.status === 'error')) ? 'tool_failed' : undefined,
         });

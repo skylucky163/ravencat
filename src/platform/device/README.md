@@ -10,6 +10,8 @@
 
 本目录只承载技术能力，不包含聊天、通话、朋友圈或主动联系策略。
 
+`saveImageToGallery` 接收已经过图片入口检查的本地 URI 与真实 MIME，通过 `modules/gallery-writer` 写入系统相册 `Pictures/RavenCat`，不读取或申请相册权限。命名使用本地时间与内容 hash 前八位，扩展名来自真实 MIME；原始字节直接复制，GIF／WebP 动画不转码。原生边界只允许应用 files/cache 中的文件，`IS_PENDING` 发布与取消互斥，失败删除 pending 记录，并区分空间不足、目录不可写和写入中断。公开相册文件不归私有媒体清理、备份和恢复出厂管理。
+
 `Clipboard.readDeviceClipboardText` 在 Android 主线程按需读取首项直接文字，要求当前 Activity 拥有焦点；不获取焦点、不监听、不读取历史或解析 URI。原生边界限制为 12000 个 Unicode 字符并标明截断；系统返回 null 时明确表示内容不可用，不断言剪贴板为空。现有 UI 写入继续使用 `copyTextToClipboard`。
 
 `DeviceLocation` 提供定位授权/系统开关查询、用户主动触发的使用期间权限申请，以及一次系统融合定位。原生单次请求最长 15 秒，保留测量时间、位置年龄、精度和模拟位置标记；支持大致授权，不解析地址、不保存或持续监听位置、不申请后台权限，也不依赖无障碍或悬浮服务。

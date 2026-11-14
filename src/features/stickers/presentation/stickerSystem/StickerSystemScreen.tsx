@@ -5,7 +5,7 @@ import { ActivityIndicator, BackHandler, ScrollView, Text, View } from 'react-na
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { ListItem, ModelPickerModal, NavigationHeader, ToggleField, showAppDialog } from '@shared/ui';
+import { ListItem, ModelPickerModal, NavigationHeader, ToggleField, showAppDialog, useModelManagementNavigation } from '@shared/ui';
 import { ThemedSurface, useTheme } from '@shared/theme';
 import {
   listStickerModelCandidates,
@@ -104,6 +104,7 @@ function StickerSystemHomeScreen({
   const styles = useStickerSystemStyles();
   const theme = useTheme();
   const { progress: processing, error: processingError, refresh } = useStickerProcessingProgress();
+  const manageModels = useModelManagementNavigation();
   const [pickerKind, setPickerKind] = useState<PickerKind | null>(null);
   const [candidates, setCandidates] = useState<StickerModelConfigRef[]>([]);
   const [working, setWorking] = useState(false);
@@ -211,6 +212,7 @@ function StickerSystemHomeScreen({
         title={pickerKind === 'recognition' ? '选择视觉识别模型' : '选择向量化模型'}
         models={candidates} selectedModel={boundModelConfigId} disabled={working}
         onSelect={id => { void handleSelectModel(id); }} onClear={() => { void handleSelectModel(null); }}
+        onManageModels={() => manageModels(pickerKind === 'recognition' ? 'ocr' : 'embedding')}
         emptyText="暂无可选模型，请先到辅助模型中心添加配置。" />
     </View>
   );

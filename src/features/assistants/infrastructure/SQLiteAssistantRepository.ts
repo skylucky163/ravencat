@@ -200,6 +200,13 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     return (await db.getAllAsync<{ id: string }>('SELECT id FROM ai_assistants WHERE service_config_id = ?', [serviceConfigId])).map(row => row.id);
   }
 
+  async detachServiceReferencesInTransaction(transaction: DatabaseTransactionExecutor, serviceConfigId: string, now: string): Promise<string[]> {
+    const rows = await transaction.getAllAsync<{ id: string }>('SELECT id FROM ai_assistants WHERE service_config_id = ?', [serviceConfigId]);
+    await transaction.runAsync(`UPDATE ai_assistants SET service_config_id = NULL,
+      api_base_url = NULL, api_key = NULL, updated_at = ? WHERE service_config_id = ?`, [now, serviceConfigId]);
+    return rows.map(row => row.id);
+  }
+
   async getAll(): Promise<AIProfile[]> {
     try {
       const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'assistants.getAll', feature: 'assistants', priority: 'runtime' });

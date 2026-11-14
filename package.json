@@ -1,17 +1,20 @@
 {
   "name": "kimiphone",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "license": "MIT",
   "main": "index.js",
   "scripts": {
+    "verify:chat-code-preview": "node --no-warnings scripts/verify-chat-code-preview.mjs && node --no-warnings scripts/verify-chat-code-library.mjs && node --no-warnings scripts/verify-chat-code-work-tools.mjs",
     "verify:application-settings": "node --no-warnings scripts/verify-application-settings-tools.mjs && node --no-warnings scripts/verify-application-settings-presentation.mjs",
     "start": "expo start --dev-client --localhost",
     "android": "expo run:android",
     "android:logs": "adb logcat -b main -b system -b crash -v threadtime \"*:E\" \"ReactNativeJS:W\"",
     "verify:chat-image-loading": "node scripts/verify-chat-image-loading.mjs",
     "verify:chat-bubble-skins": "node --no-warnings scripts/verify-chat-bubble-skins.mjs && node --no-warnings scripts/verify-bubble-editor-session.mjs && node --no-warnings scripts/verify-chat-markdown-surface.mjs",
+    "verify:gallery-writer": "node scripts/verify-gallery-writer.mjs",
     "verify:ai-image-tools": "node --no-warnings scripts/verify-ai-image-tools.mjs",
     "typecheck": "tsc --noEmit",
+    "verify:data-management": "node --no-warnings scripts/verify-data-management.mjs",
     "verify:wallet-reply-queue": "node --no-warnings scripts/verify-wallet-reply-queue.mjs",
     "verify:ai-http-diagnostics": "node scripts/verify-http-exchange-diagnostics.mjs && node scripts/verify-ai-http-capture.mjs",
     "verify:model-errors": "node --no-warnings scripts/verify-model-error-display.mjs",
@@ -19,6 +22,8 @@
     "verify:ui-toggle": "node --no-warnings scripts/verify-ui-toggle.mjs",
     "verify:ui-dialog": "node --no-warnings scripts/verify-ui-dialog.mjs",
     "verify:ui-input": "node --no-warnings scripts/verify-ui-input.mjs",
+    "verify:ui-image-viewer": "node --no-warnings scripts/verify-ui-image-viewer.mjs",
+    "verify:ui-modal-window-native": "cd android && gradlew.bat :modal-window:testDebugUnitTest --console=plain",
     "verify:chat-text-drafts": "node --no-warnings scripts/verify-text-drafts.mjs",
     "verify:chat-message-selection": "node --no-warnings scripts/verify-chat-message-selection.mjs",
     "verify:chat-message-share": "node --no-warnings scripts/verify-chat-message-share.mjs",
@@ -46,7 +51,7 @@
     "verify:media-asset-reference-closure": "node scripts/verify-media-asset-reference-closure.mjs",
     "verify:image-cropping": "node scripts/verify-image-cropping.mjs",
     "verify:avatar-migration": "node scripts/verify-avatar-reference-migration.mjs && node scripts/verify-moments-author-identity.mjs",
-    "verify:moments": "node scripts/verify-moments-v2-domain.mjs && node scripts/verify-moments-author-identity.mjs && node scripts/verify-moments-v1-runtime-retirement.mjs && node scripts/verify-moments-audience-prompt-context.mjs && node scripts/verify-moments-social-inbox.mjs && node scripts/verify-moments-media.mjs && node scripts/verify-moments-timeline.mjs && node scripts/verify-moments-loading.mjs",
+    "verify:moments": "node scripts/verify-moments-v2-domain.mjs && node scripts/verify-moments-author-identity.mjs && node scripts/verify-moments-v1-runtime-retirement.mjs && node scripts/verify-moments-audience-prompt-context.mjs && node scripts/verify-moments-social-inbox.mjs && node scripts/verify-moments-media.mjs && node scripts/verify-moments-timeline.mjs && node scripts/verify-moments-loading.mjs && node --no-warnings scripts/verify-moments-editing.mjs",
     "verify:application-data-reset": "node scripts/verify-application-data-reset.mjs",
     "verify:backup-artifact": "node scripts/verify-backup-artifact.mjs",
     "verify:backup-local-target": "node scripts/verify-backup-local-target.mjs",
@@ -60,7 +65,7 @@
     "verify:expo-activity-results": "cd android && gradlew.bat :expo-modules-core:testDebugUnitTest --tests expo.modules.kotlin.AppContextActivityRecreationTest -I ../scripts/verify-expo-activity-results.gradle --console=plain",
     "verify:raven-cat-runtime": "node scripts/verify-raven-cat-runtime-contracts.mjs",
     "verify:raven-cat-foundation": "node scripts/verify-raven-cat-companion-foundation.mjs",
-    "verify:raven-cat-ai-schedule": "node --no-warnings scripts/verify-raven-cat-ai-schedule.mjs && node --no-warnings scripts/verify-ai-schedule-context.mjs",
+    "verify:raven-cat-ai-schedule": "node --no-warnings scripts/verify-raven-cat-ai-schedule.mjs && node --no-warnings scripts/verify-ai-schedule-context.mjs && node --no-warnings scripts/verify-ai-schedule-timing.mjs",
     "verify:raven-cat-ai-schedule-tools": "node --no-warnings scripts/verify-raven-cat-ai-schedule-tools.mjs",
     "verify:raven-cat-ai-schedule-trigger-runtime": "node --no-warnings scripts/verify-raven-cat-ai-schedule-trigger-runtime.mjs",
     "verify:raven-cat-autonomous-agent": "node scripts/verify-raven-cat-autonomous-agent.mjs",
@@ -121,7 +126,8 @@
     "verify:assistant-nickname": "node --no-warnings scripts/verify-assistant-nickname.mjs",
     "verify:assistant-settings": "node --no-warnings scripts/verify-assistant-settings-entries.mjs && node --no-warnings scripts/verify-assistant-model-settings-screen.mjs && node --no-warnings scripts/verify-assistant-settings-navigation.mjs",
     "verify:assistant-profile": "node --no-warnings scripts/verify-assistant-profile.mjs && node --no-warnings scripts/verify-conversation-settings-autosave.mjs",
-    "verify:auxiliary-model-runtime": "node scripts/verify-auxiliary-model-runtime.mjs && node --no-warnings scripts/verify-model-service-configs.mjs",
+    "verify:auxiliary-model-runtime": "node scripts/verify-auxiliary-model-runtime.mjs && npm run verify:model-services",
+    "verify:model-services": "node --no-warnings scripts/verify-model-service-configs.mjs && node --no-warnings scripts/verify-model-service-ui.mjs",
     "verify:model-settings-autosave": "node --no-warnings scripts/verify-model-settings-autosave.mjs",
     "verify:chat-conversation-preparation": "node scripts/verify-chat-conversation-preparation.mjs",
     "verify:group-speech-claim": "node scripts/verify-group-speech-claim.mjs",
@@ -210,6 +216,8 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
+    "react-native-view-shot": "^4.0.3",
+    "react-native-webview": "13.15.0",
     "react-native-worklets": "0.5.1"
   },
   "engines": {
@@ -219,7 +227,10 @@
   "expo": {
     "autolinking": {
       "android": {
-        "buildFromSource": ["expo-sqlite", "expo-image-picker"]
+        "buildFromSource": [
+          "expo-sqlite",
+          "expo-image-picker"
+        ]
       }
     }
   },

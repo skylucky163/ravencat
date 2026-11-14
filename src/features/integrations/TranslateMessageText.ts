@@ -2,14 +2,14 @@
 import { OpenAIClient } from '@platform/ai';
 import { resolveTranslationModel } from './application/TranslationModels';
 import type { TranslationMetadata, TranslationModelConfig, TranslationProvider } from './domain/TranslationModel';
-import { TencentCloudTmtClient, type TranslateTextResult } from './infrastructure/translation';
+import { TencentCloudTmtClient } from './infrastructure/translation';
 
 export interface TranslateMessageTextParams {
   text: string;
 }
-export interface TranslateMessageTextResult extends TranslateTextResult {
+export interface TranslateMessageTextResult {
+  translatedText: string;
   provider: TranslationProvider;
-  configId: string;
   sourceLabel: string;
 }
 
@@ -23,7 +23,8 @@ async function translateWithModel(config: TranslationModelConfig, params: Transl
     const client = new TencentCloudTmtClient({ secretId: metadata.secretId!, secretKey: config.apiKey }, {
       endpoint: new URL(config.baseURL).host, region: metadata.region, projectId: metadata.projectId, source, target,
     });
-    return { ...await client.translateText({ text, source, target }), provider: metadata.provider, sourceLabel: 'Translated by Tencent Cloud' };
+    const result = await client.translateText({ text, source, target });
+    return { translatedText: result.translatedText, provider: metadata.provider, sourceLabel: 'Translated by Tencent Cloud' };
   }
   const client = new OpenAIClient({
     baseURL: config.baseURL, apiKey: config.apiKey, model: config.model,
@@ -45,15 +46,12 @@ async function translateWithModel(config: TranslationModelConfig, params: Transl
   if (response.finishReason === 'length') throw new Error('AI 翻译输出被截断，请调整模型的输出限制');
   const translatedText = response.text.trim();
   if (!translatedText) throw new Error('AI 翻译返回为空');
-  return {
-    translatedText, source, target, usedAmount: null, requestId: response.messageId,
-    provider: metadata.provider, sourceLabel: `Translated by ${config.model}`,
-  };
+  return { translatedText, provider: metadata.provider, sourceLabel: `Translated by ${config.model}` };
 }
 
 export async function translateMessageText(params: TranslateMessageTextParams): Promise<TranslateMessageTextResult> {
   const model = await resolveTranslationModel();
-  return { ...await translateWithModel(model, params), configId: model.modelConfigId };
+  return translateWithModel(model, params);
 }
 
 /** 测试只消费合法草稿，复用真实翻译调用，不提交资产、业务选择或聊天消息。 */

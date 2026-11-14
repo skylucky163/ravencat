@@ -16,7 +16,7 @@ import {
 import { useTheme, useThemedStyles, ThemedSurface } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import KeyboardAvoidingContainer from './KeyboardAvoidingContainer';
+import { ModalWindow } from '../../../modules/modal-window';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 
@@ -25,6 +25,8 @@ export interface ModalSheetProps {
   onClose: () => void;
   /** 入场动画完成且窗口可交互后调用，供表单请求焦点；内容更新不会重新触发。 */
   onOpened?: () => void;
+  /** 退出动画完成且弹层已从 React 树移除后调用，供后续页面导航。 */
+  onClosed?: () => void;
   title?: string;
   titleAccessory?: ReactNode;
   children: ReactNode;
@@ -40,7 +42,6 @@ const createStyles = (theme: PresentationTheme) =>
       backgroundColor: theme.colors.surface.overlay,
     },
     windowContent: {
-      flex: 1,
       justifyContent: 'flex-end',
     },
     sheet: {
@@ -81,6 +82,7 @@ export default function ModalSheet({
   visible,
   onClose,
   onOpened,
+  onClosed,
   title,
   titleAccessory,
   children,
@@ -93,9 +95,20 @@ export default function ModalSheet({
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const onOpenedRef = useRef(onOpened);
   onOpenedRef.current = onOpened;
+  const onClosedRef = useRef(onClosed);
+  onClosedRef.current = onClosed;
+  const wasOpen = useRef(false);
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (internalVisible) wasOpen.current = true;
+    else if (wasOpen.current) {
+      wasOpen.current = false;
+      onClosedRef.current?.();
+    }
+  }, [internalVisible]);
 
   useEffect(() => {
     if (visible) {
@@ -156,7 +169,7 @@ export default function ModalSheet({
       onRequestClose={onClose}
     >
       <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
-        <KeyboardAvoidingContainer style={styles.windowContent} enabled={visible} fillsNativeWindow>
+        <ModalWindow style={styles.windowContent}>
           <TouchableWithoutFeedback onPress={onClose}>
             <View style={StyleSheet.absoluteFill} />
           </TouchableWithoutFeedback>
@@ -192,7 +205,7 @@ export default function ModalSheet({
             ) : null}
             {children}
           </Animated.View>
-        </KeyboardAvoidingContainer>
+        </ModalWindow>
       </Animated.View>
     </Modal>
   );

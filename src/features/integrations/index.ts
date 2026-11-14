@@ -3,6 +3,5 @@ export { default as TranslationModelPicker } from './presentation/TranslationMod
 export { getTranslationModelSettings, selectTranslationModel, subscribeTranslationModelsChanged } from './application/TranslationModels';
 export { TRANSLATION_PROVIDERS } from './application/TranslationProviderCatalog';
 export { readTranslationMetadata, validateTranslationModelConfig } from './domain/TranslationModel';
-export type { TranslationProvider, TranslationMetadata, TranslationModelConfig, ResolvedTranslationModel } from './domain/TranslationModel';
+export type { TranslationProvider, TranslationMetadata, TranslationModelConfig } from './domain/TranslationModel';
 export { translateMessageText, testTranslationModelConnection } from './TranslateMessageText';
-export type { TranslateMessageTextParams, TranslateMessageTextResult } from './TranslateMessageText';

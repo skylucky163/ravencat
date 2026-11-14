@@ -73,6 +73,7 @@ function configureInitialSelections(persistence) {
     '@platform/persistence': persistence,
     '@features/speech': loadCommonJS('src/features/speech/application/SpeechProviderCatalog.ts'),
     '@features/integrations': loadCommonJS('src/features/integrations/domain/TranslationModel.ts'),
+    '@platform/ai/imageGenerationConfig': loadCommonJS('src/platform/ai/imageGenerationConfig.ts'),
   };
   const initialization = loadCommonJS('src/features/assistants/application/AuxiliaryModelInitialization.ts');
   mocks['../application/AuxiliaryModelInitialization'] = initialization;
@@ -130,6 +131,38 @@ function initialModelRuntime(db) {
     temperature: null, topP: null,
     privateContextPrimaryLimit: 30, privateContextSecondaryLimit: 10, groupContextPrimaryLimit: 40, groupContextSecondaryLimit: 5 });
   return { ...initial, persistence, commands, repository, assistants, create, createAssistant };
+}
+
+// 提供方是已有资产的身份；拒绝跨提供方更新时不产生连接或部分字段写入。
+{
+  const db = await createDatabase();
+  const runtime = initialModelRuntime(db);
+  for (const [kind, provider, otherProvider] of [['stt', 'tencentRealtimeAsr', 'volcengineRealtimeAsr'],
+    ['tts', 'minimaxT2aV2', 'openai'], ['translation', 'aiModel', 'tencentCloudTmt'], ['image_generation', 'minimax', 'siliconflow']]) {
+    const metadata = { provider, source: 'auto', target: 'zh', appId: '123', secretId: 'test', voiceId: 'voice' };
+    const model = await runtime.create(kind, { metadataJson: JSON.stringify(metadata) });
+    const before = db.prepare('SELECT * FROM auxiliary_model_configs WHERE id=?').get(model.id);
+    const services = db.prepare('SELECT * FROM model_service_configs ORDER BY id').all();
+    await assert.rejects(runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: {
+      name: '不能部分落盘', apiKey: 'different-key', baseUrl: 'https://another.invalid/v1',
+      metadataJson: JSON.stringify({ ...metadata, provider: otherProvider, region: 'ap-shanghai', projectId: 0 }),
+    } }), /提供方在创建后不可修改/);
+    assert.deepEqual(db.prepare('SELECT * FROM auxiliary_model_configs WHERE id=?').get(model.id), before);
+    assert.deepEqual(db.prepare('SELECT * FROM model_service_configs ORDER BY id').all(), services);
+    await assert.rejects(runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: { capabilityKind: 'summary' } }), /提供方在创建后不可修改/);
+    const edited = await runtime.commands.updateAuxiliaryModelConfig({ id: model.id, settings: {
+      name: '可修改名称', model: 'same-provider-model', apiKey: 'new-key', metadataJson: JSON.stringify({ ...metadata, speed: 1.1 }),
+    } });
+    assert.equal(JSON.parse(edited.metadataJson).provider, provider);
+    assert.equal(edited.model, 'same-provider-model');
+    assert.equal(edited.apiKey, 'new-key');
+  }
+  const legacy = await runtime.create('tts', { metadataJson: null });
+  await runtime.commands.updateAuxiliaryModelConfig({ id: legacy.id, settings: { metadataJson: '{"provider":"openaiCompatible","voiceId":"alloy"}' } });
+  assert.equal(JSON.parse((await runtime.repository.getModelConfigById(legacy.id)).metadataJson).provider, 'openaiCompatible', '旧兼容 TTS 的显式参数保存保持同一协议');
+  const legacyImage = await runtime.create('image_generation', { metadataJson: null });
+  await assert.rejects(runtime.commands.updateAuxiliaryModelConfig({ id: legacyImage.id, settings: { metadataJson: '{"provider":"siliconflow"}' } }), /提供方在创建后不可修改/);
+  db.close();
 }
 
 // 配置资产与摘要资格在同一事务交接；修改、清空凭据、删除保留引用和已提交进度。
@@ -460,7 +493,7 @@ function initialModelRuntime(db) {
   await speech.selectSpeechRecognitionModel(null);
   assert.equal(await speechResolver.resolveSpeechToTextModel({ consumer: 'call' }), null, '空选择不解析任何模型');
   await speech.selectSpeechRecognitionModel(stt.id);
-  await commands.updateAuxiliaryModelConfig({ id: stt.id, settings: { metadataJson: '{}' } });
+  await commands.updateAuxiliaryModelConfig({ id: stt.id, settings: { metadataJson: JSON.stringify({ provider: JSON.parse(stt.metadataJson).provider }) } });
   assert.equal((await speech.getSpeechRecognitionModelSettings()).status, 'unavailable');
   await assert.rejects(speechResolver.resolveSpeechToTextModel({ consumer: 'call' }), /STT 模型配置不可用/);
   await commands.updateAuxiliaryModelConfig({ id: stt.id, settings: { metadataJson: stt.metadataJson } });

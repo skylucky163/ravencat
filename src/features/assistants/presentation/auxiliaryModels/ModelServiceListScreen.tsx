@@ -4,20 +4,20 @@ import { ActivityIndicator, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedSurface, useTheme } from '@shared/theme';
 import { Button, EmptyState, HeaderAddButton, ListItem, NavigationHeader, ToggleField, showAppDialog } from '@shared/ui';
-import { getAutoSaveServiceConfigs, listModelServiceConfigs, setAutoSaveServiceConfigs, type ModelServiceConfig } from '../../ModelServices';
+import { getAutoSaveServiceConfigs, listModelServiceGroupConfigs, setAutoSaveServiceConfigs, type ModelServiceGroup } from '../../ModelServices';
 
 export default function ModelServiceListScreen({ onBack, onEdit, refreshRevision }: {
   onBack(): void; onEdit(id?: string): void; refreshRevision: number;
 }) {
   const theme = useTheme();
-  const [services, setServices] = useState<ModelServiceConfig[]>([]);
+  const [services, setServices] = useState<ModelServiceGroup[]>([]);
   const [autoSave, setAutoSave] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
     setLoading(true); setError(null);
-    try { const [items, enabled] = await Promise.all([listModelServiceConfigs(), getAutoSaveServiceConfigs()]); setServices(items); setAutoSave(enabled); }
+    try { const [items, enabled] = await Promise.all([listModelServiceGroupConfigs(), getAutoSaveServiceConfigs()]); setServices(items); setAutoSave(enabled); }
     catch (failure) { setError(failure instanceof Error ? failure.message : '读取服务配置失败'); }
     finally { setLoading(false); }
   }, []);
@@ -38,7 +38,7 @@ export default function ModelServiceListScreen({ onBack, onEdit, refreshRevision
       {loading ? <ActivityIndicator color={theme.colors.brand.primary} /> : error ? <EmptyState title="读取失败" description={error} />
         : services.length === 0 ? <EmptyState title="暂无服务配置" description="点击右上角新增，或在保存模型时自动收录。" />
           : <ThemedSurface variant="card" style={{ borderRadius: theme.radius.lg, overflow: 'hidden' }}>
-            {services.map(service => <ListItem key={service.id} title={service.name} subtitle={service.baseUrl} showArrow onPress={() => onEdit(service.id)} />)}
+            {services.map(service => <ListItem key={service.id} title={service.name} subtitle={`${service.baseUrl} · ${service.keys.length} 个 Key`} showArrow onPress={() => onEdit(service.id)} />)}
           </ThemedSurface>}
       {error && <View><Button title="重新读取" variant="text" onPress={() => { void reload(); }} /></View>}
     </ScrollView>

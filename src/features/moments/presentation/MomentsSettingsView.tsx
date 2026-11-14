@@ -1,9 +1,10 @@
 /** 时刻设置：Moments-owned 图片理解模型 binding 与 Profile-owned 封面入口。 */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import NavigationHeader from '@shared/ui/NavigationHeader';
-import { BackgroundPickerCard, ModelPickerModal, showAppDialog } from '@shared/ui';
+import { BackgroundPickerCard, ImageViewerModal, ModelPickerModal, showAppDialog, useModelManagementNavigation } from '@shared/ui';
 import { useTheme, type PresentationTheme } from '@shared/theme';
 import type {
   MomentImageAnalysisModelRef,
@@ -14,7 +15,6 @@ import {
   listMomentImageAnalysisModelCandidates,
   setMomentImageAnalysisModel,
 } from '../application/MomentSettings';
-import MomentsCoverPreviewModal from './MomentsCoverPreviewModal';
 import { useMomentsCover } from './useMomentsCover';
 
 interface Props { onClose: () => void }
@@ -40,6 +40,7 @@ function selectionLabel(selection: MomentImageAnalysisModelSelection | null): st
 }
 
 export default function MomentsSettingsView({ onClose }: Props) {
+  const manageModels = useModelManagementNavigation();
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const cover = useMomentsCover();
@@ -49,7 +50,13 @@ export default function MomentsSettingsView({ onClose }: Props) {
   const [coverPreviewVisible, setCoverPreviewVisible] = useState(false);
 
   const reloadSelection = async () => setSelection(await getMomentImageAnalysisModelSelection());
-  useEffect(() => { void reloadSelection(); }, []);
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    void getMomentImageAnalysisModelSelection().then(next => { if (active) setSelection(next); }).catch(() => {
+      if (active) showAppDialog({ title: '加载失败', message: '无法读取图片理解模型配置', tone: 'error' });
+    });
+    return () => { active = false; };
+  }, []));
 
   const openPicker = async () => {
     try {
@@ -95,16 +102,9 @@ export default function MomentsSettingsView({ onClose }: Props) {
 
       <ModelPickerModal visible={pickerVisible} onClose={() => setPickerVisible(false)} title="选择图片理解模型"
         models={candidates} selectedModel={selection?.modelConfigId} onSelect={id => { void selectModel(id); }}
-        onClear={() => { void selectModel(null); }} />
-      <MomentsCoverPreviewModal
-        visible={coverPreviewVisible}
-        coverSource={cover.coverSource}
-        hasCustomCover={cover.hasCustomCover}
-        isUpdating={cover.isUpdatingCover}
-        onClose={() => setCoverPreviewVisible(false)}
-        onPickCover={() => { setCoverPreviewVisible(false); void cover.pickCover(); }}
-        onResetCover={() => { setCoverPreviewVisible(false); void cover.resetCover(); }}
-      />
+        onClear={() => { void selectModel(null); }} onManageModels={() => manageModels('ocr')} />
+      <ImageViewerModal visible={coverPreviewVisible} sources={[cover.coverSource]}
+        onClose={() => setCoverPreviewVisible(false)} />
     </SafeAreaView>
   );
 }

@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { ProtocolView, type Protocol } from '@features/protocol';
+import { subscribeAuxiliaryModelsChanged } from '@features/assistants';
 import { useTheme, type PresentationTheme } from '@shared/theme';
 import { EmptyState, showAppDialog } from '@shared/ui';
 import CreateGroup from '../group/CreateGroup';
@@ -244,9 +245,11 @@ function useGroupRouteDetails(groupId: string, enabled: boolean) {
     };
     load();
     const unsubscribe = subscribeGroupChanged(id => { if (id === groupId) load(); });
+    const unsubscribeModels = subscribeAuxiliaryModelsChanged(load);
     return () => {
       active = false;
       unsubscribe();
+      unsubscribeModels();
     };
   }, [enabled, groupId]);
 
@@ -377,12 +380,13 @@ export function ChatConversationRouteScreen({
   );
 }
 
-export function ChatMenuRouteScreen({ aiId, onOpenAssistantProfile, onOpenModelSettings, onOpenConversationSettings, onOpenSummary }: {
+export function ChatMenuRouteScreen({ aiId, onOpenAssistantProfile, onOpenModelSettings, onOpenConversationSettings, onOpenSummary, onOpenCodeLibrary }: {
   aiId: string;
   onOpenAssistantProfile: () => void;
   onOpenModelSettings: () => void;
   onOpenConversationSettings: () => void;
   onOpenSummary: () => void;
+  onOpenCodeLibrary: () => void;
 }) {
   const router = usePreparedConversation(aiId);
   const { state } = router;
@@ -410,6 +414,7 @@ export function ChatMenuRouteScreen({ aiId, onOpenAssistantProfile, onOpenModelS
         router.returnToConversation(aiId);
       }}
       onOpenProfile={onOpenAssistantProfile}
+      onOpenCodeLibrary={onOpenCodeLibrary}
       onModelSettings={onOpenModelSettings}
       onChatSettings={onOpenConversationSettings}
       onChatSummary={onOpenSummary}

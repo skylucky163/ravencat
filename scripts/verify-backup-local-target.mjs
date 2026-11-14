@@ -1,4 +1,4 @@
-/** 本地 BackupTarget 创建、发布清理与 catalog 行为测试。 */
+/** 本地 BackupTarget 创建与发布清理行为测试。 */
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,9 +10,6 @@ import { importTypeScriptModule } from './lib/import-typescript-module.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { createLocalBackupUseCase } = await importTypeScriptModule(
   path.join(ROOT, 'src/features/backup/application/CreateLocalBackup.ts'),
-);
-const { BACKUP_TARGET_CATALOG } = await importTypeScriptModule(
-  path.join(ROOT, 'src/features/backup/application/BackupTargetCatalog.ts'),
 );
 
 function createDependencies(overrides = {}) {
@@ -70,8 +67,7 @@ function createDependencies(overrides = {}) {
 // 成功路径：一致快照只活到发布结束，Target 只接收完整产物。
 {
   const fixture = createDependencies();
-  const result = await createLocalBackupUseCase(fixture.dependencies)();
-  assert.equal(result.artifactId, '42');
+  await createLocalBackupUseCase(fixture.dependencies)();
   assert.deepEqual(fixture.calls, [
     'snapshot',
     'strict-sources',
@@ -104,10 +100,6 @@ function createDependencies(overrides = {}) {
   );
   assert.equal(fixture.calls.at(-1), 'delete-snapshot:file://snapshot.db');
 }
-
-const local = BACKUP_TARGET_CATALOG.find((target) => target.id === 'local-downloads');
-assert.equal(local.id, 'local-downloads');
-assert.equal(BACKUP_TARGET_CATALOG.length, 1);
 
 // 原生清理策略必须同时绑定目录、MIME、名称、pending、年龄与单次上限。
 const nativeSource = fs.readFileSync(

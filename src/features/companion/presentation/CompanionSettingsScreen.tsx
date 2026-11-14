@@ -35,6 +35,7 @@ import {
 } from './CompanionControls';
 
 import { createStyles } from './CompanionSettingsShared.styles';
+import { CompanionFollowUpSettings } from './CompanionFollowUpSettings';
 
 interface CompanionSettingsScreenProps {
   onBack: () => void;
@@ -328,6 +329,7 @@ export default function CompanionSettingsScreen({
 
         {expanded && settings ? <>
           <SectionTitle text="伴随设置" styles={styles} />
+          <CompanionFollowUpSettings settings={settings} onChange={setSettings} onError={setErrorMessage} />
           <ThemedSurface variant="card" style={styles.card}>
             <View style={styles.cardContent}>
               <TouchableOpacity style={styles.settingRow} onPress={() => { setQuietDraft({ start: settings.quietHoursStartMinutes, end: settings.quietHoursEndMinutes }); setShowQuietHours(true); }} accessibilityRole="button">

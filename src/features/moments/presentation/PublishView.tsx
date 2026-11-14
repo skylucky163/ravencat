@@ -16,9 +16,11 @@ import {
 } from '../application/CreateUserMomentWithMedia';
 import { MAX_MOMENT_LOCATION_LABEL_LENGTH } from '../domain/MomentLocation';
 import type { MomentAudience } from '../domain/MomentRepository';
+import type { MomentEditDraft, MomentEditorMedia } from '../application/EditMoment';
+import { MediaAssetImage } from '@features/media';
 import { listMomentAudienceCandidates } from '../presentationFacade';
 import MomentAudienceSelectorModal from './MomentAudienceSelectorModal';
-import { describeMomentPublishFailure } from './momentActionFeedback';
+import { describeMomentEditFailure, describeMomentPublishFailure } from './momentActionFeedback';
 import {
   DEFAULT_MOMENT_AUDIENCE_DRAFT,
   describeMomentAudienceDraft,
@@ -35,10 +37,17 @@ export interface PublishMomentDraft {
   audience: MomentAudience;
 }
 
-interface PublishMomentScreenProps {
-  onPublish: (draft: PublishMomentDraft) => Promise<void> | void;
+type PublishMomentScreenProps = {
   onCancel: () => void;
-}
+} & ({
+  mode?: 'create';
+  initialDraft?: never;
+  onPublish: (draft: PublishMomentDraft) => Promise<void> | void;
+} | {
+  mode: 'edit';
+  initialDraft: MomentEditDraft;
+  onPublish: (draft: MomentEditDraft) => Promise<void> | void;
+});
 
 function createPublishStyles(theme: PresentationTheme) {
   return StyleSheet.create({
@@ -188,15 +197,16 @@ function createPublishStyles(theme: PresentationTheme) {
   });
 }
 
-export default function PublishMomentScreen({ onPublish, onCancel }: PublishMomentScreenProps) {
+export default function PublishMomentScreen(props: PublishMomentScreenProps) {
+  const { initialDraft, onCancel } = props;
   const theme = useTheme();
   const styles = useMemo(() => createPublishStyles(theme), [theme]);
-  const [content, setContent] = useState('');
+  const [content, setContent] = useState(initialDraft?.content ?? '');
   const [publishing, setPublishing] = useState(false);
-  const [media, setMedia] = useState<MomentMediaDraft[]>([]);
-  const [locationLabel, setLocationLabel] = useState('');
+  const [media, setMedia] = useState<MomentEditorMedia[]>(() => [...(initialDraft?.media ?? [])]);
+  const [locationLabel, setLocationLabel] = useState(initialDraft?.locationLabel ?? '');
   const [audienceDraft, setAudienceDraft] = useState<MomentAudienceDraft>(
-    DEFAULT_MOMENT_AUDIENCE_DRAFT
+    initialDraft ? { mode: initialDraft.audience.mode, viewerAgentIds: initialDraft.audience.mode === 'all' ? [] : initialDraft.audience.viewerAgentIds } : DEFAULT_MOMENT_AUDIENCE_DRAFT
   );
   const [audienceCandidates, setAudienceCandidates] = useState<MomentAudienceCandidate[]>([]);
   const [audienceCandidatesLoading, setAudienceCandidatesLoading] = useState(false);
@@ -227,15 +237,20 @@ export default function PublishMomentScreen({ onPublish, onCancel }: PublishMome
     if (!canPublish) return;
     setPublishing(true);
     try {
-      await onPublish({
+      const draft = {
         content: content.trim(),
         media,
         locationLabel: locationLabel.trim() || null,
         audience: toMomentAudience(audienceDraft),
-      });
+      };
+      if (props.mode === 'edit') await props.onPublish(draft);
+      else {
+        // 发布模式没有初始资产引用，图片只可能来自本页相册选择。
+        await props.onPublish({ ...draft, media: media as MomentMediaDraft[] });
+      }
     } catch (error) {
       // 失败时保留正文 / 图片 / 地点 / 可见范围，用户可以直接改完重试。
-      showAppDialog({ title: '发布失败', message: describeMomentPublishFailure(error), tone: 'error' });
+      showAppDialog({ title: initialDraft ? '保存失败' : '发布失败', message: initialDraft ? describeMomentEditFailure(error) : describeMomentPublishFailure(error), tone: 'error' });
     } finally {
       setPublishing(false);
     }
@@ -264,7 +279,7 @@ export default function PublishMomentScreen({ onPublish, onCancel }: PublishMome
       height: asset.height ?? null,
     }));
     setMedia((current) => {
-      const uris = new Set(current.map((item) => item.uri));
+      const uris = new Set(current.flatMap((item) => 'uri' in item ? [item.uri] : []));
       return [...current, ...selected.filter((item) => !uris.has(item.uri))]
         .slice(0, MAX_MOMENT_MEDIA_COUNT);
     });
@@ -272,11 +287,11 @@ export default function PublishMomentScreen({ onPublish, onCancel }: PublishMome
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      onCancel();
+      if (!publishing) onCancel();
       return true;
     });
     return () => subscription.remove();
-  }, [onCancel]);
+  }, [onCancel, publishing]);
 
   // 独立 push 页面：安全区由本组件自己负责（此前由 MomentsTab 内嵌渲染时代管）。
   return (
@@ -285,10 +300,10 @@ export default function PublishMomentScreen({ onPublish, onCancel }: PublishMome
         style={styles.keyboardView}
       >
         <View style={styles.header}>
-          <TouchableOpacity onPress={onCancel} activeOpacity={0.7}>
+          <TouchableOpacity onPress={onCancel} disabled={publishing} activeOpacity={0.7}>
             <Text style={styles.cancelButton}>取消</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>发布时刻</Text>
+          <Text style={styles.headerTitle}>{initialDraft ? '编辑时刻' : '发布时刻'}</Text>
           <TouchableOpacity
             onPress={handlePublish}
             disabled={!canPublish}
@@ -298,13 +313,13 @@ export default function PublishMomentScreen({ onPublish, onCancel }: PublishMome
             {publishing ? (
               <ActivityIndicator size="small" color={theme.colors.brand.onPrimary} />
             ) : (
-              <Text style={styles.publishButtonText}>发布</Text>
+              <Text style={styles.publishButtonText}>{initialDraft ? '保存' : '发布'}</Text>
             )}
           </TouchableOpacity>
         </View>
 
         {/* 正文和附加选项共享滚动空间，键盘出现时不再互相挤压高度。 */}
-        <ScrollView style={styles.keyboardView}
+        <ScrollView style={styles.keyboardView} pointerEvents={publishing ? 'none' : 'auto'}
           keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
           <View style={styles.inputContainer}>
             <AppTextInput
@@ -323,12 +338,13 @@ export default function PublishMomentScreen({ onPublish, onCancel }: PublishMome
           </View>
 
           <View style={[styles.mediaSection, styles.mediaGrid]}>
-            {media.map((item) => (
-              <View key={item.uri} style={styles.mediaTile}>
-                <Image source={{ uri: item.uri }} style={styles.mediaImage} resizeMode="cover" />
+            {media.map((item, index) => (
+              <View key={'mediaAssetId' in item ? item.mediaAssetId : item.uri} style={styles.mediaTile}>
+                {'mediaAssetId' in item ? <MediaAssetImage mediaAssetId={item.mediaAssetId} style={styles.mediaImage} resizeMode="cover" />
+                  : <Image source={{ uri: item.uri }} style={styles.mediaImage} resizeMode="cover" />}
                 <TouchableOpacity
                   style={styles.removeMedia}
-                  onPress={() => setMedia((current) => current.filter((draft) => draft.uri !== item.uri))}
+                  onPress={() => setMedia((current) => current.filter((_, itemIndex) => itemIndex !== index))}
                 >
                   <X size={15} color="#fff" />
                 </TouchableOpacity>

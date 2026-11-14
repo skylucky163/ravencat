@@ -13,6 +13,8 @@ export interface MomentSocialInboxSummaryEntry {
   commentId: string | null;
   actorNames: string[];
   eventCount: number;
+  /** 事件发生时间；合并点赞时取最新 deliverySeq 对应的点赞时间。 */
+  createdAt: string;
 }
 
 export interface MomentSocialInboxSummary {
@@ -53,12 +55,16 @@ export async function loadSocialInboxSummary(
             commentId: null,
             actorNames: [],
             eventCount: 0,
+            createdAt: delivery.createdAt,
           },
         };
         likeGroups.set(delivery.sourceMomentId, group);
         grouped.push(group);
       }
-      group.latestSeq = Math.max(group.latestSeq, delivery.deliverySeq);
+      if (delivery.deliverySeq > group.latestSeq) {
+        group.latestSeq = delivery.deliverySeq;
+        group.entry.createdAt = delivery.createdAt;
+      }
       group.entry.eventCount += 1;
       const name = displayName(delivery);
       if (!group.entry.actorNames.includes(name) && group.entry.actorNames.length < 3) {
@@ -75,6 +81,7 @@ export async function loadSocialInboxSummary(
         commentId: delivery.sourceCommentId,
         actorNames: [displayName(delivery)],
         eventCount: 1,
+        createdAt: delivery.createdAt,
       },
     });
   }
@@ -95,13 +102,17 @@ export async function loadSocialInboxSummary(
 export function formatSocialInboxSummary(summary: MomentSocialInboxSummary): string {
   const lines = summary.entries.map((entry) => {
     const actor = entry.actorNames[0]!;
+    const time = new Date(entry.createdAt).toLocaleString('zh-CN', {
+      hour12: false,
+      timeZoneName: 'longOffset',
+    });
     switch (entry.eventType) {
       case 'moment_published':
-        return `【${actor} 发了一条新时刻（momentId: ${entry.momentId}）】`;
+        return `【${actor} 发了一条新时刻（发布时间: ${time}，momentId: ${entry.momentId}）】`;
       case 'comment_on_your_moment':
-        return `【${actor} 评论了你的时刻（momentId: ${entry.momentId}，commentId: ${entry.commentId}）】`;
+        return `【${actor} 评论了你的时刻（评论时间: ${time}，momentId: ${entry.momentId}，commentId: ${entry.commentId}）】`;
       case 'reply_to_your_comment':
-        return `【${actor} 回复了你的一条评论（momentId: ${entry.momentId}，commentId: ${entry.commentId}）】`;
+        return `【${actor} 回复了你的一条评论（回复时间: ${time}，momentId: ${entry.momentId}，commentId: ${entry.commentId}）】`;
       case 'like_on_your_moment': {
         const names = entry.actorNames.join('、');
         const actors = entry.eventCount === 1
@@ -109,7 +120,7 @@ export function formatSocialInboxSummary(summary: MomentSocialInboxSummary): str
           : entry.eventCount > entry.actorNames.length
             ? `${names} 等 ${entry.eventCount} 位`
             : `${names} 共 ${entry.eventCount} 位`;
-        return `【${actors}给你的时刻点了赞（momentId: ${entry.momentId}）】`;
+        return `【${actors}给你的时刻点了赞（最近点赞时间: ${time}，momentId: ${entry.momentId}）】`;
       }
     }
   });

@@ -4,6 +4,8 @@ export type AppDialogTone = 'info' | 'success' | 'warning' | 'error';
 export interface AppDialogButton {
   text: string;
   style?: 'default' | 'cancel' | 'destructive';
+  /** 危险按钮可用实色背景强调不可恢复的操作。 */
+  emphasis?: 'normal' | 'strong';
   onPress?: () => void;
 }
 

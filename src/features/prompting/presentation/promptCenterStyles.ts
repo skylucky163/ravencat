@@ -7,8 +7,7 @@ export const createPromptCenterStyles = (theme: PresentationTheme) => StyleSheet
   screen: { flex: 1, backgroundColor: theme.colors.background.screen },
   content: { padding: theme.spacing.lg, paddingBottom: 48, gap: 12 },
   hero: { paddingTop: 10, paddingBottom: 12 },
-  eyebrow: { color: theme.colors.brand.primary, fontSize: 12, fontWeight: '600', letterSpacing: 1 },
-  heading: { marginTop: 8, color: theme.colors.text.primary, fontSize: 27, fontWeight: '700' },
+  heading: { color: theme.colors.text.primary, fontSize: 27, fontWeight: '700' },
   description: { marginTop: 8, color: theme.colors.text.secondary, fontSize: 13, lineHeight: 21 },
   section: { paddingTop: 12, paddingBottom: 2, color: theme.colors.text.tertiary, fontSize: 12, fontWeight: '600', letterSpacing: 1 },
   row: { minHeight: 76, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: theme.radius.lg, backgroundColor: theme.colors.surface.default, borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.light },
@@ -19,6 +18,7 @@ export const createPromptCenterStyles = (theme: PresentationTheme) => StyleSheet
   // 附属设置保留编号列的宽度，让文字与上方主项对齐。
   numberPlaceholder: { opacity: 0 },
   copy: { flex: 1, gap: 5 },
+  assistantName: { color: theme.colors.brand.primary, fontSize: 18, fontWeight: '700' },
   title: { color: theme.colors.text.primary, fontSize: 15, fontWeight: '600' },
   subtitle: { color: theme.colors.text.tertiary, fontSize: 12, lineHeight: 18 },
   muted: { opacity: 0.55 },

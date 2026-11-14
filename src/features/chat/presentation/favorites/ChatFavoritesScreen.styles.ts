@@ -3,6 +3,11 @@ import type { PresentationTheme } from '@shared/theme';
 
 export const createFavoriteStyles = (theme: PresentationTheme) => StyleSheet.create({
   page: { flex: 1, backgroundColor: theme.colors.background.screen },
+  body: { flex: 1 },
+  clearSearchButton: { padding: 8 },
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 12,
+    paddingHorizontal: 12, borderRadius: theme.radius.sm, backgroundColor: theme.colors.surface.muted },
+  searchInput: { flex: 1, minWidth: 0, fontSize: 14, paddingVertical: 10 },
   filters: { flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
   filter: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: theme.radius.sm, backgroundColor: theme.colors.surface.muted },
   activeFilter: { backgroundColor: theme.colors.brand.primary },
@@ -16,6 +21,9 @@ export const createFavoriteStyles = (theme: PresentationTheme) => StyleSheet.cre
   text: { fontSize: 15, lineHeight: 23, color: theme.colors.text.primary },
   meta: { fontSize: 12, lineHeight: 18, color: theme.colors.text.secondary },
   quote: { borderLeftWidth: 3, borderLeftColor: theme.colors.border.default, paddingLeft: 10 },
+  reasoning: { backgroundColor: theme.colors.surface.muted, padding: 12, borderRadius: theme.radius.sm, gap: 10 },
+  reasoningHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  reasoningText: { fontSize: 14, lineHeight: 22, color: theme.colors.text.secondary },
   empty: { textAlign: 'center', padding: 32, color: theme.colors.text.secondary },
   error: { color: theme.colors.feedback.error, padding: 16, textAlign: 'center' },
   details: { padding: 20, gap: 16, paddingBottom: 40 },

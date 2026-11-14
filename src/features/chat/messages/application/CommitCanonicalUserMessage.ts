@@ -20,6 +20,7 @@ import type { CommitMessageInput, IMessageRepository } from '../domain/MessageRe
 import type { IConversationTurnRepository } from '../../reply/domain/ConversationTurnRepository';
 import { getChatMessageRuntimeDependencies } from './ChatMessageRuntime';
 import { emitChatTurnExecutionChanged } from '../events/ChatEvents';
+import { isSubstantiveUserMessage } from '../domain/SubstantiveUserMessage';
 
 export interface CommitCanonicalUserMessageParams {
   message: CreateMessageInput;
@@ -74,6 +75,11 @@ export async function commitCanonicalUserMessage(
           previewText: params.previewText ?? materializedMessage.text,
         });
         messages.push(message);
+        if (messages.some(isSubstantiveUserMessage)) {
+          await getChatMessageRuntimeDependencies().canonicalUserMessage?.onSubstantiveInputInTransaction?.(
+            transaction, sessionId, message.createdAt,
+          );
+        }
         const supersededRunId = await turns.supersedeActiveRunInTransaction(
           transaction,
           sessionId,

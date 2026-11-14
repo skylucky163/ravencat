@@ -60,7 +60,7 @@ export interface ChatTurnPresentationWindow {
   runIds: readonly string[];
 }
 
-/** 独立执行历史，没有 canonical 回复资格，也不构成重放工具的指令。 */
+/** 独立执行资料；正文可已封存为消息，资料本身不授予执行或工具重放资格。 */
 export interface ChatInterruptedTurnContext {
   runId: string;
   /** 用户输入或自主触发来源的消息定位；不改变执行回合的用户游标。 */

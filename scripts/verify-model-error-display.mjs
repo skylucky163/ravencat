@@ -145,16 +145,21 @@ try {
     useEffect: () => {}, useMemo: callback => callback(), useRef: () => ({ current: null }) };
   const { default: Viewer } = load('src/features/moments/presentation/MomentMediaViewerModal.tsx', {
     react,
-    'react-native': { ...Object.fromEntries(['ActivityIndicator', 'FlatList', 'Modal', 'Text', 'TextInput', 'TouchableOpacity', 'View'].map(name => [name, name])),
-      StyleSheet: { create: styles => styles }, useWindowDimensions: () => ({ width: 400, height: 800 }) },
-    'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) },
-    'lucide-react-native': { X: 'X' }, '@shared/ui': { showAppDialog: value => { alert = value; } },
-    '@features/media': { MediaAssetImage: 'Image' },
+    'react-native': { ...Object.fromEntries(['ActivityIndicator', 'Modal', 'Text', 'TextInput', 'TouchableOpacity', 'View'].map(name => [name, name])),
+      StyleSheet: { create: styles => styles } },
+    '@shared/ui': {
+      showAppDialog: value => { alert = value; },
+      // 查看器只负责容器；直接渲染业务 footer，保持原有入口断言。
+      ImageViewerModal: ({ footer }) => element('Viewer', {}, footer ? footer(0) : null),
+    },
+    '@features/media': { resolveMediaAsset: async mediaAssetId => ({ localUri: `file://${mediaAssetId}` }) },
     '../presentationFacade': { retryMomentMediaAnalysis: async () => ({ success: false, errorMessage: reason }), saveMomentMediaAnalysis: async () => {} },
   });
-  const tree = Viewer({ visible: true, media: [{ id: 'image', analysisStatus: 'failed', analysisErrorMessage: reason }], initialIndex: 0, canManage: true, onClose() {}, onUpdated() {} });
+  const tree = Viewer({ visible: true, media: [{ id: 'image', analysisStatus: 'failed', analysisErrorMessage: reason }], initialIndex: 0, onClose() {}, onUpdated() {} });
   function findAction(node, label) {
     if (!node || typeof node !== 'object') return;
+    // 共享查看器是函数组件；测试替身不渲染函数节点，这里显式展开一层。
+    if (typeof node.type === 'function') return findAction(node.type(node.props), label);
     if (node.type === 'TouchableOpacity' && node.props.children.some(child => child?.props?.children?.includes(label))) return node;
     for (const child of node.props?.children ?? []) { const found = findAction(child, label); if (found) return found; }
   }

@@ -1,8 +1,4 @@
-export {
-  resolveSpeechModel,
-  resolveSpeechToTextModel,
-  resolveTextToSpeechModel,
-} from './ResolveSpeechModel';
+export { resolveTextToSpeechModel } from './ResolveSpeechModel';
 
 export type {
   ResolvedSpeechModel,

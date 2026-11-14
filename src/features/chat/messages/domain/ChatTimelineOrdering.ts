@@ -19,7 +19,7 @@
 import type { ChatMessage } from './ChatMessage';
 
 export type ChatTimelineSortableMessage = Pick<ChatMessage, 'id' | 'createdAt'>
-  & Partial<Pick<ChatMessage, 'turnRunId' | 'turnItemIndex'>>;
+  & Partial<Pick<ChatMessage, 'turnRunId' | 'turnItemIndex' | 'timelineAnchor'>>;
 
 function parseCreatedAtEpochMs(createdAt: string): number {
   const parsed = Date.parse(createdAt);
@@ -72,6 +72,10 @@ function createChatTimelineOrderContext(
       itemIndex: message.turnItemIndex!,
     });
     membersByRun.set(message.turnRunId, members);
+    if (message.timelineAnchor) {
+      anchorsByRun.set(message.turnRunId, message.timelineAnchor);
+      continue;
+    }
     if (message.turnItemIndex === 1) {
       anchorsByRun.set(message.turnRunId, {
         createdAt: message.createdAt,

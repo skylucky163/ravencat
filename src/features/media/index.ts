@@ -64,3 +64,5 @@ export type {
 export type { MediaAssetReferenceUriInput } from './application/MediaAssetRuntime';
 
 export { default as MediaAssetImage } from './presentation/MediaAssetImage';
+export { GenerateImageTool } from './application/GenerateImageTool';
+export { default as ImageGenerationScreen } from './presentation/ImageGenerationScreen';
