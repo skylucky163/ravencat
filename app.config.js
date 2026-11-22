@@ -47,6 +47,7 @@ module.exports = ({ config }) => {
     plugins: [
       "./plugins/withAppVersion",
       ["./plugins/withAndroidDevelopmentIcon", developmentIcon],
+      "./plugins/withAndroidReleaseIcon",
       "./plugins/withAndroidReleaseSigning",
       "./plugins/withFixedFontScale",
       "expo-router",

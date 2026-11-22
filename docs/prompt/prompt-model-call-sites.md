@@ -73,7 +73,7 @@ npm run verify:prompt
 - `prompt:chat-envelope:check`：单气泡、多气泡与长文本切分保持正文完整；
 - `verify:prompt`：以上检查与持久化、主动联系退役、提示词中心预览边界的组合门禁。
 
-调用点门禁实际读取源码与 `scripts/verify-prompt-call-sites.mjs` 的登记清单，不读取此 Markdown。新增或删除真实调用点时，两者同步更新；文档不能替代 AST 检查。
+调用点门禁实际读取源码与 `tests/prompting/verify-prompt-call-sites.mjs` 的登记清单，不读取此 Markdown。新增或删除真实调用点时，两者同步更新；文档不能替代 AST 检查。
 
 翻译是 Integrations 自有的辅助调用，`features/integrations/TranslateMessageText.ts` 也在调用点清单登记；厂商协议和输出边界见 [Integrations README](../../src/features/integrations/README.md)。Memory embedding、STT/TTS 的传输入口属于各自技术契约，不恢复 Memory 独立模型 Agent。
 

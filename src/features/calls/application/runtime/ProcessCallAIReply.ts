@@ -126,6 +126,7 @@ export async function processCallAIReply(params: {
       temperature: callAIConfig.temperature,
       topP: callAIConfig.topP,
       disableThinking: callAIConfig.disableThinking,
+      reasoningEffort: callAIConfig.reasoningEffort,
       maxTokens: callAIConfig.maxTokens,
       systemPrompt: promptPack.systemPrompt,
     });

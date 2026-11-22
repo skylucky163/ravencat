@@ -12,6 +12,11 @@ export interface ChatPreviewMessage {
   text: string;
 }
 
+/** 通知发布跨过原生等待后，按持久阅读事实收口期间发生的阅读。 */
+export function isChatAssistantMessageRead(identity: { messageId?: number; clientMessageId?: string }): Promise<boolean> {
+  return getChatMessageRuntimeDependencies().messages.isAssistantMessageRead(identity);
+}
+
 export async function listRecentChatPreviewMessages(params: { sessionId: string; limit: number }): Promise<ChatPreviewMessage[]> {
   const messages = await getChatMessageRuntimeDependencies().messages.getRecentPreviewMessages(
     params.sessionId, params.limit, getAssistantMessageArrivalSnapshot().pendingMessageIds,

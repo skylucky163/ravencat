@@ -104,10 +104,12 @@ async function callAdminScheduler(params: {
     return { selectedAIIds: [], requestFailureMessage: null };
   }
 
-  const promptPack = await getChatReplyRuntimeDependencies().prompt.assembleStandalone({
+  const { prompt } = getChatReplyRuntimeDependencies();
+  const promptPack = await prompt.assembleStandalone({
     scenarioId: 'chat.group_admin_schedule',
     groupId: params.details.group.id,
-    blocks: buildGroupAdminPromptBlocks(adminConfig.systemPrompt),
+    // 正文只有提示词中心一份，群配置不再保存。
+    blocks: buildGroupAdminPromptBlocks(await prompt.resolveGroupAdminPrompt()),
     currentInput: buildGroupAdminInput({
       groupName: params.details.group.name,
       memberAliases: params.memberAliases,

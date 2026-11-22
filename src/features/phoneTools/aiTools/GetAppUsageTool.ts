@@ -66,7 +66,7 @@ export async function execute(args: Args, context: ToolContext): Promise<ToolExe
     // Legacy adapter 只把 message 交给模型；data 用于结构化消费，不会自动进入工具 observation。
     return {
       success: true,
-      message: `已读取系统聚合的应用前台使用时长；foregroundTimeMs 的单位为毫秒。请按各项统计边界解释，未返回的应用不代表使用时长为零。\n${JSON.stringify(data)}`,
+      message: `应用按前台使用时长降序排列，最多返回 ${limit} 项${args.limit === undefined ? '（默认上限）' : ''}。foregroundTimeMs 的单位为毫秒，各项统计区间见 statisticsStart 和 statisticsEnd。\n${JSON.stringify(data)}`,
       data,
     };
   });

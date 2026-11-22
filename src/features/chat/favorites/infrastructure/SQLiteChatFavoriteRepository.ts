@@ -1,19 +1,19 @@
 import { databaseCoordinator, type DatabaseTransactionExecutor } from '@platform/persistence';
 import type { ChatFavoriteRepository } from '../domain/ChatFavoriteRepository';
-import type { ChatFavorite, ChatFavoriteCategory, ChatFavoriteCursor, ChatFavoritePage, ChatFavoriteSearch, ChatFavoriteSnapshot } from '../domain/ChatFavorite';
+import type { ChatFavorite, ChatFavoriteCategory, ChatFavoriteCursor, ChatFavoritePage, ChatFavoriteRef, ChatFavoriteSearch, ChatFavoriteSnapshot } from '../domain/ChatFavorite';
 import { getChatFavoriteCategory } from '../domain/ChatFavorite';
 import { isChatVoiceMessageMetadata } from '../../messages/domain/chatMessageMetadata';
-import type { MediaAssetChatAttachment } from '../../messages/domain/ChatAttachment';
+import type { StoredChatAttachment } from '../../messages/domain/ChatAttachment';
 
 interface FavoriteRow { id: string; source_message_id: number; category: ChatFavoriteCategory; saved_at: string; snapshot_json: string }
 const PAGE_SIZE = 40;
-function isAttachment(value: unknown): value is MediaAssetChatAttachment {
+function isAttachment(value: unknown): value is StoredChatAttachment {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
   return typeof item.id === 'string' && typeof item.fileName === 'string'
-    && typeof item.mediaAssetId === 'string' && item.mediaAssetId.length > 0
+    && (item.unavailable === true || (typeof item.mediaAssetId === 'string' && item.mediaAssetId.length > 0))
     && (item.type === 'image' || item.type === 'file')
-    && ['gallery', 'camera', 'document', 'screen_capture'].includes(item.source as string)
+    && ['gallery', 'camera', 'document', 'clipboard', 'screen_capture'].includes(item.source as string)
     && ['thumbnailMediaAssetId', 'mimeType', 'parsedText', 'previewText'].every(key => item[key] == null || typeof item[key] === 'string')
     && ['width', 'height', 'fileSize'].every(key => item[key] == null || (typeof item[key] === 'number' && Number.isFinite(item[key])));
 }
@@ -49,6 +49,14 @@ export class SQLiteChatFavoriteRepository implements ChatFavoriteRepository {
     const row = await transaction.getFirstAsync<FavoriteRow>('SELECT * FROM chat_favorites WHERE source_message_id = ?', [messageId]);
     return row ? map(row) : null;
   }
+  async listRefsBySources(messageIds: readonly number[]): Promise<ChatFavoriteRef[]> {
+    const ids = [...new Set(messageIds)];
+    if (ids.length === 0) return [];
+    return this.database.getAllAsync<ChatFavoriteRef>(
+      'SELECT id, source_message_id AS sourceMessageId FROM chat_favorites WHERE source_message_id IN (SELECT value FROM json_each(?))',
+      [JSON.stringify(ids)],
+    );
+  }
   async createInTransaction(transaction: DatabaseTransactionExecutor, favorite: ChatFavorite): Promise<void> {
     // 收藏的媒体引用与快照同事务成立；已释放的资产不能被重新引用。
     const mediaIds = new Set(favorite.snapshot.attachments.flatMap(attachment => [attachment.mediaAssetId, attachment.thumbnailMediaAssetId].filter((id): id is string => Boolean(id))));
@@ -61,7 +69,8 @@ export class SQLiteChatFavoriteRepository implements ChatFavoriteRepository {
       [favorite.id, favorite.sourceMessageId, favorite.category, favorite.savedAt, JSON.stringify(favorite.snapshot)]);
   }
   async list(category: ChatFavoriteCategory | null, cursor: ChatFavoriteCursor | null, search: ChatFavoriteSearch | null): Promise<ChatFavoritePage> {
-    const clauses: string[] = [];
+    const clauses: string[] = [`NOT EXISTS (SELECT 1 FROM ai_assistants a
+      WHERE a.id = json_extract(snapshot_json, '$.sourceAssistantId') AND a.deleted_at IS NOT NULL)`];
     const params: (string | number)[] = [];
     if (category) { clauses.push('category = ?'); params.push(category); }
     if (search) {

@@ -133,7 +133,7 @@ export interface IGroupChatRepository {
    * plan CAS 为 terminated 终态，并把 queued/running 任务同事务裁决为
    * terminated——提交资格先于任何 abort 在持久层撤销。与换代不同，终止不创建
    * successor、不产生继承队列。返回被终止的 planId；无 active plan 返回 null。
-   * commit 后的副作用（abort 在途请求、取消 30 秒计时）由应用层负责。
+   * commit 后的在途请求 abort 由应用层负责；后续发言等待用户召唤。
    */
   terminateActiveSpeechPlan(groupId: string): Promise<string | null>;
   /** 冷启动收口失去进程 owner 的计划及未完成任务，保留消息与已完成任务，不自动重跑。 */

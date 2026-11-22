@@ -22,13 +22,18 @@ function hasErrorCode(message: string, code: number): boolean {
 }
 
 /**
- * 检测错误是否为参数相关错误（temperature/topP/maxTokens）
+ * 检测模型请求的参数错误，保留字段归属供设置页引导调整。
  * @param message - 错误消息
  * @returns 参数错误信息
  */
 export function detectParamError(message: string): ParamErrorInfo {
   const rawMessage = typeof message === 'string' ? message : String(message || '');
   const lowerMsg = rawMessage.toLowerCase();
+
+  if (lowerMsg.includes('reasoning_effort') || lowerMsg.includes('reasoning.effort')) {
+    return { isParamError: true, paramName: 'reasoningEffort', allowedValue: null,
+      message: '该接口不支持当前思考强度，请调整强度或思维链开关' };
+  }
 
   if (
     lowerMsg.includes('invalid temperature') ||

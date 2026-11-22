@@ -188,15 +188,17 @@ export function createOptimisticUserTimelineMessage(
 export function createOptimisticUserTimelineMessages(
   params: CreateOptimisticUserTimelineMessageParams,
 ): ChatMessage[] {
-  const seed = createOptimisticUserTimelineMessage(params);
+  const seed = createOptimisticUserTimelineMessage({ ...params, sticker: null });
   const parts = splitUserMessageSubmission({
     text: params.text,
     attachments: params.attachments ?? [],
     clientMessageId: seed.clientMessageId,
+    sticker: params.sticker,
   });
   return parts.map((part, index) => createOptimisticUserTimelineMessage({
     ...params,
     ...part,
+    sticker: part.sticker,
     tempId: seed.id + index,
     createdAt: seed.createdAt,
     showTimeSeparatorBefore: index === 0 && seed.showTimeSeparatorBefore,

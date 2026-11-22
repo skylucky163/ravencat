@@ -12,12 +12,7 @@ import {
 } from './GroupSpeakerPlanning';
 import { executeGroupSpeechTasks } from './GroupSpeechTaskExecution';
 import { registerGroupSpeechAbort, registerGroupSpeechInvocation } from './GroupSpeechExecutionAbort';
-import type { GroupSpeechPlan, GroupSpeechTask } from '../domain/GroupChat';
-import {
-  acknowledgeGroupInvocationInput,
-  notifyGroupInvocationSettled,
-  type GroupInvocationResult,
-} from './GroupAutoInvocationScheduler';
+import type { GroupSpeechPlan, GroupSpeechTask, GroupInvocationResult } from '../domain/GroupChat';
 
 export async function getActiveGroupSpeechPlan(groupId: string): Promise<GroupSpeechPlan | null> {
   return getChatGroupRuntimeDependencies().groups.getRunningSpeechPlan(groupId);
@@ -77,8 +72,8 @@ async function executeGroupInvocation(groupId: string): Promise<GroupInvocationR
     plan = claim.plan;
     previousInputUpperBoundMessageId = claim.previousInputUpperBoundMessageId;
   } else if (claim.plan.status === 'pending' && claim.plan.supersedesPlanId) {
-    // 用户消息换代建立的 pending successor 仍处于输入窗口：手动或自动召唤
-    // 都表示立即关闭窗口并激活该 plan；窗口起点在换代事务内已写入
+    // 用户消息换代建立的 pending successor 仍处于输入窗口：显式召唤
+    // 关闭窗口并激活该 plan；窗口起点在换代事务内已写入
     // last_included_message_id。
     plan = claim.plan;
     previousInputUpperBoundMessageId = plan.inputUpperBoundMessageId ?? 0;
@@ -120,21 +115,10 @@ async function executeGroupInvocation(groupId: string): Promise<GroupInvocationR
     if (!inputUpdated) {
       return lostActivation(plan.id);
     }
-    acknowledgeGroupInvocationInput(groupId, invocationContext.inputUpperBoundMessageId);
 
     // successor 激活前已从换代事务物化继承队列；fresh claim 的队列必然为空。
     const inheritedTasks = (await groups.listSpeechPlanTasks(plan.id))
       .filter((task) => task.status === 'queued');
-
-    if (invocationContext.currentUserMessages.length === 0 && inheritedTasks.length === 0) {
-      const completed = await groups.updateSpeechPlanStatus(plan.id, 'completed', {
-        expectedStatus: ['preparing'],
-      });
-      if (!completed) {
-        return lostActivation(plan.id);
-      }
-      return { success: false, error: '先发几句，再召唤 AI 参与吧', planId: null, outcome: 'no_messages' };
-    }
 
     const planning = await prepareGroupSpeechPlan(
       details,
@@ -213,7 +197,6 @@ async function executeGroupInvocation(groupId: string): Promise<GroupInvocationR
     if (typingStarted) {
       emitChatTypingStatusChanged(groupId, false);
     }
-    notifyGroupInvocationSettled(groupId);
     // completed / failed / superseded / terminated 均可能在本轮收尾时成为最终事实；
     // consumer 重读当前 active plan，不能沿用旧页面快照。
     emitChatGroupSpeechPlanChanged(groupId);

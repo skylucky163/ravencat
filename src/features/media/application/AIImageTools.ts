@@ -12,7 +12,7 @@ export const DownloadImageTool = {
   name: 'download_image',
   definition: {
     name: 'download_image',
-    description: '下载公开 HTTPS 图片到应用私有媒体库，返回 mediaAssetId；相册中不会显示。建议用 file_name 取有意义的名字，之后可用 query_downloaded_images 按文件名找回。可用于 send_image 发送图片消息、view_image、应用设置工具中的图片更换或收藏静态表情。下载成功不等于已发送或已看过图片。',
+    description: '下载公开 HTTPS 图片到应用私有媒体库，返回 mediaAssetId，相册中不显示。用 file_name 取有意义的名字，之后可用 query_downloaded_images 按文件名找回。返回的 ID 可交给 send_image 发送、view_image 查看，或用于应用设置工具的图片更换与收藏静态表情。',
     parameters: { type: 'object', properties: {
       url: { type: 'string', minLength: 1, maxLength: 2048 },
       file_name: { type: 'string', minLength: 1, maxLength: 120, description: '便于之后按关键词查找的图片文件名，如“雪山日落.jpg”；省略时由下载来源命名。' },
@@ -49,23 +49,46 @@ export const DownloadImageTool = {
 
 const queryDownloadedImagesParameters = { type: 'object', properties: {
   media_asset_id: { type: 'string', minLength: 1, maxLength: 120 },
-  keyword: { type: 'string', minLength: 1, maxLength: 120, description: '保存时文件名中的关键词，如“雪山”；按文字包含匹配，非语义搜索。' },
-  limit: { type: 'integer', minimum: 1, maximum: 50, description: '关键词查询每页数量，默认 20。' },
-  offset: { type: 'integer', minimum: 0, description: '关键词查询起点，默认 0；翻页使用上次返回的 nextOffset。' },
-}, oneOf: [{ required: ['media_asset_id'] }, { required: ['keyword'] }], additionalProperties: false } satisfies JsonSchema;
+  keyword: { type: 'string', minLength: 1, maxLength: 120, description: '保存时文件名中的关键词，如“雪山”；按文字包含匹配，非语义搜索。省略时列出最近下载的图片。' },
+  limit: { type: 'integer', minimum: 1, maximum: 50, description: '浏览或关键词查询每页数量，默认 20。' },
+  offset: { type: 'integer', minimum: 0, description: '浏览或关键词查询起点，默认 0；翻页使用上次返回的 nextOffset。' },
+}, not: { required: ['media_asset_id', 'keyword'] }, additionalProperties: false } satisfies JsonSchema;
 
 export const QueryDownloadedImagesTool = {
   name: 'query_downloaded_images',
   definition: {
     name: 'query_downloaded_images',
-    description: '查询自己下载过的私有图片。media_asset_id 精确查询，最多返回一张；或用 keyword 按保存的文件名做包含匹配，不分析图片内容。两者选一。返回媒体 ID、文件名、来源和下载时间；关键词结果按下载时间从新到旧分页，nextOffset 非空时可继续查询。查到不代表看过，需要确认内容时用 view_image。',
+    description: '查询自己下载过的私有图片。media_asset_id 精确查询，最多返回一张；或用 keyword 按保存的文件名做包含匹配。两个参数二选一，都省略时浏览最近下载的图片。返回媒体 ID、文件名、来源和下载时间，nextOffset 非空时继续查询。',
     parameters: queryDownloadedImagesParameters,
   } satisfies ToolDefinition,
   async execute(input: { media_asset_id?: string; keyword?: string; limit?: number; offset?: number }, context: AgentToolExecutionContext): Promise<AgentToolExecutionResult<unknown>> {
     throwIfAbortSignalAborted(context.abortSignal);
     const data = await aiImageRuntime.get().downloads.query(context.task.assistantId, input.media_asset_id !== undefined
       ? { mediaAssetId: input.media_asset_id }
-      : { keyword: input.keyword!, limit: input.limit ?? 20, offset: input.offset ?? 0 });
+      : { keyword: input.keyword, limit: input.limit ?? 20, offset: input.offset ?? 0 });
+    return { status: 'success', data, modelContent: JSON.stringify(data) };
+  },
+};
+
+const queryGeneratedImagesParameters = { type: 'object', properties: {
+  media_asset_id: { type: 'string', minLength: 1, maxLength: 120 },
+  keyword: { type: 'string', minLength: 1, maxLength: 120, description: '生成时保存的文件名关键词，按文字包含匹配，非语义搜索；省略时列出最近生成的图片。' },
+  limit: { type: 'integer', minimum: 1, maximum: 50, description: '浏览或关键词查询每页数量，默认 20。' },
+  offset: { type: 'integer', minimum: 0, description: '浏览或关键词查询起点，默认 0；翻页使用上次返回的 nextOffset。' },
+}, not: { required: ['media_asset_id', 'keyword'] }, additionalProperties: false } satisfies JsonSchema;
+
+export const QueryGeneratedImagesTool = {
+  name: 'query_generated_images',
+  definition: {
+    name: 'query_generated_images',
+    description: '查询自己通过 generate_image 生成并保存的私有图片。media_asset_id 精确查询，最多返回一张；或用 keyword 按保存时的文件名做包含匹配，只看文件名。两个参数二选一，都省略时浏览最近生成的图片。返回媒体 ID、文件名和生成时间，按生成时间从新到旧分页，nextOffset 非空时继续查询。查看画面用 view_image，发送用 send_image。',
+    parameters: queryGeneratedImagesParameters,
+  } satisfies ToolDefinition,
+  async execute(input: { media_asset_id?: string; keyword?: string; limit?: number; offset?: number }, context: AgentToolExecutionContext): Promise<AgentToolExecutionResult<unknown>> {
+    throwIfAbortSignalAborted(context.abortSignal);
+    const data = await aiImageRuntime.get().generated.query(context.task.assistantId, input.media_asset_id !== undefined
+      ? { mediaAssetId: input.media_asset_id }
+      : { keyword: input.keyword, limit: input.limit ?? 20, offset: input.offset ?? 0 });
     return { status: 'success', data, modelContent: JSON.stringify(data) };
   },
 };
@@ -74,7 +97,7 @@ export const ViewImageTool = {
   name: 'view_image',
   definition: {
     name: 'view_image',
-    description: '主动查看图片或头像，沿用自己配置的视觉能力。media 使用 media_asset_id；user_avatar/self_avatar 不需要 selector；assistant_avatar 用 selector 指定其他 AI 的 id 或名称，重名时返回候选。动态图片仅提供单帧，不能据此声称理解完整动画。',
+    description: '主动查看图片或头像，沿用自己配置的视觉能力。media 使用 media_asset_id；user_avatar/self_avatar 不需要 selector；assistant_avatar 用 selector 指定其他 AI 的 id 或名称，重名时返回候选。动态图片只提供当前单帧，理解范围以这一帧为准。',
     parameters: { type: 'object', properties: {
       target: { type: 'string', enum: ['media', 'user_avatar', 'self_avatar', 'assistant_avatar'] },
       media_asset_id: { type: 'string', minLength: 1, maxLength: 120 },

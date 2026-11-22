@@ -42,6 +42,7 @@
 | [react-native-gesture-handler](https://www.npmjs.com/package/react-native-gesture-handler/v/2.28.0) | 2.28.0 | MIT | 运行依赖 |
 | [react-native-markdown-renderer](https://www.npmjs.com/package/react-native-markdown-renderer/v/4.0.1) | 4.0.1 | MIT | 运行依赖 |
 | [react-native-reanimated](https://www.npmjs.com/package/react-native-reanimated/v/4.1.6) | 4.1.6 | MIT | 运行依赖 |
+| [react-native-reorderable-list](https://www.npmjs.com/package/react-native-reorderable-list/v/0.18.3) | 0.18.3 | MIT | 运行依赖 |
 | [react-native-safe-area-context](https://www.npmjs.com/package/react-native-safe-area-context/v/5.6.2) | 5.6.2 | MIT | 运行依赖 |
 | [react-native-screens](https://www.npmjs.com/package/react-native-screens/v/4.16.0) | 4.16.0 | MIT | 运行依赖 |
 | [react-native-svg](https://www.npmjs.com/package/react-native-svg/v/15.12.1) | 15.12.1 | MIT | 运行依赖 |

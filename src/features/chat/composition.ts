@@ -28,12 +28,17 @@ import { REPLY_TASK_PROMPT_DEFINITIONS } from './reply/application/ReplyTaskProm
 import type { PromptDefinitionDescriptor } from '@shared/prompt';
 import type { DatabaseTransactionExecutor } from '@platform/persistence';
 import { groupChatRepository } from './group/infrastructure/SQLiteGroupChatRepository';
+import { openDeepSeekArchive } from './messages/infrastructure/DeepSeekExportClient';
 import type {
   CommitGroupAvatarMediaAssetReferenceInput,
   GroupAvatarMediaAssetMigrationCandidate,
 } from './group/domain/GroupChatRepository';
 
 export { configureChatBubbleSkins } from './appearance/application/ChatBubbleSkinRuntime';
+export {
+  configureRoleApplicationCards, createRoleApplicationCardInTransaction, deliverRoleApplicationCard, readRoleApplicationNotice,
+} from './messages/application/RoleApplicationCards';
+export type { AssistantRoleApplication } from './messages/domain/RoleApplicationCard';
 export { SQLiteChatBubbleSkinRepository } from './appearance/infrastructure/SQLiteChatBubbleSkinRepository';
 export { configureChatTextDrafts } from './conversation/application/ChatTextDraftRuntime';
 export { SQLiteChatTextDraftRepository } from './conversation/infrastructure/SQLiteChatTextDraftRepository';
@@ -150,9 +155,12 @@ export interface ChatRuntimeDependencies {
   assistantDirectory: ChatAssistantDirectory;
   currentUserDirectory: ChatGroupRuntimeDependencies['currentUserDirectory'];
   captureGroupHistory: ChatGroupRuntimeDependencies['captureHistory'];
+  callTranscriptSearch: ChatMessageRuntimeDependencies['callTranscriptSearch'];
   canonicalUserMessage?: ChatMessageRuntimeDependencies['canonicalUserMessage'];
   regeneration?: ChatMessageRuntimeDependencies['regeneration'];
   turnPresentation: ChatMessageRuntimeDependencies['turnPresentation'];
+  turnCancellation: ChatMessageRuntimeDependencies['turnCancellation'];
+  userReplyRequest: ChatMessageRuntimeDependencies['userReplyRequest'];
   legacyChatAttachments?: ChatMessageRuntimeDependencies['legacyChatAttachments'];
   database: ChatConversationRuntimeDependencies['database'];
   media: ChatReplyRuntimeDependencies['media'];
@@ -175,9 +183,13 @@ export function configureChatRuntimeDependencies(
   });
   configureChatMessageRuntime({
     messages: dependencies.repositories.messages,
+    openDeepSeekArchive,
+    callTranscriptSearch: dependencies.callTranscriptSearch,
     assistantDirectory: dependencies.assistantDirectory,
     turns: dependencies.repositories.turns,
     turnPresentation: dependencies.turnPresentation,
+    turnCancellation: dependencies.turnCancellation,
+    userReplyRequest: dependencies.userReplyRequest,
     legacyChatAttachments: dependencies.legacyChatAttachments,
     canonicalUserMessage: dependencies.canonicalUserMessage,
     regeneration: dependencies.regeneration,
@@ -275,6 +287,9 @@ export { configureChatImageModels, resolveChatRecognitionModel, notifyChatImageM
 export { chatImageSettingsRepository } from './reply/infrastructure/SQLiteChatImageSettingsRepository';
 
 export { recordAssistantNicknameChangeInTransaction } from './messages/application/RecordAssistantNicknameChange';
+export { recordAssistantRecycleLifecycleInTransaction } from './messages/application/RecordAssistantRecycleLifecycle';
+export { suspendAssistantChatInTransaction, purgeAssistantChatInTransaction } from './conversation/infrastructure/AssistantChatLifecycle';
+export { abortGroupSpeechTasks } from './group/application/GroupSpeechExecutionAbort';
 export { createSharedMomentSendIntent } from './reply/agent/SharedMomentSendIntent';
 export { configureChatCodePreview } from './messages/application/ChatCodePreview';
 export { chatCodePreviewRepository, readChatCodeCoverFileReferences } from './messages/infrastructure/SQLiteChatCodePreviewRepository';

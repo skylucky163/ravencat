@@ -81,7 +81,9 @@ export default function useConnectionTest({
             ? 'Temperature'
             : paramError.paramName === 'topP'
               ? 'Top P'
-              : 'Max Tokens';
+              : paramError.paramName === 'reasoningEffort'
+                ? '思考强度或思维链开关'
+                : paramError.paramName === 'maxTokens' ? 'Max Tokens' : '模型参数';
           const suggestion = paramError.allowedValue
             ? `请将 ${paramDisplayName} 设置为 ${paramError.allowedValue} 后再测试。`
             : `请调整 ${paramDisplayName} 后再测试。`;

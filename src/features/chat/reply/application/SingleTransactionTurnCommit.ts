@@ -160,7 +160,8 @@ export function createSingleTransactionTurnCommit(
     }
 
     const tracksArrival = Boolean(aiConfig?.id && aiConfig.name && !runtimeContext.suppressAIMessageReceivedEvent);
-    const messageIds = assistantSegments.filter(message => !committedOutputIds.has(message.id)).map((message) => message.id);
+    const firstReplacement = run.kind === 'regenerate' ? assistantSegments[0] : undefined;
+    const messageIds = assistantSegments.filter(message => message !== firstReplacement && !committedOutputIds.has(message.id)).map((message) => message.id);
     const segmentTotal = assistantSegments.length;
     let deliveryInterrupted = false;
     try {
@@ -176,7 +177,7 @@ export function createSingleTransactionTurnCommit(
       callbacks.notifyUI?.(sessionId);
       for (const [segmentIndex, message] of assistantSegments.entries()) {
         if (!committedOutputIds.has(message.id)) {
-          if (presentation && !await presentation.publishSegment(message)) {
+          if (presentation && !await presentation.publishSegment(message, message === firstReplacement)) {
             deliveryInterrupted = true;
             break;
           }

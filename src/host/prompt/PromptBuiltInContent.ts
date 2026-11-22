@@ -25,11 +25,23 @@ export const DEFAULT_CORE_SYSTEM_PROMPTS = [
 /** 图片附件直传时的可选提醒；OCR 与工具观察已有自己的结果说明。 */
 export const DEFAULT_IMAGE_GROUNDING_PROMPT = '仅描述图片中能够确认的内容；无法读取或看清时请直接说明，不要猜测。';
 
-export const DEFAULT_PARAGRAPH_BREAKS_PROMPT = '按语义自然分段，段落之间空一行；同一段内不要逐句换行，简短回复无需强行分段。';
+export const DEFAULT_PARAGRAPH_BREAKS_PROMPT = '按语义自然分段，段落之间空一行。';
 
 export const DEFAULT_ACTION_DESCRIPTION_PROMPT = '回复中适当加入动作或神态描写，写在（）内。';
 
-/** 换行与动作描写等正文风格规则共用；不进入口语、摘要或内部决策任务。 */
+export const DEFAULT_FORMAT_GUIDELINES_PROMPT = [
+  '【输出格式规范】',
+  'RavenCat 按 Markdown 语法渲染消息，请遵守以下约定：',
+  '1. 普通聊天自然表达即可。需要排版时使用正常 Markdown，不要把普通说明文字放进代码围栏。',
+  '2. 输出多行代码时，使用独立成行的 Markdown 代码围栏，并尽量注明语言，例如 html、javascript、python。代码开始前写起始围栏，代码结束后写对应的闭合围栏。',
+  '3. 围栏使用至少三个相同的反引号或波浪线，开头和结尾使用同一种字符；结束围栏必须单独成行，长度不能短于起始围栏。如果源码本身包含同样长度的围栏，应使用更长的外层围栏。',
+  '4. RavenCat 会把代码围栏独立显示为代码卡片，围栏内部的文字均视作源码。代码结束后先关闭围栏，再输出普通解释。',
+  '5. 用户要求制作可预览的 HTML 网页时，请把完整 HTML 源码放进标记为 html 的代码围栏中。RavenCat 会将围栏已闭合的 HTML 代码块提供给用户打开网页预览；围栏闭合不代表 HTML 或 JavaScript 没有错误。',
+  '6. 如果代码围栏没有正确闭合，客户端可能把后续文字继续当作代码，并将代码卡片标记为未完成。因此请检查代码围栏的完整性。',
+  '7. 这些规则只约束输出格式，不要求普通聊天使用代码块，也不改变角色设定和自然表达。用户明确要求展示原始 Markdown、错误语法示例或特殊文本格式时，按任务需要输出。',
+].join('\n');
+
+/** 换行、动作描写与输出格式等正文规则共用；不进入口语、摘要或内部决策任务。 */
 export const PARAGRAPH_BREAK_SCENARIOS = [
   'chat.private_reply', 'chat.group_member_reply', 'ledger.reply', 'raven_cat.ai_schedule_trigger',
 ] as const;

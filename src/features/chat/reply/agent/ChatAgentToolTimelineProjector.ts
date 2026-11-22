@@ -146,6 +146,7 @@ export class ChatAgentToolTimelineProjector {
           : 'completed',
         toolNames,
         toolDisplayNames: this.resolveToolDisplayNames(timelineToolCalls),
+        outcomes,
         extra: { stepIndex, cachedTokens: step.turn.usage.cachedTokens },
       });
     }
@@ -198,6 +199,7 @@ export class ChatAgentToolTimelineProjector {
         status: 'failed',
         toolNames,
         toolDisplayNames: displayNames,
+        outcomes: step.completedOutcomes.values(),
         displayText: cancelled
           ? `调用已取消：${joinToolDisplayNames(displayNames)}`
           : undefined,

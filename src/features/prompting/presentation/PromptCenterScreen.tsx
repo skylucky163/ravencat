@@ -1,6 +1,6 @@
 /** 默认页只表达注入顺序；正文、权限和列表留在各自详情页。 */
 import { getAssistantDisplayName, updateAIAssistantSettings } from '@features/assistants';
-import { HeaderAddButton, InputField, KeyboardAvoidingContainer, ToggleDetailRow, ToggleField, showAppDialog, type ToggleFieldProps } from '@shared/ui';
+import { EmptyState, HeaderAddButton, InputField, KeyboardAvoidingContainer, ToggleDetailRow, ToggleField, showAppDialog, type ToggleFieldProps } from '@shared/ui';
 import { CHAT_PROMPT_READING_FLOW, type ChatPromptReadingStep } from '@shared/prompt';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -10,16 +10,16 @@ import { GlassSurface, ThemedSurface, useTheme, useThemedStyles } from '@shared/
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import ModalSheet from '@shared/ui/ModalSheet';
 import { getPromptCenterSnapshot } from '../application/GetPromptCenterSnapshot';
-import { deleteDefaultUserPrompt, getAgentRegistrySettings, getDefaultPromptEditor, getPromptAssistant, moveDefaultUserPrompt, resetDefaultDefinition, saveDefaultDefinition, saveDefaultUserPrompt, setAgentRegistryAssistantIncluded, setDefaultPromptSwitch } from '../application/ManagePromptDefaults';
+import { deleteDefaultUserPrompt, getAgentRegistrySettings, getDefaultPromptEditor, getPromptAssistant, listLegacyGroupAdminPrompts, reorderDefaultUserPrompts, resetDefaultDefinition, saveDefaultDefinition, saveDefaultUserPrompt, setAgentRegistryAssistantIncluded, setDefaultPromptSwitch } from '../application/ManagePromptDefaults';
 import { applyAssistantDefinitionGlobally, applyAssistantDirectToolsGlobally, createAssistantUserPrompt, deleteAssistantUserPrompt, getAssistantPromptEditorDetails, getSummaryPromptGenerationState, reorderAssistantUserPrompts, resetAssistantDefinitionOverride, saveAssistantDefinitionOverride, saveAssistantDefinitionState, setAssistantToolPermission, setAssistantDirectToolExposure, updateAssistantUserPrompt } from '../application/ManageAssistantPrompts';
 import type { AssistantPromptEditorDetails } from '../application/ManageAssistantPrompts';
 import type { PromptAssistantOption, PromptAssistantSummary } from '../application/PromptingRuntimeDependencies';
-import type { DefaultUserPrompt } from '../domain/PromptDefaults';
+import type { DefaultUserPrompt, LegacyGroupAdminPrompt } from '../domain/PromptDefaults';
 import type { AssistantUserPrompt } from '../domain/Prompting';
-import { CustomPromptRow } from './CustomPromptRow';
+import { CustomPromptList } from './CustomPromptList';
 import { createPromptCenterStyles } from './promptCenterStyles';
 
-type RuleDefinitionId = 'foundation.default_core' | 'output.paragraph_breaks' | 'output.action_description' | 'input.image_grounding' | 'internal.chat_summary' | 'internal.chat_secondary_summary' | 'internal.group_chat_summary' | 'internal.group_chat_secondary_summary' | 'internal.vision_ocr';
+type RuleDefinitionId = 'foundation.default_core' | 'output.paragraph_breaks' | 'output.action_description' | 'output.format_guidelines' | 'input.image_grounding' | 'internal.chat_summary' | 'internal.chat_secondary_summary' | 'internal.group_chat_summary' | 'internal.group_chat_secondary_summary' | 'internal.vision_ocr' | 'scenario.group_admin_schedule';
 export type PromptCenterPage = { kind: 'overview' } | { kind: 'conditional' } | { kind: 'other' } | { kind: 'otherRules' } | { kind: 'registry' } | { kind: 'custom' } | { kind: 'tools' } | { kind: 'package'; id: string } | { kind: 'editor'; definitionId: RuleDefinitionId } | { kind: 'userEditor'; promptId?: string } | { kind: 'persona' };
 type Snapshot = Awaited<ReturnType<typeof getDefaultPromptEditor>>;
 type ToggleSetting = Pick<ToggleFieldProps, 'value' | 'onValueChange' | 'disabled' | 'accessibilityLabel'>;
@@ -27,14 +27,16 @@ const RULE_NAMES: Record<RuleDefinitionId, string> = {
   'foundation.default_core': '系统基础规则',
   'output.paragraph_breaks': '换行规则',
   'output.action_description': '动作描写规则',
+  'output.format_guidelines': '输出格式规范',
   'input.image_grounding': '图片防幻觉提醒',
   'internal.chat_summary': '一级摘要提示词',
   'internal.chat_secondary_summary': '二级摘要提示词',
   'internal.group_chat_summary': '群聊一级摘要提示词',
   'internal.group_chat_secondary_summary': '群聊二级摘要提示词',
   'internal.vision_ocr': '图片识别提示词',
+  'scenario.group_admin_schedule': '群聊管理员调度提示词',
 };
-const PACKAGE_NAMES: Record<string, string> = { kimiOfficial: 'Kimi 官方工具', deepseekOfficial: 'DeepSeek 官方工具', webTools: '联网工具包', media: '图片', applicationSettings: '应用设置工具', groupChat: '群聊', protocol: '协议空间', moments: '时刻', wallet: '羽库记账', calls: '通话', memory: '记忆', chat: '语音', stickers: '表情包', togetherListening: '一起听', host: '主理 AI 专属' };
+const PACKAGE_NAMES: Record<string, string> = { kimiOfficial: 'Kimi 官方工具', deepseekOfficial: 'DeepSeek 官方工具', webTools: '联网工具包', media: '图片', assistants: '人机关系工具', applicationSettings: '应用设置工具', groupChat: '群聊', protocol: '协议空间', moments: '时刻', wallet: '羽库记账', calls: '通话', memory: '记忆', chat: '语音', stickers: '表情包', togetherListening: '一起听', host: '主理 AI 专属' };
 
 /** 展示按产品用途分包；摘要工具仍由 Chat 拥有，主理工具统一在专属包管理。 */
 function getToolPackageId(tool: Snapshot['tools'][number]): string {
@@ -71,17 +73,20 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
   const mounted = useRef(false);
   const [content, setContent] = useState('');
   const ruleId = page.kind === 'editor' ? page.definitionId : 'foundation.default_core';
-  // 群摘要正文只有全局版本，编辑时忽略当前选中的 AI。
+  // 全局正文的读写不受当前选中的 AI 影响。
   const globalScopedRule = page.kind === 'editor' && catalog.definitions.find((item) => item.id === ruleId)?.editScope === 'global';
   const scopedAssistantId = globalScopedRule ? undefined : assistantId;
   const summaryRule = ruleId === 'internal.chat_summary' || ruleId === 'internal.chat_secondary_summary';
   const groupSummaryRule = ruleId === 'internal.group_chat_summary' || ruleId === 'internal.group_chat_secondary_summary';
+  const groupAdminRule = ruleId === 'scenario.group_admin_schedule';
   const readSummaryState = page.kind === 'other';
   const [summaryState, setSummaryState] = useState<Awaited<ReturnType<typeof getSummaryPromptGenerationState>> | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(false);
+  const [legacyGroupPrompts, setLegacyGroupPrompts] = useState<LegacyGroupAdminPrompt[]>([]);
+  const [legacyGroupSelectorOpen, setLegacyGroupSelectorOpen] = useState(false);
   const [directToolsExpanded, setDirectToolsExpanded] = useState(false);
   useEffect(() => {
     mounted.current = true;
@@ -106,6 +111,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
         const editorDetails = scopedAssistantId ? await getAssistantPromptEditorDetails(scopedAssistantId, next) : null;
         const registry = page.kind === 'registry' ? await getAgentRegistrySettings() : [];
         const summary = scopedAssistantId && readSummaryState ? await getSummaryPromptGenerationState(scopedAssistantId) : null;
+        const groupPrompts = groupAdminRule ? await listLegacyGroupAdminPrompts() : [];
         if (active) {
           if (!initialized.current) {
             if (page.kind === 'editor') {
@@ -122,11 +128,12 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
             initialized.current = true;
           }
           setSnapshot(next); setAssistant(selected); setDetails(editorDetails); setRegistrySettings(registry); setSummaryState(summary); setLoadError(false);
+          setLegacyGroupPrompts(groupPrompts);
         }
       } catch (error) { if (active) { setLoadError(true); showAppDialog({ title: '读取失败', message: errorMessage(error), tone: 'error' }); } }
     })();
     return () => { active = false; };
-  }, [scopedAssistantId, catalog, page, refreshRevision, readSummaryState]);
+  }, [scopedAssistantId, catalog, page, refreshRevision, readSummaryState, groupAdminRule]);
   async function mutate(action: () => Promise<unknown>, after?: () => void) {
     if (busy) return;
     setBusy(true);
@@ -190,17 +197,16 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
       ? updateAssistantUserPrompt({ ...(prompt as AssistantUserPrompt), enabled })
       : saveDefaultUserPrompt({ ...prompt, enabled }));
   }
-  function movePrompt(prompt: DefaultUserPrompt | AssistantUserPrompt, index: number, offset: number) {
-    const target = prompts[index + offset];
-    if (target) void mutate(() => assistantId
-      ? reorderAssistantUserPrompts(prompt as AssistantUserPrompt, target as AssistantUserPrompt)
-      : moveDefaultUserPrompt(prompt, target));
+  async function reorderPrompts(promptIds: readonly string[]) {
+    await mutate(() => assistantId
+      ? reorderAssistantUserPrompts(assistantId, promptIds)
+      : reorderDefaultUserPrompts(promptIds));
   }
   function deletePrompt(prompt: DefaultUserPrompt) {
     showAppDialog({ title: assistantId ? '删除提示词' : '删除全局提示词', message: assistantId ? `删除“${prompt.name}”？` : `删除“${prompt.name}”后，所有 AI 将不再注入这条常驻提示词。`, buttons: [
       { text: '取消', style: 'cancel' },
       { text: '删除', style: 'destructive', onPress: () => {
-        void mutate(() => assistantId ? deleteAssistantUserPrompt(prompt.id, assistantId) : deleteDefaultUserPrompt(prompt.id));
+        void mutate(() => assistantId ? deleteAssistantUserPrompt(prompt.id, assistantId) : deleteDefaultUserPrompt(prompt.id), onBack);
       } },
     ] });
   }
@@ -245,9 +251,10 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
   }
   const overviewRow = (label: string, description: string, action?: () => void, number?: number | null, disabled = false, toggle?: ToggleSetting) =>
     row(label, description, action, number, disabled, toggle, true);
-  function injectionSetting(definitionId: 'output.paragraph_breaks' | 'output.action_description' | 'input.image_grounding'): ToggleSetting {
+  function injectionSetting(definitionId: 'output.paragraph_breaks' | 'output.action_description' | 'output.format_guidelines' | 'input.image_grounding'): ToggleSetting {
     const enabled = definitionId === 'output.paragraph_breaks' ? details?.paragraphBreaksEnabled ?? false
       : definitionId === 'output.action_description' ? details?.actionDescriptionEnabled ?? false
+      : definitionId === 'output.format_guidelines' ? details?.formatGuidelinesEnabled ?? false
       : details?.imageGroundingEnabled ?? true;
     return { accessibilityLabel: `注入${RULE_NAMES[definitionId]}`, disabled: busy || !assistant, value: enabled,
       onValueChange: (value) => { void mutate(() => saveAssistantDefinitionState({ assistantId: assistantId!, definitionId, enabled: value })); } };
@@ -260,7 +267,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
   function readingStep(step: ChatPromptReadingStep, position: number) {
     switch (step) {
       case 'foundation': return overviewRow('系统基础规则', '运行环境与通用行为边界', () => onOpenPage({ kind: 'editor', definitionId: 'foundation.default_core' }), position);
-      case 'other_rules': return overviewRow('其他规则', '换行与动作描写 · 逐条开关，按需注入', () => onOpenPage({ kind: 'otherRules' }), position);
+      case 'other_rules': return overviewRow('其他规则', '换行、动作描写与输出格式 · 逐条开关，按需注入', () => onOpenPage({ kind: 'otherRules' }), position);
       case 'persona': return <ThemedSurface variant="card" style={styles.card}>
         <View style={styles.cardHeader}><Text style={styles.number}>{String(position).padStart(2, '0')}</Text><Text style={styles.title}>人设</Text></View>
         {row('AI 人设', assistant ? '编辑当前人设 · 与 AI 个人主页同步' : '当前未绑定 AI，无法编辑', assistant ? () => onOpenPage({ kind: 'persona' }) : undefined, undefined, !assistant)}
@@ -295,7 +302,13 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
   }
   const readingSections = { identity: '先认识彼此', capabilities: '可用的能力', context: '从过去，回到现在' };
   // 页面规则说明挂在标题后的问号里，正文只留可操作内容。
-  const headerHelp = page.kind === 'conditional' ? {
+  const headerHelp = page.kind === 'custom' ? {
+    sections: [
+      { title: '编辑与排序', body: '点击名称编辑全文，长按整张卡片拖动，松手插入高亮位置。拖到排序区边缘可以自动滚动，列表顺序就是提示词的拼接顺序。删除入口在编辑页。' },
+      { title: '生效范围', body: assistant ? `这里的修改只对 ${getAssistantDisplayName(assistant)} 生效。上方“全局常驻提示词”是独立管理入口，不参与当前列表排序。` : '这里是全局常驻提示词，修改、关闭或删除会影响所有 AI。' },
+      { title: '拼接顺序', body: '全局常驻提示词先按全局列表顺序注入，再拼接满足条件的 AI 专属提示词。两个列表分别排序。' },
+    ],
+  } : page.kind === 'conditional' ? {
     sections: [
       { title: '触发与编辑', body: '按功能管理满足条件时才使用的提示词。触发条件由功能决定，正文可以修改或恢复默认。' },
       { title: '图片提醒', body: '仅在未配置 OCR、聊天图片附件直接传给模型时附加；OCR 成功、识别失败或工具取得的画面均不追加。默认开启，关闭后不增加提醒文字。' },
@@ -313,6 +326,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
       { title: '生效条件', body: '每项提示词随所属功能的设置生效，具体用途与启用条件可在对应编辑页查看。' },
       { title: '群聊摘要', body: '群摘要没有所属 AI，只有全局正文；在这里修改会影响所有群，不借用任何成员或管理员的专属正文。' },
       { title: '图片识别', body: '仅在该 AI 绑定了视觉识别模型时参与图片转述；正文按 AI 保存，未单独覆盖时使用全局默认，输出格式不受正文影响。' },
+      { title: '群聊管理员', body: '用户召唤且没有明确 @ 成员时，管理员按这段正文决定本轮发言人；回复格式由运行时锁定。正文所有群共用一份，管理员模型与上下文条数仍按群配置。' },
     ],
   } : page.kind === 'editor' && groupSummaryRule ? {
     sections: [
@@ -334,6 +348,7 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
       ...(assistant ? [{ title: '全局应用', body: '直接使用当前编辑框的正文，无需先保存，一次覆盖所有现有 AI 的这一项提示词。保留每位 AI 的开关和其他提示词；之后新增的 AI 仍使用全局默认。' }] : []),
       ...(ruleId === 'output.paragraph_breaks' ? [{ title: '注入条件', body: '默认关闭。开启后在普通聊天、群聊、记账回应与日程消息的稳定提示词中注入，紧随系统基础规则、位于 AI 人设之前；动作描写规则开启时排在其后。通话、OCR、摘要和内部决策任务不使用。' }] : []),
       ...(ruleId === 'output.action_description' ? [{ title: '注入条件', body: '默认关闭。开启后在普通聊天、群聊、记账回应与日程消息的稳定提示词中注入，排在换行规则之后、AI 人设之前；通话、OCR、摘要和内部决策任务不使用。' }] : []),
+      ...(ruleId === 'output.format_guidelines' ? [{ title: '注入条件', body: '默认关闭。说明 Markdown、代码卡片及网页预览规则；开启后在普通聊天、群聊、记账回应与日程消息的稳定提示词中注入，排在已开启的换行和动作描写规则之后、AI 人设之前。三条规则独立控制；通话、OCR、摘要和内部决策任务不使用。' }] : []),
       ...(ruleId === 'input.image_grounding' ? [{ title: '注入条件', body: '默认开启，仅在未配置 OCR 且聊天图片附件直接传图时附加；关闭后完全省略，不改变图片发送。' }] : []),
     ],
   } : page.kind === 'registry' ? {
@@ -361,7 +376,11 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
   </TouchableOpacity>;
   return <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}><KeyboardAvoidingContainer enabled={page.kind === 'editor' || page.kind === 'userEditor' || page.kind === 'persona'} style={styles.screen}>
     <NavigationHeader title={title} onGoBack={onBack} rightButton={rightButton} help={headerHelp} />
-    {assistantListError ? <Text style={styles.description}>未能读取 AI 列表，请返回后重新打开。</Text> : !snapshot ? loadError ? <Text style={styles.description}>未能读取提示词配置，请返回后重新打开。</Text> : <ActivityIndicator style={styles.loading} /> : <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+    {assistantListError ? <Text style={styles.description}>未能读取 AI 列表，请返回后重新打开。</Text> : !snapshot ? loadError ? <Text style={styles.description}>未能读取提示词配置，请返回后重新打开。</Text> : <ActivityIndicator style={styles.loading} /> : page.kind === 'custom' ? <View style={styles.customPage}>
+      {assistant && <View style={styles.customHeader}>{row('全局常驻提示词', `${snapshot.userPrompts.length} 条`, onOpenGlobalPrompts)}</View>}
+      <CustomPromptList prompts={prompts} disabled={busy} onEdit={openUser} onToggle={togglePrompt} onReorder={reorderPrompts}
+        emptyState={<EmptyState title={assistantId ? '暂无自定义提示词' : '暂无全局常驻提示词'} />} />
+    </View> : <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
       {page.kind === 'overview' && <>
         <View style={styles.hero}><Text style={styles.heading}>从身份，到此刻</Text><Text style={styles.description}>单聊、群聊、记账回应和日程唤醒共用以下顺序。
 有内容且满足场景条件的条目才会带入。</Text></View>
@@ -399,7 +418,12 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
             value={details?.actionDescriptionEnabled ?? false} disabled={busy || !assistant}
             toggleAccessibilityLabel="注入动作描写规则"
             onValueChange={(enabled) => { void mutate(() => saveAssistantDefinitionState({ assistantId: assistantId!, definitionId: 'output.action_description', enabled })); }}
-            onOpenDetail={() => onOpenPage({ kind: 'editor', definitionId: 'output.action_description' })} />
+            onOpenDetail={() => onOpenPage({ kind: 'editor', definitionId: 'output.action_description' })} divider />
+          <ToggleDetailRow title="输出格式规范" description="说明 RavenCat 的 Markdown、代码卡片及网页预览规则，帮助 AI 正确组织输出格式。"
+            value={details?.formatGuidelinesEnabled ?? false} disabled={busy || !assistant}
+            toggleAccessibilityLabel="注入输出格式规范"
+            onValueChange={(enabled) => { void mutate(() => saveAssistantDefinitionState({ assistantId: assistantId!, definitionId: 'output.format_guidelines', enabled })); }}
+            onOpenDetail={() => onOpenPage({ kind: 'editor', definitionId: 'output.format_guidelines' })} />
         </ThemedSurface>
         {!assistant && <Text style={styles.description}>选择 AI 后可调整开关；这里编辑的是全局默认正文。</Text>}
       </>}
@@ -411,6 +435,8 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
         {overviewRow('群聊二级摘要提示词', '从群一级摘要提炼 · 无所属 AI，只改全局正文', () => onOpenPage({ kind: 'editor', definitionId: 'internal.group_chat_secondary_summary' }))}
         <Text style={styles.section}>图片</Text>
         {overviewRow('图片识别提示词', '为这位 AI 绑定视觉识别模型后生效 · 输出格式由运行时固定', () => onOpenPage({ kind: 'editor', definitionId: 'internal.vision_ocr' }))}
+        <Text style={styles.section}>群聊</Text>
+        {overviewRow('群聊管理员调度提示词', '用户召唤时决定哪些成员发言 · 所有群共用一份正文', () => onOpenPage({ kind: 'editor', definitionId: 'scenario.group_admin_schedule' }))}
       </>}
       {page.kind === 'registry' && <>
         {!registrySettings.length && <Text style={styles.body}>暂无 AI，添加后可在这里选择。</Text>}
@@ -426,23 +452,19 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
       </>}
       {(page.kind === 'editor' || page.kind === 'userEditor' || page.kind === 'persona') && <>
         {page.kind === 'userEditor' && !assistantId && <Text style={styles.description}>全局常驻提示词 · 保存后对所有 AI 生效。</Text>}
-        {page.kind === 'editor' && (ruleId === 'output.paragraph_breaks' || ruleId === 'output.action_description' || ruleId === 'input.image_grounding') && row('注入提示词', assistant ? '仅对当前 AI 生效' : '选择 AI 后可调整', undefined, undefined, false, injectionSetting(ruleId))}
+        {page.kind === 'editor' && (ruleId === 'output.paragraph_breaks' || ruleId === 'output.action_description' || ruleId === 'output.format_guidelines' || ruleId === 'input.image_grounding') && row('注入提示词', assistant ? '仅对当前 AI 生效' : '选择 AI 后可调整', undefined, undefined, false, injectionSetting(ruleId))}
         {page.kind === 'userEditor' && <InputField label="提示词名称" placeholder="提示词名称" value={name} onChangeText={setName} editable={!busy} />}
+        {groupAdminRule && legacyGroupPrompts.length > 0
+          && row('选择旧群正文', '带入编辑框，保存后应用到所有群', () => setLegacyGroupSelectorOpen(true))}
         <InputField label="提示词正文" placeholder="写下你的提示词…" multiline
           value={content} onChangeText={setContent} inputStyle={styles.editor} editable={!busy} />
         {page.kind === 'editor' && <View style={styles.actions}>
           <TouchableOpacity accessibilityRole="button" disabled={busy} onPress={resetRule} style={styles.actionButton}><Text style={styles.action}>恢复默认</Text></TouchableOpacity>
-          {assistant && <TouchableOpacity accessibilityRole="button" accessibilityLabel="全局应用提示词" disabled={busy} onPress={applyRuleGlobally} style={styles.actionButton}><Text style={styles.action}>全局应用</Text></TouchableOpacity>}
+          {assistant && !globalScopedRule && <TouchableOpacity accessibilityRole="button" accessibilityLabel="全局应用提示词" disabled={busy} onPress={applyRuleGlobally} style={styles.actionButton}><Text style={styles.action}>全局应用</Text></TouchableOpacity>}
         </View>}
         <TouchableOpacity disabled={busy} style={styles.button} onPress={saveEditor}><Text style={styles.buttonText}>{busy ? '保存中…' : '保存'}</Text></TouchableOpacity>
-      </>}
-      {page.kind === 'custom' && <>
-        <Text style={styles.description}>长按卡片上下移动，列表顺序就是这些提示词的拼接顺序。{assistant ? `下面的修改只对 ${getAssistantDisplayName(assistant)} 生效。` : '这里是无 AI 时添加的全局常驻提示词，修改、关闭或删除会影响所有 AI。'}</Text>
-        {assistant && row('全局常驻提示词', `${snapshot.userPrompts.length} 条 · 单独管理对所有 AI 生效的提示词`, onOpenGlobalPrompts)}
-        {!prompts.length && <ThemedSurface variant="card" style={styles.card}><Text style={styles.title}>留一点空间给你的想法</Text><Text style={styles.body}>还没有自定义提示词，点击右上角添加。</Text></ThemedSurface>}
-        {prompts.map((prompt, index) => <CustomPromptRow key={prompt.id} prompt={prompt} index={index} disabled={busy} styles={styles}
-          onEdit={() => openUser(prompt)} onToggle={(enabled) => togglePrompt(prompt, enabled)}
-          onMove={(offset) => movePrompt(prompt, index, offset)} onDelete={() => deletePrompt(prompt)} />)}
+        {page.kind === 'userEditor' && editingPrompt && <TouchableOpacity accessibilityRole="button" disabled={busy} style={styles.actionButton}
+          onPress={() => deletePrompt(editingPrompt)}><Text style={styles.danger}>删除提示词</Text></TouchableOpacity>}
       </>}
       {page.kind === 'tools' && <>
         <ThemedSurface variant="card" style={styles.card}>
@@ -494,6 +516,18 @@ export default function PromptCenterScreen({ assistants, assistantListError, onS
     {selectorOpen && <ModalSheet visible onClose={() => setSelectorOpen(false)} title="选择编辑的 AI">
       <ScrollView contentContainerStyle={styles.content}>
         {assistants.map((option) => row(option.name, `${option.isHostAI ? '主理 AI · ' : ''}${option.id === assistantId ? '当前编辑对象' : '仅调整这位 AI 的提示词'}`, () => { setSelectorOpen(false); onSelectAssistant(option.id); }))}
+      </ScrollView>
+    </ModalSheet>}
+    {legacyGroupSelectorOpen && <ModalSheet visible onClose={() => setLegacyGroupSelectorOpen(false)} title="选择旧群正文">
+      <ScrollView contentContainerStyle={styles.content}>
+        {legacyGroupPrompts.map((prompt) => <TouchableOpacity key={prompt.groupId} accessibilityRole="button" style={styles.row}
+          onPress={() => { setContent(prompt.content); setLegacyGroupSelectorOpen(false); }}>
+          <View style={styles.copy}>
+            <Text style={styles.title}>{prompt.groupName}</Text>
+            <Text style={styles.subtitle} numberOfLines={2}>{prompt.content}</Text>
+          </View>
+          <ChevronRight size={18} color={theme.colors.text.tertiary} />
+        </TouchableOpacity>)}
       </ScrollView>
     </ModalSheet>}
   </KeyboardAvoidingContainer></SafeAreaView>;

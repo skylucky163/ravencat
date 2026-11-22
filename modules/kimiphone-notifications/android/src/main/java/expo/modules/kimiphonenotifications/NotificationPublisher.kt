@@ -122,6 +122,7 @@ internal object NotificationPublisher {
               childId = eventId,
               message = message,
               lastMessageAt = now,
+              committedMessageId = (payload["committedMessageId"] as? Number)?.toLong(),
             )
             legacyDisplayIds to upsert
           }
@@ -165,10 +166,9 @@ internal object NotificationPublisher {
             .setWhen(state.lastMessageAt)
             .setShowWhen(true)
             .setContentIntent(
-              buildResponseIntent(
+              buildOpenActivityIntent(
                 context = context,
                 displayId = displayId,
-                action = "open",
                 data = childResponseData,
               ),
             )
@@ -412,7 +412,7 @@ internal object NotificationPublisher {
         .setShowWhen(true)
         .setUsesChronometer(true)
         .setContentIntent(
-          buildTogetherListeningActivityIntent(
+          buildOpenActivityIntent(
             context,
             TOGETHER_LISTENING_DISPLAY_ID,
             responseData,
@@ -532,6 +532,26 @@ internal object NotificationPublisher {
     IncomingCallSurfaceRegistry.dismiss(callId)
   }
 
+  /** 阅读回执只撤销实际展示的消息，不能把同一 AI 的其他会话或屏外未读一起清掉。 */
+  fun dismissReadMessages(context: Context, sessionId: String, messageIds: List<String>, clientMessageIds: List<String>) {
+    val ids = messageIds.toSet()
+    val clients = clientMessageIds.toSet()
+    conversationOperationGate.writeLock().lock()
+    try {
+      val states = synchronized(conversationStateLock) { NotificationStateStore.readConversations(context) }
+      for (state in states) {
+        for (child in state.children) {
+          if (child.sessionId == sessionId &&
+            (child.committedMessageId?.toString() in ids || child.childId in clients)) {
+            dismissChild(context, state.conversationKey, child.childId)
+          }
+        }
+      }
+    } finally {
+      conversationOperationGate.writeLock().unlock()
+    }
+  }
+
   fun callDisplayId(callId: String) = "kimiphone-call-$callId"
 
   private fun childDisplayId(conversationKey: String, childId: String) =
@@ -616,7 +636,7 @@ internal object NotificationPublisher {
       .setAutoCancel(true)
       .setWhen(state.lastMessageAt)
       .setShowWhen(true)
-      .setContentIntent(buildResponseIntent(context, displayId, "open", responseData))
+      .setContentIntent(buildOpenActivityIntent(context, displayId, responseData))
       .setDeleteIntent(buildResponseIntent(context, displayId, "dismiss", responseData))
       .build()
     manager.notify(displayId.toNotificationId(), summary)
@@ -708,14 +728,14 @@ internal object NotificationPublisher {
     }
   }
 
-  /** Together 点击直接进入 Activity，避免 notification -> BroadcastReceiver -> Activity trampoline。 */
-  private fun buildTogetherListeningActivityIntent(
+  /** 用户打开通知直接进入 Activity；广播只承接滑走、拒接和退出等无界面动作。 */
+  private fun buildOpenActivityIntent(
     context: Context,
     displayId: String,
     data: Map<String, Any?>,
   ): PendingIntent {
-    val intent = Intent(context, TogetherListeningNotificationActivity::class.java).apply {
-      action = "${context.packageName}.TOGETHER_LISTENING.open.$displayId"
+    val intent = Intent(context, NotificationOpenActivity::class.java).apply {
+      action = "${context.packageName}.NOTIFICATION.open.$displayId"
       putExtra("notificationAction", "open")
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
       data.forEach { (key, value) ->

@@ -44,6 +44,7 @@ export default function RootLayout() {
           <Stack.Screen name="memory/trigger" />
           <Stack.Screen name="prompt-center/index" />
           <Stack.Screen name="data-management" />
+          <Stack.Screen name="ai-recycle-bin" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="assistants/[aiId]" dangerouslySingular />
           <Stack.Screen name="assistants/[aiId]/works" dangerouslySingular />

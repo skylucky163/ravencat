@@ -27,6 +27,6 @@ export const createFavoriteStyles = (theme: PresentationTheme) => StyleSheet.cre
   empty: { textAlign: 'center', padding: 32, color: theme.colors.text.secondary },
   error: { color: theme.colors.feedback.error, padding: 16, textAlign: 'center' },
   details: { padding: 20, gap: 16, paddingBottom: 40 },
+  detailsHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   footer: { padding: 16, alignItems: 'center' },
-  link: { color: theme.colors.brand.primary },
 });

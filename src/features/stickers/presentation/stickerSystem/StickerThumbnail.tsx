@@ -33,6 +33,7 @@ export function StickerThumbnail({
         source={{ uri }}
         style={style}
         resizeMode="contain"
+        resizeMethod="resize"
         onError={() => setError(true)}
       />
     );

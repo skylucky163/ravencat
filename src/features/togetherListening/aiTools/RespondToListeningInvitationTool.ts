@@ -21,14 +21,14 @@ interface RespondArgs { decision: 'accept' | 'decline' }
 
 export const definition = {
   name: 'respond_to_listening_invitation',
-  description: '回应用户发起的 Together Listening 邀请。只在存在等待 AI 回应的邀请时调用；接受或拒绝后，在当前回复中自然表达结果，不要启动第二次 follow-up。',
+  description: '接收或拒绝用户发起的 Together Listening 邀请。',
   parameters: {
     type: 'object' as const,
     properties: {
       decision: {
         type: 'string' as const,
         enum: ['accept', 'decline'],
-        description: '接受或拒绝用户的一起听邀请',
+        description: '接受会进入一起听状态，拒绝则不进入。',
       },
     },
     required: ['decision'],

@@ -1,10 +1,12 @@
 package expo.modules.ravencatfloatinglayer.controller
 
 import android.content.Context
+import android.app.KeyguardManager
 import android.content.pm.ApplicationInfo
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowInsets
@@ -65,7 +67,7 @@ internal class RavenCatOverlayController(
   private var hasRestorableBubblePosition = false
   /** 当前 PANEL page（native presentation state）；非 PANEL 状态下无意义。 */
   private var panelPage = RavenCatPanelPage.CHAT
-  var conversationDisplayedListener: ((String, List<Long>) -> Unit)? = null
+  var conversationDisplayedListener: ((String, List<Long>, List<String>) -> Unit)? = null
   private val panelGeometryState = RavenCatPanelWindowGeometryState()
 
   private val bubbleLayoutParams = OverlayWindowConfig(
@@ -110,10 +112,12 @@ internal class RavenCatOverlayController(
 
   fun currentState(): RavenCatOverlayWindowState = state
 
-  /** reply 预览只有在面板状态、窗口已加入且 panel view 存在时才算真实可见。 */
+  /** 锁屏或熄屏不能把仍附着的窗口当作消息消费面，避免丢失系统提醒。 */
   fun isReplyPreviewVisible(): Boolean =
     state == RavenCatOverlayWindowState.PANEL && isPanelAdded && panelView != null &&
-      panelPage == RavenCatPanelPage.CHAT
+      panelPage == RavenCatPanelPage.CHAT &&
+      context.getSystemService(PowerManager::class.java).isInteractive &&
+      !context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
 
   /** Host 尚未确认前后台时保持 fail-closed；明确事实只影响窗口可见性。 */
   fun setAppForeground(active: Boolean?) {
@@ -236,9 +240,9 @@ internal class RavenCatOverlayController(
     )
     panelLayoutParams.flags = panelWindowFlags(isFocusable = false)
     isPanelFocusable = false
-    val view = RavenCatPanelView(context, onIntent, ::handlePanelPageChanged) { sessionId, messageIds ->
+    val view = RavenCatPanelView(context, onIntent, ::handlePanelPageChanged) { sessionId, messageIds, clientMessageIds ->
       if (isReplyPreviewVisible() && sessionId == latestSnapshot.conversationSessionId) {
-        conversationDisplayedListener?.invoke(sessionId, messageIds)
+        conversationDisplayedListener?.invoke(sessionId, messageIds, clientMessageIds)
       }
     }
     view.setOnApplyWindowInsetsListener { _, insets ->

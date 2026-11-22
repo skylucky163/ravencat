@@ -6,6 +6,8 @@ export const createPromptCenterStyles = (theme: PresentationTheme) => StyleSheet
   safeArea: { flex: 1, backgroundColor: theme.colors.background.app },
   screen: { flex: 1, backgroundColor: theme.colors.background.screen },
   content: { padding: theme.spacing.lg, paddingBottom: 48, gap: 12 },
+  customPage: { flex: 1 },
+  customHeader: { paddingHorizontal: theme.spacing.lg, paddingTop: theme.spacing.lg },
   hero: { paddingTop: 10, paddingBottom: 12 },
   heading: { color: theme.colors.text.primary, fontSize: 27, fontWeight: '700' },
   description: { marginTop: 8, color: theme.colors.text.secondary, fontSize: 13, lineHeight: 21 },
@@ -37,6 +39,5 @@ export const createPromptCenterStyles = (theme: PresentationTheme) => StyleSheet
   editor: { height: 320, textAlignVertical: 'top', lineHeight: 23 },
   button: { padding: 15, alignItems: 'center', borderRadius: theme.radius.lg, backgroundColor: theme.colors.brand.primary },
   buttonText: { color: theme.colors.brand.onPrimary, fontSize: 15, fontWeight: '600' },
-  dragging: { borderColor: theme.colors.brand.primary, opacity: 0.8 },
   loading: { marginTop: 80 },
 });

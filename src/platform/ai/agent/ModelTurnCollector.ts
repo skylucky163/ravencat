@@ -57,7 +57,7 @@ export class ModelTurnCollector {
           shouldEmit = this.acceptToolCallCompleted(event);
           break;
         case 'turn_completed':
-          this.result = this.buildResult(event.usage, event.finishReason);
+          this.result = this.buildResult(event.usage, event.finishReason, event.reasoningReplay);
           this.completed = true;
           break;
         default:
@@ -217,7 +217,8 @@ export class ModelTurnCollector {
 
   private buildResult(
     usage: ModelTurnResult['usage'],
-    finishReason: ModelTurnResult['finishReason']
+    finishReason: ModelTurnResult['finishReason'],
+    reasoningReplay?: ModelTurnResult['reasoningReplay'],
   ): ModelTurnResult {
     const mutableCalls = [...this.toolCallsByIndex.values()].sort((a, b) => a.index - b.index);
     if (mutableCalls.some((toolCall) => !toolCall.completed || !toolCall.name)) {
@@ -234,6 +235,7 @@ export class ModelTurnCollector {
       role: 'assistant',
       content: this.assistantText,
       reasoningText: this.reasoningText,
+      ...(reasoningReplay ? { reasoningReplay } : {}),
       toolCalls,
     }];
 
@@ -241,6 +243,7 @@ export class ModelTurnCollector {
       historyItems,
       assistantText: this.assistantText,
       reasoningText: this.reasoningText,
+      ...(reasoningReplay ? { reasoningReplay } : {}),
       toolCalls,
       usage,
       finishReason,

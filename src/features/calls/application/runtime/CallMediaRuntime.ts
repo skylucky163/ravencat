@@ -336,6 +336,7 @@ export function createCallMediaRuntime(callId: string) {
             temperature: aiProfile.temperature,
             topP: aiProfile.topP,
             disableThinking: aiProfile.disableThinking,
+            reasoningEffort: aiProfile.reasoningEffort,
             maxTokens: aiProfile.maxTokens,
             privateContextPrimaryLimit: aiProfile.privateContextPrimaryLimit,
             privateContextSecondaryLimit: aiProfile.privateContextSecondaryLimit,

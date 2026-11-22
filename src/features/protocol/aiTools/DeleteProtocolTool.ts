@@ -27,7 +27,7 @@ interface DeleteProtocolResult {
  */
 export const definition = {
   name: 'deleteProtocol',
-  description: '删除当前 AI 协议空间中不再需要的条目。使用查询或添加工具返回的真实 ID，不要猜测 ID。',
+  description: '删除当前 AI 协议空间中不再需要的条目。',
   parameters: {
     type: 'object',
     properties: {

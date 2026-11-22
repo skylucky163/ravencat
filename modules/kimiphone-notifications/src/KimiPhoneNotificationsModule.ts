@@ -72,6 +72,7 @@ export interface NativeNotificationResponse extends NativeNotificationRouteData 
 }
 
 export interface PostConversationNotificationRequest {
+  committedMessageId?: number;
   turnRunId?: string;
   /** 子通知 ID：`kimiphone-msg-<conversationKey>-<eventId>`，逐段唯一 */
   displayId: string;
@@ -174,6 +175,7 @@ declare class KimiPhoneNotificationsNativeModule extends NativeModule<KimiPhoneN
   getTogetherListeningPresentationDiagnostics(): Promise<NativeTogetherListeningPresentationResult>;
   /** 按会话聚合 key 撤销：direct = `ai:<aiId>`，group = `group:<groupId>`；null 撤销全部 */
   cancelConversationNotifications(conversationKey?: string | null): Promise<void>;
+  cancelReadMessageNotifications(sessionId: string, messageIds: string[], clientMessageIds: string[]): Promise<void>;
   cancelIncomingCallNotification(callId: string): Promise<void>;
   leaveCallScreen(callId: string): Promise<void>;
   consumePendingNotificationResponses(): Promise<NativeNotificationResponse[]>;
@@ -241,6 +243,10 @@ export function getTogetherListeningPresentationDiagnostics(
 /** 按会话聚合 key 撤销：direct = `ai:<aiId>`，group = `group:<groupId>`；缺省撤销全部 */
 export function cancelConversationNotifications(conversationKey?: string | null): Promise<void> {
   return nativeModule.cancelConversationNotifications(conversationKey ?? null);
+}
+
+export function cancelReadMessageNotifications(sessionId: string, messageIds: string[], clientMessageIds: string[]): Promise<void> {
+  return nativeModule.cancelReadMessageNotifications(sessionId, messageIds, clientMessageIds);
 }
 
 export function cancelIncomingCallNotification(callId: string): Promise<void> {

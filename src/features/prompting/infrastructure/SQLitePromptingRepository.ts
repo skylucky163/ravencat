@@ -255,14 +255,16 @@ export class SQLitePromptingRepository implements
     return prompt;
   }
 
-  async saveAssistantUserPrompts(prompts: AssistantUserPrompt[]): Promise<AssistantUserPrompt[]> {
-    const db = databaseCoordinator.openTaskExecutor({ name: 'prompting.saveAssistantUserPrompts', feature: 'prompting', priority: 'runtime' });
+  async reorderAssistantUserPrompts(assistantId: string, promptIds: readonly string[], updatedAt: string): Promise<void> {
+    const db = databaseCoordinator.openTaskExecutor({ name: 'prompting.reorderAssistantUserPrompts', feature: 'prompting', priority: 'runtime' });
     await db.withExclusiveTransactionAsync(async (transaction) => {
-      for (const prompt of prompts) {
-        await saveAssistantUserPromptRow(transaction, prompt);
+      for (const [index, id] of promptIds.entries()) {
+        await transaction.runAsync(
+          'UPDATE assistant_user_prompts SET sort_order = ?, updated_at = ? WHERE id = ? AND assistant_id = ?',
+          [(index + 1) * 10, updatedAt, id, assistantId],
+        );
       }
     });
-    return prompts;
   }
 
   async deleteAssistantUserPrompt(id: string, assistantId: string): Promise<boolean> {

@@ -96,6 +96,7 @@ export interface TogetherListeningDeclineFollowUpAIConfig {
   temperature?: number | null;
   topP?: number | null;
   disableThinking?: boolean;
+  reasoningEffort?: import('@platform/ai').ReasoningEffort;
   maxTokens?: number;
 }
 

@@ -3,7 +3,7 @@ import { buildSharedMomentText } from '../../messages/domain/SharedMoment';
 import { randomUUID } from 'expo-crypto';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { emitChatSummaryChanged, getChatSummaryRuntime } from './ChatSummaryRuntime';
-import { DEFAULT_CHAT_SUMMARY_SETTINGS, ChatSummaryEditError, type ChatSummaryTextEdit, ChatSummaryGenerationError, type ChatSummaryTaskClaim, type ChatSummaryModelInput, type ChatSummarySettingsPatch, type ChatSummarySearchInput, type ChatSummarySegment , ChatBackgroundContextOptions } from '../domain/ChatSummaryRepository';
+import { DEFAULT_CHAT_SUMMARY_SETTINGS, ChatSummaryEditError, type ChatSummaryTextEdit, ChatSummaryGenerationError, type ChatSummaryTaskClaim, type ChatSummaryModelInput, type ChatSummarySettingsPatch, type ChatSummarySearchInput, type ChatSummarySegment, type ChatSummaryContextOptions, ChatBackgroundContextOptions } from '../domain/ChatSummaryRepository';
 import { buildSharedChatRecordText } from '../../messages/domain/SharedChatRecord';
 import { getChatConversationRuntimeDependencies } from '../../conversation/application/ChatConversationRuntime';
 import type { DatabaseTransactionExecutor } from '@platform/persistence';
@@ -21,8 +21,8 @@ function requireSummaryContent(value: string): string {
   if (!content) throw new Error('摘要正文不能为空');
   return content;
 }
-export async function getChatSummaryContext(conversationId: string, protectedMessageIds: readonly number[] = []) {
-  return getChatSummaryRuntime().repository.readContext(conversationId, protectedMessageIds);
+export async function getChatSummaryContext(conversationId: string, protectedMessageIds: readonly number[] = [], options?: ChatSummaryContextOptions) {
+  return getChatSummaryRuntime().repository.readContext(conversationId, protectedMessageIds, options);
 }
 export function getChatBackgroundContexts(assistantId: string, currentConversationId: string, options: ChatBackgroundContextOptions) {
   return getChatSummaryRuntime().repository.readBackgroundContexts(assistantId, currentConversationId, options);

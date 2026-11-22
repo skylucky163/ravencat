@@ -24,6 +24,9 @@ import type {
 } from './ConversationTurn';
 
 export interface IConversationTurnRepository {
+  setReplyRequestedInTransaction(transaction: DatabaseTransactionExecutor, sessionId: string, requested: boolean): Promise<void>;
+  /** 显式召唤授权累积输入或空输入陪伴回合，不伪造用户消息；再次点击是新的用户意图。 */
+  requestUserReply(sessionId: string): Promise<boolean>;
   listRunStates(runIds: readonly string[]): Promise<{ runId: string; status: ConversationTurnRun['status'] }[]>;
   getActiveRun(sessionId: string): Promise<ConversationTurnRun | null>;
   /** 启动恢复只终结不属于本进程的自主 owner，不重放其模型或工具。 */
@@ -43,6 +46,8 @@ export interface IConversationTurnRepository {
   requestRegeneration(sessionId: string, messageId: number): Promise<number>;
   /** 启动失败只能撤销自己的请求，不能撤销后来一次重写。 */
   cancelRegeneration(sessionId: string, requestRevision: number): Promise<void>;
+  /** 原子取消当前执行、未领取输入与重写意图，封存已交付正文；不推进回复游标。 */
+  cancelCurrentTurn(sessionId: string): Promise<void>;
   /**
    * T1 前半段：新会话惰性创建 turn_state 行（cursor=0, revision=0）。
    * 调用方必须在事务内先调用本方法，再插入用户消息。
@@ -51,6 +56,9 @@ export interface IConversationTurnRepository {
     transaction: DatabaseTransactionExecutor,
     sessionId: string,
   ): Promise<void>;
+
+  /** 导入的是已发生的历史。同一事务移动输入游标，以免下一次召唤把旧提问当作待回复输入。 */
+  recordImportedHistoryInTransaction(transaction: DatabaseTransactionExecutor, sessionId: string, lastInputId: number): Promise<void>;
 
   /**
    * T1 后半段：turn_state 存在 active run 时，在同一事务内把旧 run 置 superseded、

@@ -8,3 +8,4 @@ export { aiScheduleRepository } from './infrastructure/SQLiteAIScheduleRepositor
 export { acknowledgeScheduleReplyInTransaction } from './infrastructure/SQLiteAIScheduleRepository';
 export { proactiveLifeReadRepository } from './infrastructure/SQLiteProactiveLifeReadRepository';
 export { companionNativeAdapter } from './infrastructure/CompanionNativeAdapter';
+export { purgeAssistantSchedulesInTransaction } from './infrastructure/AssistantScheduleLifecycle';

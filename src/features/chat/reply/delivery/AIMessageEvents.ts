@@ -7,6 +7,7 @@ export type AIMessageDeliveryKind = 'passive' | 'proactive';
 export type AIMessageDeliveryStatus =
   | 'shown'
   | 'suppressed_foreground'
+  | 'suppressed_unavailable'
   | 'handled_by_consumer'
   | 'failed';
 
@@ -50,7 +51,8 @@ interface AIMessageReceivedDetails {
   relatedEntityId?: string | null;
   /** 原生通知诊断分域；仅交付协调器向 platform 透传。 */
   notificationScope?: string | null;
-  userNotificationHandled?: boolean;
+  /** 原始请求身份，仅用于悬浮输入区收口对应的等待状态。 */
+  requestCorrelationId?: string;
   /** 会话类型，缺省视为 'direct'（单聊）；群聊回复必须显式填 'group' */
   conversationKind?: ConversationKind;
   /** 群聊会话的群 id（群聊 sessionId = groupId） */

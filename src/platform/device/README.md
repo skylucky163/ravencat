@@ -10,6 +10,8 @@
 
 本目录只承载技术能力，不包含聊天、通话、朋友圈或主动联系策略。
 
+`setSystemAlarm` 通过 Device Control 原生模块派发一次系统时钟请求，支持本地时分、名称与每周重复日。参数合法性由工具 Runtime 的 schema 保证；原生边界只负责当前 Activity 焦点、星期编号转换和 Android 请求结果。不拥有闹钟数据库、后台计时或响铃，返回派发成功不表示系统时钟已保存。产品契约见[手机工具](../../../docs/ravencat/phone-tools.md)。
+
 `saveImageToGallery` 接收已经过图片入口检查的本地 URI 与真实 MIME，通过 `modules/gallery-writer` 写入系统相册 `Pictures/RavenCat`，不读取或申请相册权限。命名使用本地时间与内容 hash 前八位，扩展名来自真实 MIME；原始字节直接复制，GIF／WebP 动画不转码。原生边界只允许应用 files/cache 中的文件，`IS_PENDING` 发布与取消互斥，失败删除 pending 记录，并区分空间不足、目录不可写和写入中断。公开相册文件不归私有媒体清理、备份和恢复出厂管理。
 
 `Clipboard.readDeviceClipboardText` 在 Android 主线程按需读取首项直接文字，要求当前 Activity 拥有焦点；不获取焦点、不监听、不读取历史或解析 URI。原生边界限制为 12000 个 Unicode 字符并标明截断；系统返回 null 时明确表示内容不可用，不断言剪贴板为空。现有 UI 写入继续使用 `copyTextToClipboard`。
@@ -23,7 +25,7 @@
 
 `DeviceMediaService.pickCroppedImage` 复用 Expo 的 Android 原生选图与裁剪，返回裁剪后的临时图片或取消结果。调用方申请权限并指定比例：头像 1:1、时刻封面 16:9、背景使用当前屏幕比例；业务 owner 继续负责持久化与绑定。`plugins/withImageCropColors.js` 为生成的 Android 工程配置深浅色实色顶栏与高对比度图标，修改这些原生资源需要重新编译应用。
 
-`cropImageToAspect` 提供无交互的自动裁剪：输入本地图片 URI 与目标宽高比，默认居中裁剪，只缩小不放大、不拉伸、不改动原图，不弹任何界面。文件检查复用 `inspectLocalImage` 契约；动态图沿用 `prepareVisionImage` 的静态帧契约，输出恒为单帧并通过 `sourceWasAnimated` 告知来源。成功的临时文件归调用方使用并清理，动态图的静态帧等中间产物由函数自身清理。`node scripts/verify-image-auto-crop.mjs` 验证横竖互换、同比例、小图不放大、动态图单帧与失败清理。
+`cropImageToAspect` 提供无交互的自动裁剪：输入本地图片 URI 与目标宽高比，默认居中裁剪，只缩小不放大、不拉伸、不改动原图，不弹任何界面。文件检查复用 `inspectLocalImage` 契约；动态图沿用 `prepareVisionImage` 的静态帧契约，输出恒为单帧并通过 `sourceWasAnimated` 告知来源。成功的临时文件归调用方使用并清理，动态图的静态帧等中间产物由函数自身清理。`node tests/media/verify-image-auto-crop.mjs` 验证横竖互换、同比例、小图不放大、动态图单帧与失败清理。
 
 聊天的「上传图片」由 `selectChatImages` 使用 `expo-image-picker` 的标准 Photo Picker 入口多选图片，张数上限由 Chat 草稿 owner 传入，当前为 9 张；`quality: 1` 且不编辑，让 Expo 直接复制原始字节。逐张取实际缓存文件大小，不信任媒体索引的声明大小，保留单图 5 MiB 限制；尺寸使用 Expo 从缓存文件取得的结果。「上传文件」使用文档选择器，两者进入同一附件持久化和视觉输入链路。`npm run verify:chat-image-selection` 验证多图顺序、原图读取配置、逐张实际大小、文件名、取消与错误传播。
 

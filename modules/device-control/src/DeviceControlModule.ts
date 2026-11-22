@@ -269,7 +269,16 @@ export interface XiaohongshuNoteResult {
   reason?: string;
 }
 
+export type SystemAlarmResult = {
+  status: 'alarm_request_dispatched' | 'app_not_focused' | 'clock_app_unavailable' | 'alarm_request_rejected';
+};
+
 declare class DeviceControlNativeModule extends NativeModule {
+  showSystemAlarms(): Promise<SystemAlarmResult>;
+  dismissSystemAlarm(mode: string, hour: number | null, minute: number | null, label: string | null): Promise<SystemAlarmResult>;
+  snoozeSystemAlarm(minutes: number | null): Promise<SystemAlarmResult>;
+  getNextSystemAlarm(): Promise<{ status: 'available'; triggerAtEpochMs: number } | { status: 'not_scheduled' }>;
+  setSystemAlarm(hour: number, minute: number, label: string | null, daysOfWeek: number[]): Promise<SystemAlarmResult>;
   beginXiaohongshuNote(): string;
   cancelXiaohongshuNote(id: string): void;
   executeXiaohongshuNote(id: string, actor: string, command: XiaohongshuNoteCommand): Promise<XiaohongshuNoteResult>;

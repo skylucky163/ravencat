@@ -486,6 +486,8 @@ Feature 当前结构和入口放 Feature README。
 
 复杂专项不变量放独立架构文档。
 
+排查过程、临时探针结果、执行日志和阶段性实施／验证报告默认保存在被 Git 忽略的 `.docs/`，不纳入源码提交；用户明确要求交付的报告除外。需要长期维护的结论整合到对应 README、架构文档和行为测试中。
+
 阶段实施过程、旧设计和迁移历史不要不断堆入 `AGENTS.md`。
 
 如果当前代码已经完成迁移：
@@ -628,6 +630,38 @@ fatal: bad object HEAD
 
 保护用户的工作树、未 push 的本地提交、refs 和 Git object database，优先级高于获得基线验证结果。
 
+### 12.4 测试目录
+
+测试代码位于 `tests/`，与 `src/` 同构；`scripts/` 只保留构建与工具。
+
+```text
+tests/
+├── helpers/         共享夹具与装载器
+├── architecture/    架构门禁（check-*）与别名打包入口
+└── <module>/        对应 src/features/<module>
+    └── <sub>/       对应 src/features/chat/<sub> 等子模块
+```
+
+* 新增测试放到被测模块的目录，不要在 `scripts/` 根新建 `verify-*.mjs`。
+* 命名 `verify-<模块>-<被验证行为>.mjs`；文件名是入口名的来源。
+* 架构门禁使用 `check-*.mjs`，不使用 `verify-` 前缀。
+* `scripts/` 只接受：`patch-*.cjs`、`app-version.cjs`、文档生成器、外网探针、`android-tests/` 及其 Gradle 初始化脚本。
+
+### 12.5 共享测试基础设施
+
+* 仓库根一律取 `tests/helpers/repo-root.mjs` 的 `repoRoot`。禁止用 `path.resolve(..., '..')`、`import.meta.dirname, '..'` 或 `process.cwd()` 充当仓库根：它们把测试绑死在该文件当时的目录层级上。
+* 装载生产 TypeScript 优先用 `tests/helpers/load-typescript-module.mjs`。需要 JSX、别名或特殊依赖策略时先扩展该 helper，不要在测试文件里再写一份转译装载器。
+* 内存 SQLite 用 `sqlite-bootstrap-fixture` 的 `bootstrapSqlite` 建库，不要手抄 `CREATE TABLE`。手抄 schema 会随生产迁移漂移，而且没有机制提醒。
+* 聊天域共用装配在 `chat-timeline-fixture`、`chat-message-mutation-fixture`、`chat-sharing-fixture`。
+* 只服务单个测试的替身留在该测试内，不进 `helpers/`。
+
+### 12.6 npm 入口与验收
+
+* 每个测试文件都必须在 `package.json` 注册入口，命名为 `verify:<模块>`；聚合条目用 `npm run` 串联。没有入口的测试等于不存在。
+* `npm run verify:registration` 校验注册完整性、文件存在性与全量执行可达性，防止只登记但实际漏跑。
+* 全量验收用 `npm run verify:all`：展开聚合并独立执行全部验证命令，单项失败后继续；默认跳过需要 Gradle、外网或真机的条目，需要时加 `--with-native`。生成命令与诊断报告不属于验收门禁。
+* 改动共享夹具、移动测试目录或调整入口后必须跑全量，并与改动前的失败集逐项对比。
+
 ---
 
 ## 13. 修改完成后的检查
@@ -657,6 +691,8 @@ npm run verify:raven-cat
 npm run verify:memory
 npm run verify:calls
 npm run verify:agent-runtime
+npm run verify:all                   # 跨模块改动、共享夹具变更或测试目录移动
+npm run verify:registration          # 新增或移动测试文件后
 ```
 
 只有在跨层、跨 Feature、大范围重构，或用户明确要求时，才运行完整验证集。

@@ -85,13 +85,5 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
     NotificationResponseDispatcher.recordForApp(appContext, response)
 
-    appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)?.let { launchIntent ->
-      launchIntent.addFlags(
-        Intent.FLAG_ACTIVITY_NEW_TASK or
-          Intent.FLAG_ACTIVITY_CLEAR_TOP or
-          Intent.FLAG_ACTIVITY_SINGLE_TOP,
-      )
-      appContext.startActivity(launchIntent)
-    }
   }
 }

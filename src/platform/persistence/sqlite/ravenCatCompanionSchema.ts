@@ -1,4 +1,5 @@
 /** 提供主动伴随与唯一 AI 日程使用的 SQLite 建表语句。 */
+import { addColumnIfMissing } from './schemaColumnGuard';
 
 export const RAVEN_CAT_COMPANION_STATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS raven_cat_companion_state (
@@ -101,9 +102,12 @@ export const RAVEN_CAT_AI_SCHEDULE_WAIT_SCHEMA = `
 `;
 
 export async function migrateAIScheduleTiming(db: RavenCatCompanionMigrationExecutor): Promise<void> {
-  for (const column of AI_SCHEDULE_TIMING_COLUMNS) await db.execAsync(`ALTER TABLE raven_cat_ai_schedules ADD COLUMN ${column};`);
-  await db.execAsync(`ALTER TABLE raven_cat_contact_settings ADD COLUMN follow_up_enabled INTEGER NOT NULL DEFAULT 0 CHECK (follow_up_enabled IN (0,1));
-    ALTER TABLE raven_cat_contact_settings ADD COLUMN follow_up_interval_minutes INTEGER NOT NULL DEFAULT 10 CHECK (follow_up_interval_minutes BETWEEN 2 AND 43200);`);
+  for (const column of AI_SCHEDULE_TIMING_COLUMNS) {
+    const [name, ...definition] = column.split(' ');
+    await addColumnIfMissing(db, 'raven_cat_ai_schedules', name, definition.join(' '));
+  }
+  await addColumnIfMissing(db, 'raven_cat_contact_settings', 'follow_up_enabled', 'INTEGER NOT NULL DEFAULT 0 CHECK (follow_up_enabled IN (0,1))');
+  await addColumnIfMissing(db, 'raven_cat_contact_settings', 'follow_up_interval_minutes', 'INTEGER NOT NULL DEFAULT 10 CHECK (follow_up_interval_minutes BETWEEN 2 AND 43200)');
 }
 
 export const RAVEN_CAT_AI_SCHEDULES_SCHEMA = buildRavenCatAISchedulesSchema(

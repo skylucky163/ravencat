@@ -2,7 +2,7 @@
 
 import { aiAssistantRepository } from '@features/assistants';
 import { momentRepository } from '@features/moments';
-import { protocolRepository } from '@features/protocol';
+import { protocolRepository } from '@features/protocol/composition';
 import { userProfileRepository } from '@features/profile';
 import { ledgerRepository } from '@features/wallet';
 import {
@@ -86,8 +86,6 @@ export function configureCompanionRuntime(): void {
         deliveryTiming: 'immediate',
         correlationId,
         replyCallbacks: {
-          onReplyDisplaySegment: (payload) => replyCallbacks.onReplyDisplaySegment?.(payload),
-          onReplySegment: (payload) => replyCallbacks.onReplySegment?.(payload),
           onFinalReply: (payload) => replyCallbacks.onFinalReply?.({
             sessionId: payload.sessionId,
             text: payload.text,

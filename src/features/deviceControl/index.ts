@@ -77,6 +77,7 @@ export type {
 } from './application/MediaSessionControlPort';
 
 export { SoftLockAppTool } from './aiTools/SoftLockAppTool';
+export { SetAlarmTool, ShowAlarmsTool, DismissAlarmTool, SnoozeAlarmTool, GetNextAlarmTool } from './aiTools/SetAlarmTool';
 export { ReleaseSoftLockTool } from './aiTools/ReleaseSoftLockTool';
 export { SearchInstalledAppsTool } from './aiTools/SearchInstalledAppsTool';
 export { OpenAppTool } from './aiTools/OpenAppTool';

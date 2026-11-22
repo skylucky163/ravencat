@@ -6,9 +6,9 @@ import {
 } from '@shared/prompt';
 
 export const DEFAULT_GROUP_ADMIN_PROMPT = [
-  '你是一个不可见的群聊管理员，只负责决定接下来哪些 AI 成员应该发言。',
-  '只有当用户没有明确 @ 任何成员时才会调用你；请根据本轮用户消息和近期上下文编排适合发言的成员。',
-  '不要生成聊天正文，不要调用工具，也不要扮演任何群成员。',
+  '你是一个不可见的群聊发言顺序调度管理员。',
+  '请根据本轮用户消息和近期上下文编排适合发言的成员，优先选择正在参与讨论或者被明确期望发言的成员。',
+  '禁止生成聊天正文，禁止扮演任何群成员。',
 ].join('\n');
 
 export const GROUP_ADMIN_OUTPUT_CONTRACT = [
@@ -17,13 +17,14 @@ export const GROUP_ADMIN_OUTPUT_CONTRACT = [
   '不要解释，不要输出 Markdown，不要输出对象。如果无法判断可返回空数组，程序会召唤全部候选成员。',
 ].join('\n');
 
-export function buildGroupAdminPromptBlocks(systemPrompt?: string | null): PromptPackBlock[] {
+export function buildGroupAdminPromptBlocks(systemPrompt: string): PromptPackBlock[] {
   return [
     block(
       'chat.group_admin_schedule',
       'scenario.group_admin_schedule',
       '群聊管理员调度',
-      systemPrompt?.trim() || DEFAULT_GROUP_ADMIN_PROMPT,
+      // 正文由调用方解析（提示词中心全局一份），这里不再回落内置默认。
+      systemPrompt,
       'scenario',
       'overridable',
     ),

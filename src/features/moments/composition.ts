@@ -37,4 +37,5 @@ export function configureMomentsMediaRuntime(
 
 export type { MomentImageAnalysisExecutor } from './application/MomentMediaRuntime';
 export { momentRepository } from './infrastructure/SQLiteMomentRepository';
+export { purgeAssistantMomentsInTransaction } from './infrastructure/AssistantMomentLifecycle';
 export { createMomentToolForRun } from './aiTools/AICreateMomentTool';

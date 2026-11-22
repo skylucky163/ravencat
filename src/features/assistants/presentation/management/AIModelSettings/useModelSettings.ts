@@ -25,7 +25,7 @@ export default function useModelSettings({ aiAssistant, onUpdated, onShowAlert }
   const { resetTestState } = test;
   const { validateAll } = form;
   const { handleTestConnection: testConnection } = test;
-  useEffect(() => { resetTestState(); }, [form.apiBaseUrl, form.apiKey, form.selectedModel, form.disableThinking, resetTestState]);
+  useEffect(() => { resetTestState(); }, [form.apiBaseUrl, form.apiKey, form.selectedModel, form.disableThinking, form.reasoningEffort, resetTestState]);
   const handleTestConnection = useCallback(async () => {
     // 先校验本地输入；连接测试不替代持久化，也不使用最后一次合法数字掩盖无效草稿。
     if (validateAll()) await testConnection();

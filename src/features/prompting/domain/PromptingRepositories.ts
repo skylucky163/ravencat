@@ -51,6 +51,6 @@ export interface AssistantPromptConfigurationRepository {
   resetDefinitionOverride(assistantId: string, definitionId: string, locale: 'zh-CN' | 'en-US'): Promise<boolean>;
   listAssistantUserPrompts(assistantId: string): Promise<AssistantUserPrompt[]>;
   saveAssistantUserPrompt(prompt: AssistantUserPrompt): Promise<AssistantUserPrompt>;
-  saveAssistantUserPrompts(prompts: AssistantUserPrompt[]): Promise<AssistantUserPrompt[]>;
+  reorderAssistantUserPrompts(assistantId: string, promptIds: readonly string[], updatedAt: string): Promise<void>;
   deleteAssistantUserPrompt(id: string, assistantId: string): Promise<boolean>;
 }

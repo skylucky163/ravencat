@@ -8,8 +8,7 @@ import { setChatEventBus } from '../../../messages/events/ChatEvents';
 const labels: Record<ChatTurnExecutionStatus['phase'], string | null> = {
   waiting_host: null, host_started: null, preparing: '正在准备请求',
   waiting_model: '等待模型响应', receiving_model: '正在接收模型输出', executing_tool: '正在执行工具',
-  processing_result: '正在整理工具结果', committing: '正在保存回复', delivering: '正在交付回复',
-  closing: '正在结束执行',
+  processing_result: '正在整理工具结果', committing: null, delivering: null, closing: null,
   request_failed: null, failed: null, interrupted: null,
 };
 
@@ -18,7 +17,7 @@ export function formatChatTurnExecutionStatus(status: ChatTurnExecutionStatus | 
   return status ? labels[status.phase] : null;
 }
 
-export function useChatTurnExecutionStatus(sessionId: string | null): string | null {
+export function useChatTurnExecutionStatus(sessionId: string | null) {
   const [snapshot, setSnapshot] = useState<{ sessionId: string; status: ChatTurnExecutionStatus | null } | null>(null);
   useEffect(() => {
     if (!sessionId) return;
@@ -53,6 +52,11 @@ export function useChatTurnExecutionStatus(sessionId: string | null): string | n
     const appState = AppState.addEventListener('change', state => { if (state === 'active') reload(); });
     return () => { active = false; stop(); appState.remove(); };
   }, [sessionId]);
-  const status = snapshot?.sessionId === sessionId ? snapshot : null;
-  return formatChatTurnExecutionStatus(status?.status ?? null);
+  const status = snapshot?.sessionId === sessionId ? snapshot.status : null;
+  return {
+    statusText: formatChatTurnExecutionStatus(status),
+    // 终止针对生成与工具执行；生成结束后的定稿、交付和清理继续由原 owner 完成。
+    canStop: status !== null && ['waiting_host', 'host_started', 'preparing', 'waiting_model',
+      'receiving_model', 'executing_tool', 'processing_result'].includes(status.phase),
+  };
 }

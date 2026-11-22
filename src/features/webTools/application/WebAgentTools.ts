@@ -17,7 +17,7 @@ export const WebSearchTool = {
   name: 'web_search',
   definition: {
     name: 'web_search',
-    description: '联网搜索公开信息。不指定 engine 时优先用户默认来源；返回实际来源、去重后的资料、默认与可用引擎。找图片时可用 Tavily 的 include_images 返回真实图片候选地址，再用 download_image 下载、view_image 确认；搜索描述不代表已经看过图片，也不保证手机可下载。结果偏题或失败时可改写关键词、换可用来源；重要结论用 web_fetch 核实原文并附来源。同网址或转载不算独立证据。',
+    description: '联网搜索公开信息，返回实际来源、去重后的资料、默认与可用引擎。结果偏题或失败时改写关键词或换可用来源；重要结论用 web_fetch 核实原文并附来源。同一网址或转载按同一证据处理。',
     parameters: {
       type: 'object',
       properties: {
@@ -26,7 +26,7 @@ export const WebSearchTool = {
         engine: { type: 'string', enum: ['bing', 'duckduckgo', 'tavily', 'brave'], description: '省略时使用用户默认来源；只能使用用户已启用且配置好的来源，可用列表见结果或错误' },
         depth: { type: 'string', enum: ['basic', 'advanced'], description: '默认 basic；advanced 仅限 Tavily 且用户允许，会消耗更多服务额度' },
         time_range: { type: 'string', enum: ['day', 'week', 'month', 'year'], description: '可选时间筛选，DuckDuckGo、Tavily、Brave 支持；Bing RSS 不支持' },
-        include_images: { type: 'boolean', description: '默认 false；仅 Tavily 支持。true 时返回 images 图片地址及搜索服务描述，供 download_image 使用；默认来源不是 Tavily 时需显式指定已启用的 engine=tavily。' },
+        include_images: { type: 'boolean', description: '默认 false。仅本次使用已配置的 Tavily 时可设为 true；默认引擎为其他来源时须显式传 engine=tavily。返回 images 中的候选地址及搜索服务提供的描述。' },
       },
       required: ['query'], additionalProperties: false,
     },
@@ -40,7 +40,7 @@ export const WebFetchTool = {
   name: 'web_fetch',
   definition: {
     name: 'web_fetch',
-    description: '读取公开网页正文，保留标题、列表、链接与基本表格。不保存文件或执行脚本，不支持登录态。网页变化需重新读取。PDF 用 download_file，图片用 download_image。',
+    description: '读取公开网页正文，保留标题、列表、链接与基本表格。不支持登录态。网页变化需重新读取。',
     parameters: {
       type: 'object',
       properties: {
@@ -63,7 +63,7 @@ export const DownloadFileTool = {
   name: 'download_file',
   definition: {
     name: 'download_file',
-    description: '把公开 HTTPS 文件下载到手机「下载 / RavenCat AI」，最大 50 MiB；不会打开或执行文件，不覆盖已有文件。返回文件名、目录与 URI；下载成功不代表已读取内容。',
+    description: '把公开 HTTPS 文件下载到手机「下载 / RavenCat AI」，最大 50 MiB；不覆盖已有文件。返回文件名、目录与 URI。',
     parameters: {
       type: 'object',
       properties: {

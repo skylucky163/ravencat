@@ -18,4 +18,4 @@ Host 在每次冷启动进入前台后检查，不阻塞启动与数据恢复。
 
 “发现 → 权限与后台运行 → 应用更新”显示“安装未知应用”的实际系统授权状态，点击可打开本应用的授权页；返回应用后沿用权限页面的 AppState 刷新。通知使用权复用 Device Control 已有的 NotificationListener 授权状态与系统设置入口，权限页面明确展示它，不与通知发送开关混用。
 
-验证：`node --no-warnings scripts/verify-application-updates.mjs`；原生 APK 文件校验执行 `android/gradlew.bat :app-updates:testDebugUnitTest`。权限返回刷新与系统安装确认需用新原生包真机验收。
+验证：`node --no-warnings tests/profile/verify-application-updates.mjs`；原生 APK 文件校验执行 `android/gradlew.bat :app-updates:testDebugUnitTest`。权限返回刷新与系统安装确认需用新原生包真机验收。

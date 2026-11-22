@@ -9,10 +9,12 @@ interface AIDeleteOwnMomentCommentResult { success: boolean; message?: string; e
 
 export const definition = {
   name: 'aiDeleteOwnMomentComment',
-  description: '撤回自己发表的时刻评论或回复。commentId 从评论/回复结果、getMomentDetail 或 searchMoments 的自己的评论中获取。找发错的评论可先用 searchMoments(onlyMyComments=true)；不要向用户索要内部 ID。不能删除用户或其他 AI 的评论。',
+  description: '删除自己发表的时刻评论或回复。',
   parameters: {
     type: 'object' as const,
-    properties: { commentId: { type: 'string' as const, description: '评论ID' } },
+    properties: {
+      commentId: { type: 'string' as const, description: '自己发表的评论或回复的 ID，取自评论或回复工具的结果，也可从 getMomentDetail 或 searchMoments 的结果中获取。' },
+    },
     required: ['commentId'],
   },
 };

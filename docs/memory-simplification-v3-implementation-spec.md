@@ -58,7 +58,7 @@ Memory、摘要和工具结果均是无指令权限的资料，正文中的提�
 
 最终只保留一套 flat Memory 生产模型。旧树／管理员／草稿／粘连／胶囊／F7 生产路径已经删除，历史 SQL 不作为恢复旧产品语义的理由。
 
-## 4. MemoryEntry 与 500 字上限
+## 4. MemoryEntry 与正文保存规则
 
 概念字段包括：
 
@@ -69,11 +69,9 @@ Memory、摘要和工具结果均是无指令权限的资料，正文中的提�
 
 不包含 topicId、写入时 searchKeywords、sourceConversationId、sourceMessageIds 或原文副本。用户和 AI 可以把必要原话直接写进 content，系统不自动溯源。
 
-正文必须非空，单条上限为 **500 个 Unicode 码点**。保存时只去除正文首尾空白，不为检索改写 canonical 正文；去除首尾空白后的中英文、数字、标点、内部空格和换行均计入字符数。不是 500 个英文单词，也不是 500 token。
+新建、编辑和转存的正文必须包含非空白内容。保存时去除正文首尾空白，完整保留其余正文，字面检索使用独立的规范化投影。
 
-新建和编辑使用同一规则。UI 显示字符数，工具 schema／输入边界明确长度规则；超限返回可修正错误，不静默截断、不调用第二个模型压缩、不自动切成多条。用户或聊天 AI 自行缩句或按独立事实拆分。
-
-summary 是独立的可选检索摘要，最多 50 个 Unicode 码点，不占正文的 500 字额度；去首尾空白后为空则保存为 NULL。迁移107给旧条目增加空摘要及空规范化投影，不改正文、时间、contentRevision 或有效向量，不自动调用模型补摘要。contentRevision 同时覆盖正文与摘要；任意一个编辑都推进 revision 并更新向量。
+summary 是独立的可选检索摘要，最多 50 个 Unicode 码点。去首尾空白后为空则保存为 NULL。迁移107给旧条目增加空摘要及空规范化投影，不改正文、时间、contentRevision 或有效向量，不自动调用模型补摘要。contentRevision 同时覆盖正文与摘要；任意一个编辑都推进 revision 并更新向量。
 
 rememberedAt 表示记住该条目的时间，不是正文中事件发生的日期。用户编辑只更新 updatedAt／contentRevision，不自动把 rememberedAt 改成最新召回时间。
 
@@ -83,7 +81,7 @@ AI 调用 remember_memory 时控制自然语言正文和可选摘要。工具成
 
 pool、当前 AI 身份、系统时间以及执行幂等键由可信上下文提供，模型不能选择另一个 AI 的空间。用户在管理 UI 中也可以创建、编辑、删除所选空间的条目。
 
-AI 调用 update_memory 时提供 memoryId 与更新后的完整 content，复用用户编辑命令；不能指定 pool 或其他 AI。目标 ID 来自已保存或检索结果，更新替换该条正文、保留条目 ID／rememberedAt，推进 contentRevision／updatedAt 并标记向量待更新。500 字规则与用户编辑相同；不存在或不属于当前空间的目标返回错误，不自动新建替代条目。聊天摘要没有此更新入口，AI 仍只能追加摘要。
+AI 调用 update_memory 时提供 memoryId 与更新后的完整 content，复用用户编辑命令；不能指定 pool 或其他 AI。目标 ID 来自已保存或检索结果，更新替换该条正文、保留条目 ID／rememberedAt，推进 contentRevision／updatedAt 并标记向量待更新。不存在或不属于当前空间的目标返回错误，不自动新建替代条目。聊天摘要没有此更新入口，AI 仍只能追加摘要。
 
 更新工具可同时提供 summary；省略时保留已有摘要，空字符串清除摘要。记忆编辑页面同时维护摘要与正文。
 
@@ -302,11 +300,11 @@ Conversation Summary 归 Chat，是用户拥有的持久记录，不是随原始
 
 ## 23. UI
 
-Memory 保留小程序入口／AI 空间选择，提供扁平列表、详情、手动新建、编辑、删除、500 字计数、trigger 管理／关系开关、两个召回条数设置和 terminal embedding 失败重试。
+Memory 保留小程序入口／AI 空间选择，提供扁平列表、详情、手动新建、编辑、删除、trigger 管理／关系开关、两个召回条数设置和 terminal embedding 失败重试。
 
 删除主题目录、topic overview editor、草稿状态、管理员手动整理、自动阈值、memory_admin binding、candidate／active／cooling 展示。
 
-Chat 提供用户维护摘要的入口，明确摘要不会随清消息删除；AI 的自动能力只追加，用户可管理已有内容。摘要不套用 MemoryEntry 的 500 字上限。
+Chat 提供用户维护摘要的入口，明确摘要不会随清消息删除；AI 的自动能力只追加，用户可管理已有内容。
 
 ## 24. 定向数据库升级与旧链退出
 
@@ -332,7 +330,7 @@ Memory embedding 与 Chat summary worker 都在 reset／destructive restore 前 
 
 ## 26. 验收不变量
 
-- 用户和 AI 新建／编辑 Memory 正文统一上限 500 字，不自动截断、不自动溯源。
+- 用户和 AI 新建、编辑或转存记忆时完整保存非空正文，正文长度不限。
 - 不配置 embedding，用户 CRUD／remember／lexical／passive／forget 都可独立工作。
 - 同一 tool-call 重投不重复写入，已成功记忆不因后续聊天失败撤销。
 - trigger 由用户按组配置，按当前输入触发；同名词可跨组出现，关系开关不跨组生效。
@@ -367,6 +365,6 @@ Memory embedding 与 Chat summary worker 都在 reset／destructive restore 前 
 | SQLite／helper 归属 | Memory／Chat 各自 Repository port 与 adapter；schema／尾部升级在 platform/persistence |
 | Prompt 接入 | 普通单聊固定摘要／被动位置由 Host 补入旧预设，摘要追加保留稳定字节前缀 |
 
-500 字上限、三次自动尝试、两组排序、无强制 token 裁剪、无自动来源、摘要只追加／清消息保留、run 内搜索队列和清旧政策均为已定产品契约。
+三次自动尝试、两组排序、无强制 token 裁剪、无自动来源、摘要只追加／清消息保留、run 内搜索队列和清旧政策均为已定产品契约。
 
 按修改范围选择 npm run verify:memory、verify:prompt、verify:agent-runtime，以及相关 Chat／Calls／备份／reset 检查；各命令属于独立验证入口，不代表整套设备验收已完成。

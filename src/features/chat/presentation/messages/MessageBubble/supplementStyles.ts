@@ -15,16 +15,24 @@ export function createMessageBubbleSupplementStyles(theme: PresentationTheme) {
     },
     myReplyContainer: {
       alignSelf: isPaperNoteTheme(theme) ? 'flex-start' : 'flex-end',
-      backgroundColor: theme.colors.chat.quote,
-    },
-    // 卡片内部按百分比布局，引用必须提供明确宽度，避免被短回复正文压缩。
-    momentReplyContainer: {
-      width: 260,
-      maxWidth: '100%',
     },
     aiReplyContainer: {
       alignSelf: 'flex-start',
-      backgroundColor: theme.colors.chat.quote,
+    },
+    replyRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+    },
+    replyCopy: {
+      flexShrink: 1,
+      minWidth: 0,
+    },
+    replyThumbnail: {
+      width: 44,
+      height: 44,
+      borderRadius: theme.radius.sm,
+      overflow: 'hidden',
     },
     replyText: {
       fontSize: 13,

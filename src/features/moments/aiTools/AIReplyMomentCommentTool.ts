@@ -9,7 +9,7 @@ interface AIReplyMomentCommentResult { success: boolean; message?: string; error
 
 export const definition = {
   name: 'aiReplyMomentComment',
-  description: '回复时刻中的指定评论。先用 getMomentDetail 阅读正文和评论区，直接使用返回的 commentId，不要向用户索要内部 ID。系统反查所属时刻并校验可见性；结果返回新回复的 commentId，可用于撤回。',
+  description: '回复时刻中的指定评论。先用 getMomentDetail 阅读并获取 commentId。',
   parameters: {
     type: 'object' as const,
     properties: {

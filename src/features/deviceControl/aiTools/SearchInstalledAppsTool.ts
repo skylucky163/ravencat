@@ -21,7 +21,7 @@ export interface InstalledAppSearchCandidate {
 
 export const definition = {
   name: 'search_installed_apps',
-  description: '按应用名称或 package name 搜索本机可启动 App，供后续精确调用设备工具',
+  description: '按名称搜索本机可启动 App，返回可精确调用的 package name',
   parameters: {
     type: 'object',
     properties: {

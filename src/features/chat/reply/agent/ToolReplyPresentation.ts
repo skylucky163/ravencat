@@ -1,5 +1,6 @@
 /** 共享普通与流式工具回复的状态文案和元数据。 */
 import type { ModelToolCall } from '@platform/ai';
+import type { AgentToolOutcome } from '@platform/agentRuntime';
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
 import type { IMessageRepository } from '../../messages/domain/MessageRepository';
 import { buildChatToolStatusMessageMetadata } from '../application/ChatReplyMetadata';
@@ -40,10 +41,12 @@ export async function updateToolStatusMessage(params: {
   toolDisplayNames: string[];
   extra?: Record<string, unknown>;
   displayText?: string;
+  outcomes?: Iterable<AgentToolOutcome>;
 }): Promise<void> {
   const displayText = params.displayText ?? buildToolStatusText(
     joinToolDisplayNames(params.toolDisplayNames),
-    params.status
+    params.status,
+    params.outcomes,
   );
   await params.repository.updateMessage(params.message.id, {
     text: displayText,
@@ -211,14 +214,22 @@ export function joinToolDisplayNames(toolDisplayNames: string[]): string {
 
 export function buildToolStatusText(
   joinedToolDisplayNames: string,
-  status: 'running' | 'completed' | 'failed'
+  status: 'running' | 'completed' | 'failed',
+  outcomes: Iterable<AgentToolOutcome> = [],
 ): string {
   if (status === 'running') {
     return `正在调用：${joinedToolDisplayNames}`;
   }
 
   if (status === 'failed') {
-    return `调用失败：${joinedToolDisplayNames}`;
+    const text = `调用失败：${joinedToolDisplayNames}`;
+    // 用本地错误码投影用户可操作的提示，模型收到的服务商原文不直接展示。
+    for (const outcome of outcomes) {
+      if (outcome.status === 'error' && outcome.code === 'VOICE_TTS_NOT_CONFIGURED') {
+        return `${text}\n当前角色没有可用的语音模型，请在角色的「模型设置」中选择。`;
+      }
+    }
+    return text;
   }
 
   return `调用完成：${joinedToolDisplayNames}`;

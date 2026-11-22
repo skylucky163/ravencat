@@ -34,10 +34,9 @@ export const definition = {
   parameters: {
     type: 'object',
     properties: {
-      content: { 
-        type: 'string', 
-        description: '协议内容，如"请叫我小明"', 
-        maxLength: 500 
+      content: {
+        type: 'string',
+        description: '协议内容，如"请叫我小明"',
       },
       summary: { 
         type: 'string', 

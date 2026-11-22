@@ -13,7 +13,6 @@ import type {
 } from '../delivery/AIMessageEvents';
 import type {
   AIReplyConfig,
-  AIReplyProjectionReceipt,
   AIReplyRuntimeContext,
   ProcessAIReplyCallbacks,
 } from './ChatReplyTypes';
@@ -50,9 +49,8 @@ export async function deliverCommittedAssistantSegment({
     text,
     metadataJson,
   });
-  let projectionReceipt: AIReplyProjectionReceipt | void;
   try {
-    projectionReceipt = await callbacks.onReplySegment?.({
+    await callbacks.onReplySegment?.({
       status: 'segment',
       sessionId,
       correlationId: runtimeContext.correlationId || runtimeContext.replyRunId,
@@ -65,8 +63,8 @@ export async function deliverCommittedAssistantSegment({
       segmentTotal,
     });
   } catch (error) {
-    // 投影可能跨越原生边界；失败时仍由统一交付协调器处理系统通知。
-    console.warn('[CommittedAssistantSegmentDelivery] 回复投影失败，保留系统通知：', error);
+    // 观察者失败不撤销已提交正文，用户交付继续由 Host 协调器负责。
+    console.warn('[CommittedAssistantSegmentDelivery] 回复观察者失败，继续交付：', error);
   }
 
   await emitAssistantSegment({
@@ -74,7 +72,6 @@ export async function deliverCommittedAssistantSegment({
     identity: { committedMessageId: messageId, clientMessageId,
       arrivalAlreadyScheduled: runtimeContext.arrivalAlreadyScheduled },
     logicalMessageId, segmentIndex, segmentTotal,
-    userNotificationHandled: projectionReceipt ? projectionReceipt.userNotificationHandled : false,
   });
 }
 
@@ -88,25 +85,16 @@ export async function deliverAssistantDisplaySegment(params: {
 }): Promise<void> {
   const { sessionId, snapshot, aiConfig, runtimeContext, callbacks } = params;
   const deliveryText = snapshot.text.trim();
-  let projectionReceipt: AIReplyProjectionReceipt | void;
-  try {
-    projectionReceipt = await callbacks.onReplyDisplaySegment?.({
-      sessionId, clientMessageId: snapshot.clientMessageId, text: deliveryText, previewText: deliveryText,
-    });
-  } catch (error) {
-    console.warn('[CommittedAssistantSegmentDelivery] 运行正文投影失败，保留系统通知：', error);
-  }
   await emitAssistantSegment({
     sessionId, deliveryText, aiConfig, runtimeContext, callbacks,
     identity: { clientMessageId: snapshot.clientMessageId, arrivalAlreadyScheduled: true, turnRunId: snapshot.runId },
     logicalMessageId: null, segmentIndex: snapshot.segmentIndex ?? 0,
-    userNotificationHandled: projectionReceipt ? projectionReceipt.userNotificationHandled : false,
   });
 }
 
 async function emitAssistantSegment({
   sessionId, deliveryText, aiConfig, runtimeContext, callbacks, identity,
-  logicalMessageId, segmentIndex, segmentTotal, userNotificationHandled,
+  logicalMessageId, segmentIndex, segmentTotal,
 }: {
   sessionId: string;
   deliveryText: string;
@@ -117,7 +105,6 @@ async function emitAssistantSegment({
   logicalMessageId: string | null;
   segmentIndex: number;
   segmentTotal?: number;
-  userNotificationHandled: boolean;
 }): Promise<void> {
   // 特殊消息正文由 renderer 从 metadata 读取；系统交付始终沿用 Chat 统一预览契约。
   if (
@@ -153,7 +140,7 @@ async function emitAssistantSegment({
     conversationKind: runtimeContext.groupChat ? 'group' : 'direct',
     groupId: runtimeContext.groupChat?.groupId || null,
     groupName: runtimeContext.groupChat?.groupName || null,
-    userNotificationHandled,
+    requestCorrelationId: runtimeContext.correlationId,
   };
   const deliveryReceipt = await emitAIMessageReceived(deliveryPayload);
   await callbacks.onAIMessageDelivered?.({

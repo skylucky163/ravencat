@@ -1,5 +1,6 @@
 // 朋友圈界面数据 Hook。
 import { subscribeMomentEdited } from '../application/EditMoment';
+import { subscribeAssistantLifecycleChanged } from '@features/assistants';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -122,6 +123,7 @@ export default function useMoments(authorAgentId?: string) {
     const loadedLimit = Math.max(loadedCountRef.current, INITIAL_MOMENTS_LIMIT);
     await loadMoments(loadedLimit);
   }, [loadMoments]);
+  useEffect(() => subscribeAssistantLifecycleChanged(() => { void reloadLoadedMoments(); }), [reloadLoadedMoments]);
 
   const loadMoreMoments = useCallback(async () => {
     if (!hasMoreMoments || initialLoading || refreshing || loadMoreInFlightRef.current) {

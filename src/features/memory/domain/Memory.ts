@@ -1,6 +1,5 @@
 /** 独立记忆正文及可解释的字面检索契约。 */
 
-export const MEMORY_CONTENT_MAX_CHARACTERS = 500;
 export const MEMORY_SUMMARY_MAX_CHARACTERS = 50;
 export const DEFAULT_PASSIVE_RECALL_LIMIT = 5;
 export const DEFAULT_ACTIVE_RECALL_PAGE_SIZE = 10;
@@ -98,9 +97,6 @@ export function requireMemoryTriggerKeywords(value: string): MemoryTriggerKeywor
 export function requireMemoryContent(value: string): string {
   const content = value.trim();
   if (!content) throw new MemoryInputError('记忆正文不能为空');
-  if (Array.from(content).length > MEMORY_CONTENT_MAX_CHARACTERS) {
-    throw new MemoryInputError('每条记忆最多 500 字，请缩句或按独立事实拆分');
-  }
   return content;
 }
 

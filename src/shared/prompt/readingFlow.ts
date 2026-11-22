@@ -3,7 +3,7 @@ import type { PromptBlockKey } from './types';
 
 export const CHAT_PROMPT_READING_FLOW = [
   { id: 'foundation', section: 'identity', blockKeys: ['foundation_default_core'] },
-  { id: 'other_rules', section: 'identity', blockKeys: ['paragraph_breaks', 'action_description'] },
+  { id: 'other_rules', section: 'identity', blockKeys: ['paragraph_breaks', 'action_description', 'format_guidelines'] },
   { id: 'persona', section: 'identity', blockKeys: ['persona', 'assistant_nickname', 'user_identity_summary'] },
   { id: 'protocol', section: 'identity', blockKeys: ['protocol_space'] },
   { id: 'agent_registry', section: 'identity', blockKeys: ['agent_registry_summary'] },

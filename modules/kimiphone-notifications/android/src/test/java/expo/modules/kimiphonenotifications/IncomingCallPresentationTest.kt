@@ -6,6 +6,7 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import expo.modules.backgroundruntime.ApplicationExecutionHost
 import expo.modules.callringtone.CallRingtonePlayback
 import org.junit.After
 import org.junit.Assert.*
@@ -97,6 +98,27 @@ class IncomingCallPresentationTest {
       .single { it.getStringExtra("notificationAction") == "accept" }
     assertEquals(IncomingCallActivity::class.java.name, answer.component!!.className)
     assertEquals(callId, answer.getStringExtra("callId"))
+  }
+
+  @Test fun `declining a notification queues the call action without opening a screen`() {
+    assertEquals(true, NotificationPublisher.postIncomingCall(context, payload, null)["posted"])
+    val decline = manager.activeNotifications.single().notification.actions.map { it.actionIntent }
+      .single { shadowOf(it).savedIntent.getStringExtra("notificationAction") == "reject" }
+    assertTrue(decline.isBroadcast)
+
+    NotificationActionReceiver().onReceive(context, Intent(shadowOf(decline).savedIntent))
+    val pending = ApplicationExecutionHost.takePending()
+    try {
+      assertNull(shadowOf(context).nextStartedActivity)
+      assertTrue(manager.activeNotifications.isEmpty())
+      val response = NotificationStateStore.consumePendingResponses(context).single()
+      assertEquals("reject", response["notificationAction"])
+      assertEquals(callId, response["callId"])
+      assertEquals("call_action", pending.single()["kind"])
+      assertEquals(response, pending.single()["data"])
+    } finally {
+      pending.forEach { ApplicationExecutionHost.complete(it["id"] as String) }
+    }
   }
 
   @Config(sdk = [34])

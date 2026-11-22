@@ -95,6 +95,7 @@ function StickerMessageContent({ sticker }: StickerMessageCardProps) {
           source={{ uri: resolution.localUri }}
           style={imageStyle}
           resizeMode="contain"
+          resizeMethod="resize"
           onError={(event) => {
             console.warn('[StickerMessageCard] 表情图片加载失败', {
               stickerId: sticker.stickerId, mediaAssetId: sticker.mediaAssetId,

@@ -17,6 +17,7 @@ import { AutoSaveErrors } from '@shared/ui/AutoSaveErrors';
 import ModelSection from './ModelSection';
 import { AssistantVoiceModelPicker } from '../AssistantVoiceModelPicker';
 import MaxTokensSection from './MaxTokensSection';
+import ReasoningEffortSection from './ReasoningEffortSection';
 
 import { createModelSettingsStyles } from './styles';
 import { createCommonStyles } from '@shared/ui/commonStyles';
@@ -67,6 +68,7 @@ export default function AIModelSettings({
     serviceConfigId,
     enableTools,
     disableThinking,
+    reasoningEffort,
     isHostAI,
     isCheckingHost,
     isChangingHost,
@@ -77,6 +79,7 @@ export default function AIModelSettings({
     setApiKey,
     setEnableTools,
     setDisableThinking,
+    setReasoningEffort,
 
     // handlers
     handleTempChange,
@@ -174,11 +177,15 @@ export default function AIModelSettings({
           <View style={[styles.section, styles.sectionLightBorder]}>
             <ToggleField
               label="启用思维链"
-              hint="开启时先思考再回答，关闭时请求直接回答。非思考模型不受影响；固定思考模型无法关闭。"
+              hint="开启后允许模型思考，强度设为自动时遵循服务商默认策略。关闭时请求直接回答；固定思考模型无法关闭。"
               value={!disableThinking}
               onValueChange={(enabled) => setDisableThinking(!enabled)}
             />
           </View>
+
+          <ReasoningEffortSection key={`${apiBaseUrl}:${selectedModel}:${disableThinking}`}
+            baseURL={apiBaseUrl} model={selectedModel} value={reasoningEffort}
+            disabled={disableThinking} onChange={setReasoningEffort} />
 
           {/* Temperature 控制 */}
           <View onLayout={feedback.fieldLayout(['tempInput'])}><SliderField
@@ -218,7 +225,6 @@ export default function AIModelSettings({
           <View onLayout={feedback.fieldLayout(['maxTokens'])}><MaxTokensSection
             onBlur={blur}
             error={errors.maxTokens}
-            onSelectPreset={(value) => handleMaxTokensChange(value, true)}
             value={maxTokens}
             onChangeText={handleMaxTokensChange}
           /></View>

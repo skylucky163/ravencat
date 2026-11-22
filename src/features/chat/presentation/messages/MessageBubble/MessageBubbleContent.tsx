@@ -179,8 +179,8 @@ export function createMarkdownStylePreset(
       marginVertical: theme.spacing.sm,
     },
     listItem: {
-      flex: 1,
-      flexWrap: 'wrap',
+      // 让列表正文参与气泡的宽度测量，再按序号占用后的空间伸缩。
+      flexGrow: 1,
       flexShrink: 1,
       minWidth: 0,
     },
@@ -279,6 +279,7 @@ export function createMarkdownStylePreset(
       borderRadius: theme.radius.md,
       marginBottom: 0,
       width: 200,
+      maxWidth: '100%' as const,
     },
     ...customBackgroundOverrides,
   };

@@ -42,7 +42,7 @@
 
 `HeaderAddButton` 默认自带导航头右侧的点击区内边距；与设置等其他头部按钮并排、由页面提供按钮容器时传 `variant="inline"`，并用 `style` 给出尺寸。
 
-模型管理导航通过 `node --no-warnings scripts/verify-model-picker-navigation.mjs` 验证：覆盖七种用途、业务入口映射、同页不重复压栈、弹层移除后跳转、空列表与读取失败入口，以及返回刷新和保留选择。
+模型管理导航通过 `node --no-warnings tests/assistants/verify-model-picker-navigation.mjs` 验证：覆盖七种用途、业务入口映射、同页不重复压栈、弹层移除后跳转、空列表与读取失败入口，以及返回刷新和保留选择。
 
 开关设置项统一使用 `ToggleField`：`layout="stacked"` 将说明放在行下方，`layout="inline"` 将说明放在开关左侧。页面通过 `rowStyle` 提供完整行布局时，组件直接使用该布局；未提供时保留默认表单容器。`contentStyle`、`labelStyle`、`hintStyle` 可替换各部分的默认样式，`style` 和 `toggleStyle` 分别补充外层与开关样式。编号或图标通过 `leading` 传入，状态标签和操作按钮等复杂内容可作为 `children` 保留原有结构。卡片材质与分组由页面负责，组件不保存业务状态；已有列表插槽中的独立开关仍使用 `Toggle`。
 
@@ -132,7 +132,7 @@ showAppDialog({
 快速松手采样最终坐标，系统中断保留最后有效值；禁用时不接受调整。
 `SliderField` 在拖动期间只展示本地预览，松手通过 `onSetValue` 通知表单；手动输入及错误原样交给表单，
 不解析、保存或回填业务草稿。使用这两个组件的页面需位于已有的 `GestureHandlerRootView` 内。
-`npm run verify:ui-slider` 验证手势中断、快速松手、小数步长和已有页面的接入行为；`node --no-warnings scripts/verify-slider-gestures.mjs` 验证纵向让位、激活与取消的手势契约。
+`npm run verify:ui-slider` 验证手势中断、快速松手、小数步长和已有页面的接入行为；`node --no-warnings tests/ui/verify-slider-gestures.mjs` 验证纵向让位、激活与取消的手势契约。
 
 1. 创建 `.tsx` 文件
 2. 默认导出组件

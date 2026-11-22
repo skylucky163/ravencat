@@ -5,6 +5,7 @@ import {
   DEFAULT_CORE_SYSTEM_PROMPTS,
   GROUP_MEMBER_REPLY_CONFIDENTIALITY_RULES,
   DEFAULT_ACTION_DESCRIPTION_PROMPT,
+  DEFAULT_FORMAT_GUIDELINES_PROMPT,
   DEFAULT_IMAGE_GROUNDING_PROMPT,
   DEFAULT_PARAGRAPH_BREAKS_PROMPT,
   PARAGRAPH_BREAK_SCENARIOS,
@@ -75,6 +76,13 @@ export const HOST_PROMPT_DEFINITIONS: PromptDefinitionDescriptor[] = [
     category: 'style', supportedScenarios: [...PARAGRAPH_BREAK_SCENARIOS], defaultSlot: 'foundation', placement: 'system',
     protection: 'overridable', contentKind: 'static', defaultContent: DEFAULT_ACTION_DESCRIPTION_PROMPT,
     contentDescription: '开启后紧随换行规则注入稳定前缀；关闭时完全省略。', sourcePath: FACTORY_SOURCE,
+  }),
+  define({
+    id: 'output.format_guidelines', name: '输出格式规范', owner: 'host',
+    description: '说明 RavenCat 的 Markdown、代码卡片及网页预览规则，帮助 AI 正确组织输出格式。',
+    category: 'style', supportedScenarios: [...PARAGRAPH_BREAK_SCENARIOS], defaultSlot: 'foundation', placement: 'system',
+    protection: 'overridable', contentKind: 'static', defaultContent: DEFAULT_FORMAT_GUIDELINES_PROMPT,
+    contentDescription: '默认关闭，按 AI 独立控制；开启后在系统基础规则之后、AI 人设之前注入稳定前缀。', sourcePath: FACTORY_SOURCE,
   }),
   define({
     id: 'context.protocol_space', name: '协议空间常驻提示词', owner: 'host',

@@ -119,6 +119,8 @@ export default function useChatSettings({
     setShowTokenUsage: (showTokenUsage: boolean) => infoEditor.change({ showTokenUsage }, true),
     showActionSteps: infoEditor.draft.showActionSteps,
     setShowActionSteps: (showActionSteps: boolean) => infoEditor.change({ showActionSteps }, true),
+    manualReply: infoEditor.draft.manualReply,
+    setManualReply: (manualReply: boolean) => infoEditor.change({ manualReply }, true),
     infoSaveError: infoEditor.saveError,
     blocked, commit: infoEditor.commit, flush, back, leave, restoreInfo,
     callBackgroundUri,

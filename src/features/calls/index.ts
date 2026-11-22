@@ -4,6 +4,7 @@ export * from './application';
 export * from './presentation';
 export { LookAtUserTool } from './aiTools/LookAtUserTool';
 export { RequestVideoCallTool } from './aiTools/RequestVideoCallTool';
+export { ReadCallHistoryTool } from './aiTools/ReadCallHistoryTool';
 export type {
   CallDirection,
   CallEndReason,

@@ -59,7 +59,7 @@ Seedream 对照[图片生成 API](https://console.volcengine.com/ark/region:cn-b
 
 ## 自动验证
 
-- `node scripts/verify-image-generation.mjs`：通过，覆盖所有 15 个模型、510 组参数／参考图组合；检查各协议路径、尺寸范围、字段适用性、单次请求、响应解析和诊断脱敏。另覆盖三个 GPT Image 模型在 PNG／JPEG／WebP 下的编辑流、分块事件、取消与缺少最终图片。
+- `node tests/media/verify-image-generation.mjs`：通过，覆盖所有 15 个模型、510 组参数／参考图组合；检查各协议路径、尺寸范围、字段适用性、单次请求、响应解析和诊断脱敏。另覆盖三个 GPT Image 模型在 PNG／JPEG／WebP 下的编辑流、分块事件、取消与缺少最终图片。
 - 参考图限制的边界值与超限输入通过；不满足供应商契约时，在读取 Base64 和发起请求前失败。
 - 原有生图页面、相册保存重试、私有媒体归属、取消与提交资格回归通过。
 - `npm run typecheck`、修改文件 ESLint、`npm run architecture:aliases`、`npm run architecture:check`：通过。

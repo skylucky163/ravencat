@@ -18,7 +18,7 @@ export type ConversationTurnRunStatus =
   | 'cancelled'
   | 'failed';
 
-export type ConversationTurnKind = 'user_reply' | 'regenerate' | 'autonomous';
+export type ConversationTurnKind = 'user_reply' | 'summon' | 'regenerate' | 'autonomous';
 
 export type ConversationTurnTerminalStatus = 'cancelled' | 'failed';
 
@@ -99,6 +99,7 @@ export interface ConversationTurnUnrepliedSession {
   /** 扫描时该会话用户消息的 MAX(messages.id)，供防隐式 retry 判据复用，不再二次查询。 */
   highWatermark: number;
   hasRegeneration?: boolean;
+  hasSummon?: boolean;
 }
 
 /**

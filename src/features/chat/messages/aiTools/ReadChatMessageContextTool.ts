@@ -8,7 +8,7 @@ export const ReadChatMessageContextTool = {
   name: 'read_chat_message_context',
   definition: {
     name: 'read_chat_message_context',
-    description: '按消息ID读取当时的附近聊天原文。可使用 search_chat_messages 返回的 messageId；先定位，再按需补齐语境。返回锚点及前后消息的完整正文、说话者、时间和ID，按当前聊天时间线从旧到新排列。before/after按消息气泡计数，分别默认3条、最多10条，可设0；hasMoreBefore/hasMoreAfter表示是否还有更远消息，可使用返回的边缘消息ID继续读取。只读取自己的单聊或仍参加的群的当前生效、已交付消息；不读取未采用的重写版本、思维链、工具过程、通话记录或媒体文件。',
+    description: '按消息ID读取当时的附近聊天原文及附件、通话引用。可使用 search_chat_messages 返回的 messageId。before/after按消息气泡计数；hasMoreBefore/hasMoreAfter表示是否还有更远消息，可使用返回的边缘消息ID继续读取。',
     parameters: { type: 'object', properties: {
       messageId: { type: 'integer', minimum: 1, description: '要查看附近上下文的消息ID，通常来自聊天原文搜索结果' },
       before: { type: 'integer', minimum: 0, maximum: 10, description: '读取锚点之前的消息气泡数，省略为3' },

@@ -1,4 +1,4 @@
-import type { MediaAssetChatAttachment } from '../../messages/domain/ChatAttachment';
+import type { StoredChatAttachment } from '../../messages/domain/ChatAttachment';
 import type { ChatVoiceMessageMetadata } from '../../messages/domain/chatMessageMetadata';
 
 export type ChatFavoriteCategory = 'text' | 'audio' | 'image' | 'file';
@@ -14,7 +14,7 @@ export interface ChatFavoriteSnapshot {
   /** 仅文字收藏保存同一逻辑消息的思维链；旧收藏没有此快照字段。 */
   reasoningText?: string;
   replyToText: string | null;
-  attachments: MediaAssetChatAttachment[];
+  attachments: StoredChatAttachment[];
   voice: ChatVoiceMessageMetadata['voice'] | null;
 }
 export interface ChatFavorite {
@@ -23,6 +23,11 @@ export interface ChatFavorite {
   category: ChatFavoriteCategory;
   savedAt: string;
   snapshot: ChatFavoriteSnapshot;
+}
+/** 列表批量判断展示状态所需的最小身份；正文快照不参与。 */
+export interface ChatFavoriteRef {
+  id: string;
+  sourceMessageId: number;
 }
 export interface ChatFavoriteCursor { savedAt: string; id: string }
 export interface ChatFavoritePage { items: ChatFavorite[]; nextCursor: ChatFavoriteCursor | null }

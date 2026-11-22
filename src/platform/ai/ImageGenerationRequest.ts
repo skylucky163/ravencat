@@ -8,6 +8,24 @@ export interface ImageGenerationConnection { baseURL: string; apiKey: string; mo
 export function buildImageGenerationRequest(config: ImageGenerationConnection, prompt: string, parameters: ImageGenerationParameters,
   reference: ImageGenerationReference | undefined, preview: boolean): { url: string; body: string | FormData; json: boolean; stream: boolean; diagnosticBody: string } {
   const profile = config.profile;
+  if (profile.provider === 'customOpenAIImages') {
+    const url = new URL(config.baseURL);
+    url.pathname = url.pathname.replace(/\/+$/, '') + '/images/generations';
+    const data = { model: config.model, prompt, n: 1, size: parameters.custom?.size,
+      quality: parameters.custom?.quality, output_format: parameters.custom?.outputFormat };
+    return { url: url.toString(), body: JSON.stringify(data), json: true, stream: false,
+      diagnosticBody: JSON.stringify({ ...data, prompt: '[提示词已省略]' }) };
+  }
+  if (profile.provider === 'kling') {
+    const contents: ({ type: 'prompt'; text: string } | { type: 'refer_image'; url: string; id: string })[] = [{ type: 'prompt', text: prompt }];
+    if (reference) contents.push({ type: 'refer_image', url: reference.base64, id: 'reference' });
+    const data = { contents, settings: {
+      result_type: 'single', n: 1, resolution: parameters.resolution?.toLowerCase(), aspect_ratio: parameters.aspectRatio,
+    } };
+    return { url: new URL('/image-generation/kling-4.0', config.baseURL).toString(),
+      body: JSON.stringify(data), json: true, stream: false,
+      diagnosticBody: JSON.stringify(data, (key, value) => key === 'text' ? '[提示词已省略]' : key === 'url' ? '[参考图已省略]' : value) };
+  }
   const base = normalizeAIBaseURL(config.baseURL);
   if (profile.provider === 'qwen') {
     const content: ({ image: string } | { text: string })[] = [];

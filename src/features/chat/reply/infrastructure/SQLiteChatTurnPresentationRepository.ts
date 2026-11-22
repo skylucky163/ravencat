@@ -2,12 +2,7 @@ import { databaseCoordinator } from '@platform/persistence';
 import type { ConversationTurnRun } from '../domain/ConversationTurn';
 import type { ChatTurnDisplayVersion, ChatTurnPresentationHistory, ChatTurnPresentationWindow, ChatTurnExecutionProgress, ChatTurnExecutionStatus, ChatTurnExecutionPhase, ChatInterruptedTurnContext, ChatTurnDisplaySnapshot } from '../domain/ChatTurnPresentation';
 import type { IChatTurnPresentationRepository } from '../domain/ChatTurnPresentationRepository';
-import { finalizeInterruptedTurnMessagesInTransaction } from './ChatTurnPresentationSql';
-
-const completePresentationSql = `UPDATE chat_turn_presentations SET state = 'completed', updated_at = ? WHERE run_id = ? AND state = 'open'
-  AND EXISTS (SELECT 1 FROM conversation_turn_runs WHERE run_id = ? AND status = 'committed')
-  AND NOT EXISTS (SELECT 1 FROM chat_turn_display_items WHERE run_id = ? AND message_id IS NOT NULL AND (shown_json IS NULL
-    OR json_extract(shown_json, '$.text') <> json_extract(snapshot_json, '$.text')))`;
+import { completeTurnPresentationInTransaction, finalizeInterruptedTurnMessagesInTransaction } from './ChatTurnPresentationSql';
 
 export class ChatTurnPresentationRepository implements IChatTurnPresentationRepository {
   async open(run: ConversationTurnRun): Promise<boolean> {
@@ -40,24 +35,32 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
 
   async getExecutionStatus(sessionId: string): Promise<ChatTurnExecutionStatus | null> {
     const row = await databaseCoordinator.openTaskExecutor({ name: 'chat.execution-status', feature: 'chat', priority: 'interactive' })
-      .getFirstAsync<{ input_id: number; input_at: string; reply_cursor: number; host_request_input_id: number | null;
+      .getFirstAsync<{ regeneration_requested: number;
+        input_id: number; input_at: string; reply_cursor: number; summon_requested: number; host_request_input_id: number | null;
         host_request_status: string | null; host_request_at: string | null; status: string | null; terminal_reason: string | null;
         created_at: string | null; terminal_at: string | null; display_state: string | null; updated_at: string | null;
         phase: ChatTurnExecutionPhase | null; phase_at: string | null }>(
-        `SELECT i.id AS input_id, i.created_at AS input_at, s.reply_cursor, s.host_request_input_id,
+        `SELECT COALESCE(i.id, 0) AS input_id, COALESCE(i.created_at, s.updated_at) AS input_at, s.reply_cursor, s.summon_requested, s.host_request_input_id,
           s.host_request_status, s.host_request_at, r.status, r.terminal_reason, r.created_at, r.terminal_at,
-          p.state AS display_state, p.updated_at, p.phase, p.phase_at
-         FROM messages i JOIN sessions c ON c.id = i.session_id
-         JOIN conversation_turn_state s ON s.session_id = i.session_id
+          p.state AS display_state, p.updated_at, p.phase, p.phase_at,
+          EXISTS (SELECT 1 FROM chat_regeneration_requests q WHERE q.session_id = s.session_id) AS regeneration_requested
+         FROM sessions c JOIN conversation_turn_state s ON s.session_id = c.id
+         LEFT JOIN messages i ON i.id = (SELECT MAX(id) FROM messages WHERE session_id = ? AND is_me = 1
+           AND json_extract(metadata_json, '$.type') IS NOT 'callStatus')
          LEFT JOIN conversation_turn_runs r ON r.run_id = COALESCE(
-           CASE WHEN s.active_run_kind IN ('user_reply', 'regenerate') THEN s.active_run_id END,
-           (SELECT run_id FROM conversation_turn_runs WHERE session_id = i.session_id AND input_high_watermark = i.id
-            AND kind IN ('user_reply', 'regenerate') ORDER BY created_at DESC, rowid DESC LIMIT 1))
+           CASE WHEN s.active_run_kind IN ('user_reply', 'regenerate', 'summon') THEN s.active_run_id END,
+           (SELECT run_id FROM conversation_turn_runs WHERE session_id = c.id AND input_high_watermark = COALESCE(i.id, 0)
+            AND kind IN ('user_reply', 'regenerate', 'summon') ORDER BY created_at DESC, rowid DESC LIMIT 1))
          LEFT JOIN chat_turn_presentations p ON p.run_id = r.run_id
-         WHERE i.session_id = ? AND i.id > COALESCE(c.visible_after_message_id, 0)
-           AND i.id = (SELECT MAX(id) FROM messages WHERE session_id = ? AND is_me = 1
-             AND json_extract(metadata_json, '$.type') IS NOT 'callStatus')`, [sessionId, sessionId]);
+         WHERE c.id = ? AND (i.id IS NULL OR i.id > COALESCE(c.visible_after_message_id, 0))
+           AND (s.reply_requested = 1 OR s.active_run_kind IS 'regenerate'
+             OR EXISTS (SELECT 1 FROM chat_regeneration_requests q WHERE q.session_id = s.session_id))
+         `, [sessionId, sessionId]);
     if (!row) return null;
+    if (row.regeneration_requested) return { phase: 'waiting_host', at: row.input_at };
+    if (row.summon_requested) return row.host_request_status === 'rejected'
+      ? { phase: 'failed', at: row.host_request_at!, reason: 'execution_host_start_rejected' }
+      : { phase: 'waiting_host', at: row.input_at };
     if (row.status === 'failed') return { phase: row.phase === 'request_failed' ? 'request_failed' : 'failed',
       at: row.terminal_at!, reason: row.terminal_reason };
     if (row.status === 'cancelled' || row.status === 'superseded' || row.display_state === 'interrupted') return {
@@ -72,16 +75,16 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
     return { phase: currentRequest && row.host_request_status === 'accepted' ? 'host_started' : 'waiting_host', at: currentRequest ? row.host_request_at! : row.input_at };
   }
 
-  async publishVersions(runId: string, items: readonly ChatTurnDisplayVersion[]): Promise<boolean> {
+  async publishVersions(runId: string, items: readonly ChatTurnDisplayVersion[]): Promise<{ completed: boolean } | null> {
     return databaseCoordinator.transaction({ name: 'chat.publish-presentation', feature: 'chat', priority: 'interactive' }, async tx => {
       const open = await tx.getFirstAsync(`SELECT 1 FROM chat_turn_presentations WHERE run_id = ? AND state = 'open'`, [runId]);
-      if (!open) return false;
+      if (!open) return null;
       for (const { version, snapshot } of items) {
         await tx.runAsync(`UPDATE chat_turn_display_items SET shown_version = ?, shown_json = ?
           WHERE run_id = ? AND identity = ? AND version >= ? AND shown_version < ?`,
         [version, JSON.stringify(snapshot), runId, snapshot.clientMessageId, version, version]);
       }
-      return true;
+      return { completed: await completeTurnPresentationInTransaction(tx, runId) };
     });
   }
 
@@ -91,17 +94,9 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
         JOIN chat_turn_presentations p ON p.run_id = i.run_id WHERE i.message_id = ? AND p.state = 'open'`, [messageId]);
       if (!item) return null;
       await tx.runAsync(`UPDATE chat_turn_display_items SET shown_version = version, shown_json = snapshot_json WHERE message_id = ?`, [messageId]);
-      await tx.runAsync(completePresentationSql, [new Date().toISOString(), item.run_id, item.run_id, item.run_id]);
+      await completeTurnPresentationInTransaction(tx, item.run_id);
       return { version: item.version, snapshot: JSON.parse(item.snapshot_json) };
     });
-  }
-
-  async complete(runId: string): Promise<boolean> {
-    const result = await databaseCoordinator.openTaskExecutor({ name: 'chat.complete-presentation', feature: 'chat', priority: 'interactive' }).runAsync(
-      completePresentationSql,
-      [new Date().toISOString(), runId, runId, runId],
-    );
-    return result.changes === 1;
   }
 
   async listPublishedMessageIds(runIds: readonly string[]): Promise<number[]> {
@@ -113,13 +108,15 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
 
   async listHistory(sessionId: string, window?: ChatTurnPresentationWindow): Promise<ChatTurnPresentationHistory[]> {
     return databaseCoordinator.read({ name: 'chat.presentation-history', feature: 'chat', priority: 'interactive' }, async db => {
-      const runs = await db.getAllAsync<{ run_id: string; kind: ChatTurnPresentationHistory['kind']; state: ChatTurnPresentationHistory['state']; reason: string | null; execution_status: string; created_at: string }>(
-        `SELECT p.run_id, r.kind, p.state, p.reason, r.status AS execution_status, r.created_at FROM chat_turn_presentations p
+      const runs = await db.getAllAsync<{ run_id: string; state: ChatTurnPresentationHistory['state']; reason: string | null; created_at: string }>(
+        `SELECT p.run_id, p.state, p.reason, r.created_at
+           FROM chat_turn_presentations p
            JOIN conversation_turn_runs r ON r.run_id = p.run_id JOIN sessions s ON s.id = p.session_id
+           LEFT JOIN chat_timeline_run_anchors a ON a.turn_run_id = r.run_id AND a.session_id = p.session_id
            LEFT JOIN messages origin ON r.kind = 'autonomous' AND origin.session_id = r.session_id
              AND origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
-           WHERE p.session_id = ? AND CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END > COALESCE(s.visible_after_message_id, 0)
-           AND (CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END >= ? OR r.run_id IN (SELECT value FROM json_each(?)))
+           WHERE p.session_id = ? AND ((r.kind = 'summon' AND r.created_at > COALESCE(s.visible_after_at, '')) OR (r.kind <> 'summon' AND CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END > COALESCE(s.visible_after_message_id, 0)))
+           AND (CASE WHEN r.kind = 'autonomous' THEN origin.id WHEN r.kind = 'summon' THEN a.id ELSE r.input_high_watermark END >= ? OR r.run_id IN (SELECT value FROM json_each(?)))
          ORDER BY r.created_at, r.run_id`, [sessionId, window?.fromMessageId ?? 0, JSON.stringify(window?.runIds ?? [])]);
       const rows = await db.getAllAsync<{ run_id: string; shown_version: number; shown_json: string }>(
         `SELECT run_id, shown_version, shown_json FROM chat_turn_display_items
@@ -132,8 +129,7 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
         items.push({ version: row.shown_version, snapshot: JSON.parse(row.shown_json) });
         itemsByRun.set(row.run_id, items);
       }
-      return runs.map(run => ({ runId: run.run_id, kind: run.kind, state: run.state, reason: run.reason,
-          committed: run.execution_status === 'committed', createdAt: run.created_at,
+      return runs.map(run => ({ runId: run.run_id, state: run.state, reason: run.reason, createdAt: run.created_at,
           items: itemsByRun.get(run.run_id) ?? [] }));
     });
   }
@@ -148,8 +144,9 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
     const rows = await databaseCoordinator.openTaskExecutor({ name: 'chat.interrupted-context', feature: 'chat', priority: 'runtime' })
       .getAllAsync<{ run_id: string; input_high_watermark: number; created_at: string; shown_json: string }>(
         `WITH context_runs AS (
-           SELECT r.rowid AS run_order, r.*, CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END AS context_anchor_id
+           SELECT r.rowid AS run_order, r.*, CASE WHEN r.kind = 'autonomous' THEN origin.id WHEN r.kind = 'summon' THEN a.id ELSE r.input_high_watermark END AS context_anchor_id
            FROM conversation_turn_runs r
+           LEFT JOIN chat_timeline_run_anchors a ON a.turn_run_id = r.run_id AND a.session_id = r.session_id
            LEFT JOIN messages origin ON r.kind = 'autonomous' AND origin.session_id = r.session_id
              AND origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
          ) SELECT r.run_id, r.context_anchor_id AS input_high_watermark, r.created_at,
@@ -157,7 +154,8 @@ export class ChatTurnPresentationRepository implements IChatTurnPresentationRepo
          FROM context_runs r
          JOIN chat_turn_presentations p ON p.run_id = r.run_id JOIN chat_turn_display_items i ON i.run_id = r.run_id
          JOIN sessions s ON s.id = r.session_id
-         WHERE r.session_id = ? AND ((r.kind = 'user_reply' AND r.status IN ('superseded', 'cancelled', 'failed'))
+          WHERE r.session_id = ? AND ((r.status IN ('superseded', 'cancelled', 'failed')
+              AND (r.kind IN ('user_reply','summon') OR (r.kind = 'regenerate' AND i.message_id IS NOT NULL)))
              OR (r.kind = 'autonomous' AND p.state = 'interrupted'))
            AND r.context_anchor_id >= ? AND r.context_anchor_id > COALESCE(s.visible_after_message_id, 0)
            AND (? IS NULL OR r.context_anchor_id < ?) AND i.shown_json IS NOT NULL

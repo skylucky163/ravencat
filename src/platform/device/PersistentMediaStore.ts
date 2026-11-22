@@ -457,6 +457,19 @@ export class PersistentMediaStore {
     return targetUri;
   }
 
+  async writeChatTextDraft(id: string, text: string): Promise<string> {
+    const directory = buildCategoryDirectory(PERSISTENT_MEDIA_CATEGORY.chatFile);
+    const uri = `${directory}${sanitizeSegment(id, 'draft')}.txt`;
+    await this.ensureDirectory(directory);
+    try {
+      await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 });
+      return uri;
+    } catch (error) {
+      await this.deleteIfExists(uri);
+      throw error;
+    }
+  }
+
   async readAsText(uri: string): Promise<string> {
     const normalizedUri = this.resolveFileUri(uri);
     if (!normalizedUri) {

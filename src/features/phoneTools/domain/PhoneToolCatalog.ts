@@ -19,6 +19,8 @@ export type PhoneToolCatalogItemId =
   | 'accessibilityScreenRead'
   | 'ocrScreenRead'
   | 'appLaunch'
+  | 'systemAlarm'
+  | 'systemAlarmPage' | 'systemAlarmDismiss' | 'systemAlarmSnooze' | 'systemAlarmNext'
   | 'softAppLock'
   | 'softAppLockRelease';
 
@@ -96,6 +98,22 @@ export const PHONE_TOOL_CATALOG = [
     description: '使用精确 Android package name 向系统派发普通应用启动请求。',
     implementationStatus: 'available',
   },
+  {
+    id: 'systemAlarm',
+    toolName: 'set_alarm',
+    category: 'action',
+    title: '设置系统闹钟',
+    description: '向手机系统时钟设置一次性或每周重复的闹钟，可指定名称；需要 RavenCat 页面在前台，响铃由系统时钟负责。',
+    implementationStatus: 'available',
+  },
+  { id: 'systemAlarmPage', toolName: 'show_alarms', category: 'action', title: '打开闹钟列表页',
+    description: '打开系统时钟供用户查看和管理；不会向 AI 返回闹钟列表，需要 RavenCat 页面在前台。', implementationStatus: 'available' },
+  { id: 'systemAlarmDismiss', toolName: 'dismiss_alarm', category: 'action', title: '取消下一次响铃',
+    description: '一次性闹钟停用，重复闹钟仅跳过下一次；不会删除。可按下一条、全部、标签或时间请求，系统可能要求选择；需要页面在前台。', implementationStatus: 'available' },
+  { id: 'systemAlarmSnooze', toolName: 'snooze_alarm', category: 'action', title: '闹钟稍后再响',
+    description: '延后当前正在响铃的闹钟；无响铃时无操作，需要 RavenCat 页面在前台。', implementationStatus: 'available' },
+  { id: 'systemAlarmNext', toolName: 'get_next_alarm', category: 'awareness', title: '查询下一个闹钟',
+    description: '读取系统下一个已登记的触发时间，可后台查询；没有名称、ID 或全部列表，查不到不代表没有停用闹钟。', implementationStatus: 'available' },
   {
     id: 'softAppLock',
     toolName: 'soft_lock_app',

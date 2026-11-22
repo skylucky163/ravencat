@@ -125,7 +125,12 @@ export default function ChatFavoritesScreen({ onBack }: { onBack(): void }) {
       <SafeAreaView edges={['top', 'left', 'right', 'bottom']} style={styles.page}>
         <NavigationHeader title="收藏详情" onGoBack={closeDetails} />
         {selected ? <ScrollView contentContainerStyle={styles.details}>
-          <Text style={styles.author}>{selected.authorName} · 来自 {selected.sourceName}</Text>
+          <View style={styles.detailsHeader}>
+            <Text style={styles.author} numberOfLines={1}>{selected.authorName} · 来自 {selected.sourceName}</Text>
+            <TouchableOpacity style={styles.remove} accessibilityRole="button" accessibilityLabel="取消收藏" onPress={() => remove(selected)}>
+              <StarOff size={20} color={theme.colors.icon.secondary} />
+            </TouchableOpacity>
+          </View>
           <Text style={styles.meta}>消息时间：{new Date(selected.snapshot.messageCreatedAt).toLocaleString()}</Text>
           <Text style={styles.meta}>收藏时间：{new Date(selected.savedAt).toLocaleString()}</Text>
           {selected.snapshot.replyToText ? <Text selectable style={[styles.meta, styles.quote]}>{selected.snapshot.replyToText}</Text> : null}
@@ -141,7 +146,6 @@ export default function ChatFavoritesScreen({ onBack }: { onBack(): void }) {
           {selected.snapshot.text ? <Text selectable style={styles.text}>{selected.snapshot.text}</Text> : null}
           {audio(selected)}
           {selected.snapshot.attachments.map(attachment => <AttachmentCard key={attachment.id} attachment={attachment} isMe={false} onPreview={setFile} />)}
-          <TouchableOpacity accessibilityRole="button" onPress={() => remove(selected)}><Text style={styles.link}>取消收藏</Text></TouchableOpacity>
         </ScrollView> : null}
       </SafeAreaView>
     </Modal>

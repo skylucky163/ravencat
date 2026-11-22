@@ -2,6 +2,8 @@
 
 Moments 拥有正文、图片、可见范围、点赞评论、社交未读与单帖详情。用户可看全部合法时刻；AI 查询和互动继续受原帖 ACL 约束。
 
+AI 移入回收站时，仅隐藏它自己发布的动态；时间线分页、单帖、AI 查询与社交未读共同排除这些原帖。它在其他人动态中的互动继续保留，聊天分享仍读取已保存快照。恢复后自己的动态重新可见；彻底删除才在助手删除事务内清理自己的动态及其媒体引用，外部互动不随作者删除。完整边界见 [AI 回收站](../../../docs/architecture/assistant-recycle-bin.md)。
+
 AI 通过 `aiCreateMoment` 发布正文，可选传入 `mediaAssetIds`，按顺序附带最多 9 张已有图片；省略或空数组发布纯文字。图片使用消息、下载或生图已有的媒体 ID，不接受路径或 URL；图片引用与正文、可见范围及社交投递同事务提交，提交后沿用时刻图片理解，失败不影响已发布内容。
 
 用户可从自己的时刻菜单进入「编辑时刻」，复用发布表单修改正文、图片、地点和可见范围；保存时以编辑版本防止旧表单覆盖新内容。AI 使用 `aiEditOwnMoment`，必传 `momentId`，可选传 `content`、`mediaAssetIds`、`audience`：省略保持原值，图片和可见范围整体替换，图片空数组移除全部图片；至少提供一个修改字段。作者身份取自可信上下文，权限检查与修改在同一事务执行，不能编辑他人的时刻。
@@ -24,4 +26,4 @@ AI 朋友圈顶部与该 AI 的个人主页共用 Assistants 持有的个人空�
 
 Chat 保存快照和图片资产引用，原帖删除不改变已发内容。`share_moment` 由 Host 装配，只传 `momentId`，产生当前回合的卡片意图，最终由 Chat 的原有提交 fence 保存。
 
-验证：`npm run verify:moments`（包含编辑权限、部分覆盖、媒体保留、版本冲突、回滚、AI 编辑状态、旧库升级与表单行为）、`npm run verify:chat-message-share` 和 `node scripts/verify-agent-runtime-chat.mjs`。卡片触摸、路由返回与 Android 窗口仍需真机验收。
+验证：`npm run verify:moments`（包含编辑权限、部分覆盖、媒体保留、版本冲突、回滚、AI 编辑状态、旧库升级与表单行为）、`npm run verify:chat-message-share` 和 `node tests/host/verify-agent-runtime-chat.mjs`。卡片触摸、路由返回与 Android 窗口仍需真机验收。

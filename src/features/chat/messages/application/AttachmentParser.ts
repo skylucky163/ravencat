@@ -1,10 +1,10 @@
 /** 新上传文件必须完整读取；长度超限明确拒绝，预览摘要独立截短。 */
 import { persistentMediaStore } from '@platform/device';
-import { isChatTextDocumentFileName } from '../domain/ChatAttachment';
+import { CHAT_TEXT_ATTACHMENT_MAX_LENGTH, isChatTextDocumentFileName } from '../domain/ChatAttachment';
 
-const MAX_PARSED_TEXT_LENGTH = 6000;
 const MAX_PREVIEW_LENGTH = 240;
-const PREVIEWABLE_TEXT_FILE_EXTENSIONS = new Set(['txt', 'md', 'json', 'csv']);
+// 导入的 HTML 走纯文字预览，保留源码，不在应用内执行。
+const PREVIEWABLE_TEXT_FILE_EXTENSIONS = new Set(['txt', 'md', 'json', 'csv', 'html', 'htm']);
 const SUPPORTED_TEXT_FILE_LABEL = 'TXT 和 MD';
 
 export interface ParseAttachmentResult {
@@ -74,16 +74,11 @@ class AttachmentParser implements AttachmentParserService {
       const rawText = await persistentMediaStore.readAsText(input.localUri);
       if (rawText.includes('\u0000')) throw new Error('文件包含无法读取的内容，请使用 UTF-8 编码的 TXT/MD 文件');
       const parsedText = normalizeTextContent(rawText);
-      if (Array.from(parsedText).length > MAX_PARSED_TEXT_LENGTH) {
-        throw new Error(`文件正文不能超过 ${MAX_PARSED_TEXT_LENGTH} 个字符，请拆分后发送`);
+      if (parsedText.length > CHAT_TEXT_ATTACHMENT_MAX_LENGTH) {
+        throw new Error(`文件正文不能超过 ${CHAT_TEXT_ATTACHMENT_MAX_LENGTH.toLocaleString('zh-CN')} 个字符，请拆分后发送`);
       }
-      return {
-        parseStatus: 'success',
-        parsedText,
-        previewText: truncateText(parsedText.replace(/\n+/g, ' '), MAX_PREVIEW_LENGTH),
-        parserName,
-        parseError: null,
-      };
+      return { parseStatus: 'success', parsedText,
+        previewText: truncateText(parsedText.replace(/\n+/g, ' '), MAX_PREVIEW_LENGTH), parserName, parseError: null };
     } catch (error) {
       return {
         parseStatus: 'failed',

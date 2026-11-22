@@ -16,6 +16,7 @@ export interface AssistantPromptEditorDetails {
   directToolNames: string[];
   paragraphBreaksEnabled: boolean;
   actionDescriptionEnabled: boolean;
+  formatGuidelinesEnabled: boolean;
   imageGroundingEnabled: boolean;
   timeEnabled: boolean;
   messageTimestampsEnabled: boolean;
@@ -42,6 +43,7 @@ export interface ResolvedAssistantPromptConfiguration {
   agentRegistryExcludedAssistantIds: string[];
   paragraphBreaksEnabled: boolean;
   actionDescriptionEnabled: boolean;
+  formatGuidelinesEnabled: boolean;
   timeEnabled: boolean;
   messageTimestampsEnabled: boolean;
   batteryEnabled: boolean;
@@ -85,6 +87,7 @@ export async function getAssistantPromptEditorDetails(
     settings,
     paragraphBreaksEnabled: states.find((state) => state.definitionId === 'output.paragraph_breaks')?.enabled ?? false,
     actionDescriptionEnabled: states.find((state) => state.definitionId === 'output.action_description')?.enabled ?? false,
+    formatGuidelinesEnabled: states.find((state) => state.definitionId === 'output.format_guidelines')?.enabled ?? false,
     imageGroundingEnabled: states.find((state) => state.definitionId === 'input.image_grounding')?.enabled ?? true,
     timeEnabled: states.find((state) => state.definitionId === 'context.time_awareness')?.enabled ?? true,
     messageTimestampsEnabled: states.find((state) => state.definitionId === 'context.message_timestamps')?.enabled ?? false,
@@ -130,6 +133,7 @@ export async function resolveAssistantPromptConfiguration(params: {
   return {
     paragraphBreaksEnabled: states.find((state) => state.definitionId === 'output.paragraph_breaks')?.enabled ?? false,
     actionDescriptionEnabled: states.find((state) => state.definitionId === 'output.action_description')?.enabled ?? false,
+    formatGuidelinesEnabled: states.find((state) => state.definitionId === 'output.format_guidelines')?.enabled ?? false,
     timeEnabled: states.find((state) => state.definitionId === 'context.time_awareness')?.enabled ?? true,
     messageTimestampsEnabled: states.find((state) => state.definitionId === 'context.message_timestamps')?.enabled ?? false,
     batteryEnabled: states.find((state) => state.definitionId === 'context.device_battery')?.enabled ?? true,
@@ -177,6 +181,14 @@ export async function resolveVisionOCRPrompt(assistantId: string): Promise<strin
   return overrides.find((override) => override.definitionId === 'internal.vision_ocr' && override.locale === RESOLVED_PROMPT_LOCALE)?.content
     ?? defaults.overrides['internal.vision_ocr']
     ?? dependencies.catalog.getById('internal.vision_ocr')!.defaultContent!;
+}
+
+/** 群聊管理员调度只有全局一份正文，不借用任何 AI 的覆盖。 */
+export async function resolveGroupAdminPrompt(): Promise<string> {
+  const dependencies = getPromptingRuntimeDependencies();
+  const defaults = await dependencies.defaults.read();
+  return defaults.overrides['scenario.group_admin_schedule']
+    ?? dependencies.catalog.getById('scenario.group_admin_schedule')!.defaultContent!;
 }
 
 /** 群摘要没有所属 AI，只读全局正文；单聊仍按来源 AI 覆盖优先。 */
@@ -312,17 +324,12 @@ export function updateAssistantUserPrompt(
 }
 
 export function reorderAssistantUserPrompts(
-  first: AssistantUserPrompt,
-  second: AssistantUserPrompt
-): Promise<AssistantUserPrompt[]> {
-  if (first.assistantId !== second.assistantId) {
-    throw new Error('只能调整同一 AI 的提示词顺序');
-  }
-  const updatedAt = new Date().toISOString();
-  return getPromptingRuntimeDependencies().assistantPrompts.saveAssistantUserPrompts([
-    { ...first, sortOrder: second.sortOrder, updatedAt },
-    { ...second, sortOrder: first.sortOrder, updatedAt },
-  ]);
+  assistantId: string,
+  promptIds: readonly string[]
+): Promise<void> {
+  return getPromptingRuntimeDependencies().assistantPrompts.reorderAssistantUserPrompts(
+    assistantId, promptIds, new Date().toISOString(),
+  );
 }
 
 export function deleteAssistantUserPrompt(id: string, assistantId: string): Promise<boolean> {

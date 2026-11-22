@@ -10,6 +10,8 @@
 // AI 配置类型
 // ============================================================================
 
+export type ReasoningEffort = 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface AIClientConfig {
   baseURL: string;
   apiKey: string;
@@ -19,6 +21,9 @@ export interface AIClientConfig {
   topP?: number | null;
   systemPrompt?: string;
   disableThinking?: boolean;
+  reasoningEffort?: ReasoningEffort;
+  /** 仅声明 content 使用开头 think 标签的接口启用；未声明时只识别已知标签模型。 */
+  thinkTagMode?: 'off' | 'leading';
 }
 
 // ============================================================================
@@ -41,6 +46,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string | ContentPart[];
   reasoning_content?: string;
+  /** 本次工具续轮的原始思考载荷，由 Provider 在序列化时展开，不写入历史聊天。 */
+  reasoningReplay?: OpenAIReasoningReplay;
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
@@ -68,6 +75,7 @@ export interface ChatResponse {
   usageReported?: boolean;
   text: string;
   reasoningText?: string;
+  reasoningReplay?: OpenAIReasoningReplay;
   /** Provider 已返回的原始 finish_reason，供 Agent adapter 做语义归一化。 */
   finishReason?: string | null;
   messageId: string | null;
@@ -217,8 +225,9 @@ export interface ChatStreamWithToolsOptions extends ChatWithToolsOptions {
 
 export interface ConnectionTestOptions {
   disableThinking?: boolean;
+  reasoningEffort?: ReasoningEffort;
   temperature?: number | null;
-  maxTokens?: number;
+  maxTokens?: number | null;
   topP?: number | null;
   skipParams?: boolean;
 }
@@ -238,15 +247,33 @@ export interface OpenAIChatUsage {
 export interface OpenAIChatCompletionResponse {
   id?: string;
   choices?: {
-    message?: {
-      content?: string | null;
-      reasoning_content?: string;
-      reasoning?: unknown;
-      tool_calls?: unknown[];
-    };
+    message?: OpenAIAssistantPayload;
     finish_reason?: string;
   }[];
   usage?: OpenAIChatUsage;
+}
+
+/** 外部字段只在 Provider 边界解释；未知 detail 字段与签名仍完整保留。 */
+export interface OpenAIAssistantPayload {
+  content?: unknown;
+  reasoning_content?: unknown;
+  reasoning?: unknown;
+  reasoning_details?: unknown;
+  tool_calls?: unknown[];
+}
+
+/** 仅随现有 ModelHistoryItem 在本次执行内回放，不新增持久化事实。 */
+export interface OpenAIReasoningReplay {
+  content?: string | unknown[];
+  reasoning_content?: string;
+  reasoning_details?: Record<string, unknown>[];
+}
+
+/** 只记录协议位置和问题类别，不包含模型内容或凭据，不进入用户消息及请求体。 */
+export interface AIProtocolIssue {
+  code: 'details_not_array' | 'invalid_detail' | 'detail_identity_conflict' | 'invalid_detail_field';
+  path: string;
+  frame: number;
 }
 
 export interface OpenAIEmbeddingResponse {

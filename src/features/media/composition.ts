@@ -31,3 +31,4 @@ export {
 export { configureImageGenerationModels, notifyImageGenerationModelsChanged } from './application/ImageGenerationModels';
 export { SQLiteImageGenerationSettingsRepository } from './infrastructure/SQLiteImageGenerationSettingsRepository';
 export { SQLiteAIGeneratedImageRepository } from './infrastructure/SQLiteAIGeneratedImageRepository';
+export { createConfiguredGenerateImageTool } from './application/GenerateImageTool';

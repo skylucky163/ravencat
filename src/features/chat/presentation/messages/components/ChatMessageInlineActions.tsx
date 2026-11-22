@@ -1,41 +1,17 @@
-/** 渲染助手消息下方的快捷操作按钮，并通过回调上报用户选择。 */
+/** 助手回复尾部的复制和分享入口。 */
 
 import React, { memo } from 'react';
 import { View, TouchableOpacity, StyleSheet, type ViewStyle } from 'react-native';
-import { Copy, CornerUpRight, Leaf, ThumbsUp, ThumbsDown, Volume2, type LucideIcon } from 'lucide-react-native';
-
-import { useTheme, useThemedStyles } from '@shared/theme';
-import type { PresentationTheme } from '@shared/theme';
-
-export type ChatMessageInlineActionKey =
-  | 'read-aloud'
-  | 'copy'
-  | 'like'
-  | 'dislike'
-  | 'save-memory'
-  | 'share';
+import { Ionicons } from '@expo/vector-icons';
+import { Copy } from 'lucide-react-native';
+import { useTheme, useThemedStyles, type PresentationTheme } from '@shared/theme';
+import { copyChatMessageText } from './copyChatMessageText';
 
 interface ChatMessageInlineActionsProps {
-  onActionPress?: (action: ChatMessageInlineActionKey) => void;
+  text: string;
+  onShare?: () => void;
   style?: ViewStyle;
 }
-
-type InlineActionItem = {
-  key: ChatMessageInlineActionKey;
-  Icon: LucideIcon;
-};
-
-const LEFT_ACTIONS: InlineActionItem[] = [
-  { key: 'read-aloud', Icon: Volume2 },
-  { key: 'copy', Icon: Copy },
-  { key: 'like', Icon: ThumbsUp },
-  { key: 'dislike', Icon: ThumbsDown },
-];
-
-const RIGHT_ACTIONS: InlineActionItem[] = [
-  { key: 'save-memory', Icon: Leaf },
-  { key: 'share', Icon: CornerUpRight },
-];
 
 const createStyles = (theme: PresentationTheme) =>
   StyleSheet.create({
@@ -45,12 +21,6 @@ const createStyles = (theme: PresentationTheme) =>
       marginBottom: theme.spacing.lg,
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    actionGroup: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: theme.spacing.sm,
     },
     actionButton: {
       width: 26,
@@ -58,31 +28,43 @@ const createStyles = (theme: PresentationTheme) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
+    shareButton: {
+      marginLeft: 'auto',
+    },
   });
 
-function ChatMessageInlineActions({ onActionPress, style }: ChatMessageInlineActionsProps) {
+function ChatMessageInlineActions({ text, onShare, style }: ChatMessageInlineActionsProps) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
-
-  const renderAction = (item: InlineActionItem) => (
-    <TouchableOpacity
-      key={item.key}
-      style={styles.actionButton}
-      activeOpacity={0.7}
-      onPress={() => onActionPress?.(item.key)}
-    >
-      <item.Icon size={18} strokeWidth={1.9} color={theme.colors.icon.secondary} />
-    </TouchableOpacity>
-  );
+  const canCopy = text.trim().length > 0;
+  if (!canCopy && !onShare) return null;
 
   return (
     <View style={[styles.container, style]}>
-      <View style={styles.actionGroup}>
-        {LEFT_ACTIONS.map(renderAction)}
-      </View>
-      <View style={styles.actionGroup}>
-        {RIGHT_ACTIONS.map(renderAction)}
-      </View>
+      {canCopy && (
+        <TouchableOpacity
+          style={styles.actionButton}
+          activeOpacity={0.7}
+          hitSlop={9}
+          accessibilityRole="button"
+          accessibilityLabel="复制"
+          onPress={() => copyChatMessageText(text)}
+        >
+          <Copy size={20} strokeWidth={1.8} color={theme.colors.icon.secondary} />
+        </TouchableOpacity>
+      )}
+      {onShare && (
+        <TouchableOpacity
+          style={[styles.actionButton, styles.shareButton]}
+          activeOpacity={0.7}
+          hitSlop={9}
+          accessibilityRole="button"
+          accessibilityLabel="分享"
+          onPress={onShare}
+        >
+          <Ionicons name="arrow-redo-outline" size={22} color={theme.colors.icon.secondary} />
+        </TouchableOpacity>
+      )}
     </View>
   );
 }

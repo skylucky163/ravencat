@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import type { AIProtocolIssue } from './types';
 
 export interface AIHttpExchange {
   id: string;
@@ -12,6 +13,7 @@ export interface AIHttpExchange {
   requestBody: string;
   responseBody: string;
   error: string | null;
+  protocolIssues?: AIProtocolIssue[];
 }
 
 export interface AIHttpDiagnosticsSnapshot {
@@ -69,6 +71,9 @@ function sanitizeExchange(exchange: AIHttpExchange, apiKey?: string): AIHttpExch
     requestBody: redact(exchange.requestBody),
     responseBody: redact(exchange.responseBody),
     error: exchange.error === null ? null : redact(exchange.error),
+    ...(exchange.protocolIssues?.length ? { protocolIssues: exchange.protocolIssues.map(issue => ({
+      code: redact(issue.code) as AIProtocolIssue['code'], path: redact(issue.path), frame: issue.frame,
+    })) } : {}),
   };
 }
 
@@ -80,7 +85,10 @@ function isExchange(value: unknown): value is AIHttpExchange {
     && record.method === 'POST'
     && (record.transport === 'complete' || record.transport === 'stream')
     && (record.status === null || typeof record.status === 'number')
-    && (record.error === null || typeof record.error === 'string');
+    && (record.error === null || typeof record.error === 'string')
+    && (record.protocolIssues === undefined || Array.isArray(record.protocolIssues) && record.protocolIssues.every(issue =>
+      typeof issue === 'object' && issue !== null && typeof issue.code === 'string' && typeof issue.path === 'string'
+        && Number.isInteger(issue.frame) && issue.frame > 0));
 }
 
 function parseDiagnosticsState(value: unknown): { version: 1; enabled: boolean; records: AIHttpExchange[] } {

@@ -19,6 +19,7 @@ const BLOCK_METADATA: Partial<Record<PromptPackBlock['key'], PromptBlockMetadata
   persona: { definitionId: 'persona.assistant', slot: 'persona', protection: 'editable' },
   paragraph_breaks: { definitionId: 'output.paragraph_breaks', slot: 'foundation', protection: 'overridable' },
   action_description: { definitionId: 'output.action_description', slot: 'foundation', protection: 'overridable' },
+  format_guidelines: { definitionId: 'output.format_guidelines', slot: 'foundation', protection: 'overridable' },
   protocol_space: { definitionId: 'context.protocol_space', slot: 'user_rules', protection: 'locked' },
   tool_context_explanation: { definitionId: 'context.tool_explanation', slot: 'capabilities', protection: 'locked' },
   agent_registry_summary: { definitionId: 'context.agent_registry', slot: 'user_rules', protection: 'overridable' },

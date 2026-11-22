@@ -1,5 +1,6 @@
 /** 服务与用途分离；升级保留模型 ID、摘要引用与全部业务参数。 */
 import type { DatabaseWriteExecutor } from '../runtime';
+import { addColumnIfMissing } from './schemaColumnGuard';
 
 export const LEGACY_MODEL_SERVICE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS model_service_configs (
@@ -17,7 +18,7 @@ INSERT OR IGNORE INTO model_service_settings(id) VALUES (1);
 
 export async function migrateModelServices(db: DatabaseWriteExecutor): Promise<void> {
   for (const table of ['auxiliary_model_configs', 'ai_assistants', 'group_chat_admin_configs']) {
-    await db.execAsync(`ALTER TABLE ${table} ADD COLUMN service_config_id TEXT REFERENCES model_service_configs(id);`);
+    await addColumnIfMissing(db, table, 'service_config_id', 'TEXT REFERENCES model_service_configs(id)');
   }
   // general 的模型部分成为摘要资产，原 ID 不变；已停用、空连接和失效引用也原样保留。
   await db.execAsync("UPDATE auxiliary_model_configs SET capability_kind = 'summary' WHERE capability_kind = 'general';");

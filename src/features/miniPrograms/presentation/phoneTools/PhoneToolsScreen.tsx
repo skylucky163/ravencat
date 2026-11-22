@@ -3,7 +3,7 @@
 import { ToggleDetailRow, ToggleField } from '@shared/ui';
 import React from 'react';
 import { StyleSheet, ScrollView, Text, View } from 'react-native';
-import { ClipboardPaste, MapPin, Music2, NotebookPen } from 'lucide-react-native';
+import { AlarmClock, AlarmClockCheck, AlarmClockOff, AlarmClockPlus, List, ClipboardPaste, MapPin, Music2, NotebookPen } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -39,7 +39,7 @@ const PHONE_TOOL_ICONS = {
   appLaunch: 'open-outline',
   softAppLock: 'lock-closed-outline',
   softAppLockRelease: 'lock-open-outline',
-} as const satisfies Record<Exclude<PhoneToolCatalogItemId, 'currentLocation' | 'clipboardRead'>, keyof typeof Ionicons.glyphMap>;
+} as const satisfies Record<Exclude<PhoneToolCatalogItemId, 'currentLocation' | 'clipboardRead' | 'systemAlarm' | 'systemAlarmPage' | 'systemAlarmDismiss' | 'systemAlarmSnooze' | 'systemAlarmNext'>, keyof typeof Ionicons.glyphMap>;
 
 const PACKAGE_ICONS = { notebook: NotebookPen, music: Music2 };
 
@@ -158,7 +158,12 @@ export default function PhoneToolsScreen({
                 const rowContent = (
                   <>
                     <View style={styles.iconContainer}>
-                      {tool.id === 'currentLocation' ? <MapPin size={20} color={theme.colors.brand.primary} />
+                      {tool.id === 'systemAlarm' ? <AlarmClock size={20} color={theme.colors.brand.primary} />
+                        : tool.id === 'systemAlarmPage' ? <List size={20} color={theme.colors.brand.primary} />
+                        : tool.id === 'systemAlarmDismiss' ? <AlarmClockOff size={20} color={theme.colors.brand.primary} />
+                        : tool.id === 'systemAlarmSnooze' ? <AlarmClockPlus size={20} color={theme.colors.brand.primary} />
+                        : tool.id === 'systemAlarmNext' ? <AlarmClockCheck size={20} color={theme.colors.brand.primary} />
+                        : tool.id === 'currentLocation' ? <MapPin size={20} color={theme.colors.brand.primary} />
                         : tool.id === 'clipboardRead' ? <ClipboardPaste size={20} color={theme.colors.brand.primary} /> : <Ionicons
                         name={PHONE_TOOL_ICONS[tool.id]}
                         size={20}

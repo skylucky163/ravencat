@@ -26,6 +26,7 @@ export interface ChatDetailAIAssistantLike {
   temperature?: number | null;
   topP?: number | null;
   disableThinking?: boolean;
+  reasoningEffort?: import('@platform/ai').ReasoningEffort;
   maxTokens?: number | null;
   privateContextPrimaryLimit?: number;
   privateContextSecondaryLimit?: number;
@@ -37,6 +38,7 @@ export interface ChatDetailAIAssistantLike {
   streamingReply?: boolean | null;
   showTokenUsage?: boolean;
   showActionSteps?: boolean;
+  manualReply: boolean;
   isHostAI?: boolean;
   isBlocked?: boolean;
 }
@@ -126,6 +128,7 @@ export function buildAIRequestConfig(
     temperature: aiAssistant.temperature,
     topP: aiAssistant.topP,
     disableThinking: aiAssistant.disableThinking,
+    reasoningEffort: aiAssistant.reasoningEffort,
     maxTokens: aiAssistant.maxTokens,
     privateContextPrimaryLimit: aiAssistant.privateContextPrimaryLimit,
     privateContextSecondaryLimit: aiAssistant.privateContextSecondaryLimit,
@@ -133,6 +136,7 @@ export function buildAIRequestConfig(
     groupContextSecondaryLimit: aiAssistant.groupContextSecondaryLimit,
     systemPrompt: aiAssistant.systemPrompt,
     enableTools: aiAssistant.enableTools,
+    manualReply: aiAssistant.manualReply,
     allowMultipleBubbles: aiAssistant.allowMultipleBubbles,
     enableStreamingReply: aiAssistant.streamingReply ?? undefined,
     isHostAI: aiAssistant.isHostAI,

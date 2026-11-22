@@ -9,5 +9,7 @@ export default function ChatSearchRoute() {
   if (!aiId) return <Redirect href={'/conversations' as Href} />;
   return <ChatSearchRouteScreen aiId={aiId} onOpenMessage={messageId => router.push({
     pathname: '/chat/[aiId]/message-context', params: { aiId, messageId },
-  } as Href)} />;
+  } as Href)} onOpenCall={callId => router.push({
+    pathname: '/chat/[aiId]/call-history/[callId]', params: { aiId, callId },
+  })} />;
 }

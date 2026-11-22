@@ -18,9 +18,10 @@ import { migrateAIScheduleContext, migrateAIScheduleTiming } from './ravenCatCom
 import { migrateStickerEmbeddingIndexControl, migrateStickerRecognitionPolicy } from './stickerSchema';
 import { migrateChatFavoriteIdentities } from './chatFavoriteSchema';
 import { migrateChatCodeLibrary } from './chatCodePreviewSchema';
+import { addColumnIfMissing } from './schemaColumnGuard';
 
-/** 176 将服务配置分成共享地址与独立 Key，保留已有用途引用。 */
-export const DATABASE_SCHEMA_VERSION = 176;
+/** 181 群聊管理员提示词改为提示词中心全局一份，退役群级 system_prompt。 */
+export const DATABASE_SCHEMA_VERSION = 181;
 /** 114/115 是旧代码里的迁移编号；已发布数据库实际停在 user_version=108。 */
 const PUBLIC_RELEASE_VERSION = 108;
 
@@ -46,6 +47,29 @@ async function assertPublicReleaseSchema(db: DatabaseWriteExecutor): Promise<voi
   }
 }
 
+/** 旧库只记录配置更新时间，只有正文一致时才能自动迁为全局正文。 */
+async function retireGroupAdminSystemPrompt(db: DatabaseWriteExecutor): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(group_chat_admin_configs)');
+  if (!columns.some((column) => column.name === 'system_prompt')) return;
+  const promoted = await db.runAsync(
+    `INSERT INTO prompt_default_overrides (definition_id, content)
+     SELECT 'scenario.group_admin_schedule', MIN(system_prompt)
+     FROM group_chat_admin_configs
+     WHERE system_prompt IS NOT NULL AND TRIM(system_prompt) != ''
+     HAVING COUNT(DISTINCT system_prompt) = 1
+     ON CONFLICT(definition_id) DO NOTHING`,
+  );
+  if (promoted.changes === 0) {
+    // 已有全局正文或存在多份不同正文，由用户在编辑页选择是否带入旧内容。
+    await db.execAsync(`INSERT INTO prompt_legacy_group_admin_texts (group_id, group_name, content)
+      SELECT config.group_id, chats.name, config.system_prompt
+      FROM group_chat_admin_configs AS config
+      JOIN group_chats AS chats ON chats.id = config.group_id
+      WHERE config.system_prompt IS NOT NULL AND TRIM(config.system_prompt) != '';`);
+  }
+  await db.execAsync('ALTER TABLE group_chat_admin_configs DROP COLUMN system_prompt;');
+}
+
 /**
  * 初始化入口持有独占写作用域；此处拥有 schema/default/version 的事务。
  * 无升级时只补默认记录，支持恢复出厂后重建，不再扫描或删除历史业务数据。
@@ -64,14 +88,14 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
     }
     return;
   }
-  if (version !== 0 && version !== PUBLIC_RELEASE_VERSION && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166 && version !== 167 && version !== 168 && version !== 169 && version !== 170 && version !== 171 && version !== 172 && version !== 173 && version !== 174 && version !== 175) {
+  if (version !== 0 && version !== PUBLIC_RELEASE_VERSION && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166 && version !== 167 && version !== 168 && version !== 169 && version !== 170 && version !== 171 && version !== 172 && version !== 173 && version !== 174 && version !== 175 && version !== 176 && version !== 177 && version !== 178 && version !== 179 && version !== 180) {
     throw new Error(`数据库版本 ${version} 不受当前版本支持，请使用匹配的 RavenCat 版本。`);
   }
   const tables = await db.getAllAsync<{ name: string }>(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'android_metadata'",
   );
   const fresh = tables.length === 0;
-  if (!fresh && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166 && version !== 167 && version !== 168 && version !== 169 && version !== 170 && version !== 171 && version !== 172 && version !== 173 && version !== 174 && version !== 175) {
+  if (!fresh && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166 && version !== 167 && version !== 168 && version !== 169 && version !== 170 && version !== 171 && version !== 172 && version !== 173 && version !== 174 && version !== 175 && version !== 176 && version !== 177 && version !== 178 && version !== 179 && version !== 180) {
     // 在任何 DDL/default 写入之前检查；失败不修改旧库。
     await assertPublicReleaseSchema(db);
     const retiredTables = new Set(['raven_cat_self_wakes', 'capability_bindings', 'assistant_capability_bindings', 'memory_entries']);
@@ -87,10 +111,10 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
     if (!fresh && version === 118) await migrateFixedChatContext(db);
     if (!fresh && version < 120) await migrateStickerOwnership(db);
     if (!fresh && version < 122) {
-      await db.execAsync('ALTER TABLE ai_assistants ADD COLUMN show_token_usage INTEGER NOT NULL DEFAULT 1;');
+      await addColumnIfMissing(db, 'ai_assistants', 'show_token_usage', 'INTEGER NOT NULL DEFAULT 1');
     }
     if (!fresh && version < 125) {
-      await db.execAsync('ALTER TABLE ai_assistants ADD COLUMN nickname TEXT;');
+      await addColumnIfMissing(db, 'ai_assistants', 'nickname', 'TEXT');
     }
     if (!fresh && version < 126) await migrateChatSummaryModels(db);
     // 工具包暴露只是临时选择，不兼容旧三轮状态；重建空表，其他业务资料保持不变。
@@ -99,8 +123,8 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
       await db.execAsync(name === 'modelServices' && !fresh && version < 176 ? LEGACY_MODEL_SERVICE_SCHEMA : sql);
     }
     if (!fresh && version < 175) {
-      await db.execAsync('ALTER TABLE moments ADD COLUMN edited_at TEXT;');
-      await db.execAsync('ALTER TABLE moments ADD COLUMN edit_revision INTEGER NOT NULL DEFAULT 0;');
+      await addColumnIfMissing(db, 'moments', 'edited_at', 'TEXT');
+      await addColumnIfMissing(db, 'moments', 'edit_revision', 'INTEGER NOT NULL DEFAULT 0');
     }
     if (!fresh && version < 174) await migrateChatCodeLibrary(db, version);
     if (!fresh && version < 169) await migrateChatFavoriteIdentities(db);
@@ -117,14 +141,14 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
     if (!fresh) await migrateChatTurnPublication(db);
     if (!fresh && version < 135) await migrateAssistantNicknameHistory(db, version);
     if (!fresh && version < 136) {
-      await db.execAsync('ALTER TABLE raven_cat_ai_schedules ADD COLUMN system_calendar INTEGER NOT NULL DEFAULT 0 CHECK (system_calendar IN (0, 1));');
+      await addColumnIfMissing(db, 'raven_cat_ai_schedules', 'system_calendar', 'INTEGER NOT NULL DEFAULT 0 CHECK (system_calendar IN (0, 1))');
     }
     if (!fresh && version < 138) await migrateChatSummaryPrimaryLimit(db);
     if (!fresh && version < 139) {
-      await db.execAsync('ALTER TABLE ai_assistants ADD COLUMN show_action_steps INTEGER NOT NULL DEFAULT 1;');
+      await addColumnIfMissing(db, 'ai_assistants', 'show_action_steps', 'INTEGER NOT NULL DEFAULT 1');
     }
     if (!fresh && version < 140) {
-      await db.execAsync('ALTER TABLE ai_assistants ADD COLUMN streaming_reply INTEGER CHECK (streaming_reply IN (0, 1));');
+      await addColumnIfMissing(db, 'ai_assistants', 'streaming_reply', 'INTEGER CHECK (streaming_reply IN (0, 1))');
     }
     if (!fresh && version < 141) await migrateGroupMembership(db);
     for (const sql of Object.values(INDEXES)) await db.execAsync(sql);
@@ -132,15 +156,13 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
     if (!fresh && version < 145) await migrateMomentAnalysisErrorMessage(db);
     if (!fresh && version < 149) await migrateAIScheduleContext(db);
     if (!fresh && version < 150) {
-      const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(web_search_settings)');
-      if (!columns.some(column => column.name === 'connection_mode')) {
-        await db.execAsync("ALTER TABLE web_search_settings ADD COLUMN connection_mode TEXT NOT NULL DEFAULT 'direct' CHECK (connection_mode IN ('direct', 'system'));");
-      }
+      await addColumnIfMissing(db, 'web_search_settings', 'connection_mode', "TEXT NOT NULL DEFAULT 'direct' CHECK (connection_mode IN ('direct', 'system'))");
     }
     if (!fresh && version < 152) {
       const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(memory_model_settings)');
-      if (!columns.some(column => column.name === 'embedding_enabled')) {
-        await db.execAsync('ALTER TABLE memory_model_settings ADD COLUMN embedding_enabled INTEGER NOT NULL DEFAULT 0 CHECK (embedding_enabled IN (0, 1));');
+      const alreadyPresent = columns.some((column) => column.name === 'embedding_enabled');
+      await addColumnIfMissing(db, 'memory_model_settings', 'embedding_enabled', 'INTEGER NOT NULL DEFAULT 0 CHECK (embedding_enabled IN (0, 1))');
+      if (!alreadyPresent) {
         // 已有安装按原实际选择保留启用状态，新安装默认关闭。
         await db.execAsync('UPDATE memory_model_settings SET embedding_enabled = CASE WHEN embedding_model_config_id IS NULL THEN 0 ELSE 1 END;');
       }
@@ -174,7 +196,7 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
     }
     if (!fresh) await migrateApplicationSettingsTools(db);
     if (!fresh && version < 170) await migrateAIScheduleTiming(db);
-    if (!fresh && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166 && version !== 167 && version !== 168 && version !== 169 && version !== 170 && version !== 171 && version !== 172 && version !== 173 && version !== 174 && version !== 175) {
+    if (!fresh && version !== 116 && version !== 117 && version !== 118 && version !== 119 && version !== 120 && version !== 121 && version !== 122 && version !== 123 && version !== 124 && version !== 125 && version !== 126 && version !== 127 && version !== 128 && version !== 129 && version !== 130 && version !== 131 && version !== 132 && version !== 133 && version !== 134 && version !== 135 && version !== 136 && version !== 137 && version !== 138 && version !== 139 && version !== 140 && version !== 141 && version !== 142 && version !== 143 && version !== 144 && version !== 145 && version !== 146 && version !== 147 && version !== 148 && version !== 149 && version !== 150 && version !== 151 && version !== 152 && version !== 153 && version !== 154 && version !== 155 && version !== 156 && version !== 157 && version !== 158 && version !== 159 && version !== 160 && version !== 161 && version !== 162 && version !== 163 && version !== 164 && version !== 165 && version !== 166 && version !== 167 && version !== 168 && version !== 169 && version !== 170 && version !== 171 && version !== 172 && version !== 173 && version !== 174 && version !== 175 && version !== 176 && version !== 177 && version !== 178 && version !== 179) {
       // 纳入公开版115的定向修复：只清理无有效主体的 MCP 授权，正常授权原样保留。
       await db.execAsync(`
         DELETE FROM mcp_server_assistants
@@ -186,6 +208,20 @@ export async function runMigrations(db: DatabaseWriteExecutor): Promise<void> {
     }
     await db.execAsync(DEFAULT_RECORDS_SQL);
     if (!fresh && version < 176) await migrateModelServiceGroups(db);
+    if (!fresh && version < 177) await addColumnIfMissing(db, 'ai_assistants', 'deleted_at', 'TEXT');
+    if (!fresh && version < 178) {
+      await addColumnIfMissing(db, 'ai_assistants', 'reasoning_effort', "TEXT NOT NULL DEFAULT 'auto' CHECK (reasoning_effort IN ('auto','minimal','low','medium','high','xhigh','max'))");
+    }
+    if (!fresh && version < 179) {
+      await addColumnIfMissing(db, 'ai_assistants', 'confirm_sticker_before_sending', 'INTEGER NOT NULL DEFAULT 0 CHECK (confirm_sticker_before_sending IN (0, 1))');
+    }
+    if (!fresh && version < 180) {
+      await addColumnIfMissing(db, 'ai_assistants', 'manual_reply', 'INTEGER NOT NULL DEFAULT 1 CHECK (manual_reply IN (0, 1))');
+      await addColumnIfMissing(db, 'conversation_turn_state', 'reply_requested', 'INTEGER NOT NULL DEFAULT 1 CHECK (reply_requested IN (0, 1))');
+      await addColumnIfMissing(db, 'conversation_turn_state', 'summon_requested', 'INTEGER NOT NULL DEFAULT 0 CHECK (summon_requested IN (0, 1))');
+      await db.execAsync('ALTER TABLE ai_assistants DROP COLUMN confirm_sticker_before_sending;');
+    }
+    if (!fresh && version < 181) await retireGroupAdminSystemPrompt(db);
     await db.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION};`);
     await db.execAsync('COMMIT;');
   } catch (error) {

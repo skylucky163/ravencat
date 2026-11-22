@@ -2,8 +2,6 @@
 
 import { createAIProfile, type AIProfile } from '../../domain/AIProfile';
 
-export const DEFAULT_MAX_TOKENS = 2000;
-
 export function getTrimmedAPIConfig({ apiBaseUrl, apiKey }: { apiBaseUrl: string; apiKey: string }) {
   return {
     apiBaseUrl: apiBaseUrl.trim(),
@@ -57,7 +55,6 @@ export function buildNewAI({
     apiKey: apiKey.trim(),
     apiBaseUrl: apiBaseUrl.trim(),
     systemPrompt: systemPrompt.trim() || null,
-    maxTokens: DEFAULT_MAX_TOKENS,
     enableTools: false,
     allowMultipleBubbles: true,
   });

@@ -41,6 +41,10 @@ export async function getCurrentUserProfile(): Promise<UserProfile> {
   return userProfileRepository.ensureDefault();
 }
 
+export function getCurrentUserNameInTransaction(transaction: DatabaseTransactionExecutor): Promise<string> {
+  return userProfileRepository.getNameInTransaction(transaction);
+}
+
 // 文字资料与 legacy 头像更新
 //
 // 改名只写 user_profile：Moments V2 的作者身份是 authorId，历史朋友圈/评论/点赞

@@ -45,14 +45,14 @@ export interface AIAssistantSummary {
 export type AIAssistantSettingsUpdate = Partial<Pick<
   AIProfile,
   'name' | 'nickname' | 'avatar' | 'avatarMediaAssetId' | 'systemPrompt' | 'allowMultipleBubbles' | 'streamingReply' | 'showTokenUsage' | 'showActionSteps'
-  | 'privateContextPrimaryLimit' | 'privateContextSecondaryLimit'
+  | 'manualReply' | 'privateContextPrimaryLimit' | 'privateContextSecondaryLimit'
   | 'groupContextPrimaryLimit' | 'groupContextSecondaryLimit'
 >>;
 
 /** 角色模型页只拥有调用配置；身份、名称、头像和人设由各自入口维护。 */
 export type AIModelSettingsUpdate = Partial<Pick<AIProfile,
   'model' | 'apiKey' | 'apiBaseUrl' | 'serviceConfigId' | 'temperature' | 'topP' | 'maxTokens'
-  | 'enableTools' | 'disableThinking'
+  | 'enableTools' | 'disableThinking' | 'reasoningEffort'
 >>;
 
 /**

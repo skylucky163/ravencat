@@ -24,6 +24,7 @@ export interface MomentsCoverSelection { legacyUri: string | null; mediaAssetId:
 
 export interface IUserProfileRepository {
   get(): Promise<UserProfile | null>;
+  getNameInTransaction(transaction: DatabaseTransactionExecutor): Promise<string>;
   ensureDefault(): Promise<UserProfile>;
   update(updates: UpdateUserProfileInput): Promise<UserProfile>;
   getMomentsCoverSelection(): Promise<MomentsCoverSelection>;

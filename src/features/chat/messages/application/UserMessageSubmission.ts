@@ -2,6 +2,7 @@
 import type { ChatAttachment } from '../domain/ChatAttachment';
 import type { SharedChatRecord } from '../domain/SharedChatRecord';
 import type { SharedMoment } from '../domain/SharedMoment';
+import type { StickerMessageSnapshot } from '../domain/ChatSticker';
 
 export interface UserMessageContent {
   text: string;
@@ -9,6 +10,7 @@ export interface UserMessageContent {
   clientMessageId: string | null;
   sharedRecord?: SharedChatRecord;
   sharedMoment?: SharedMoment;
+  sticker?: StickerMessageSnapshot | null;
 }
 
 export function splitUserMessageSubmission(params: {
@@ -17,8 +19,16 @@ export function splitUserMessageSubmission(params: {
   clientMessageId?: string | null;
   sharedRecord?: SharedChatRecord;
   sharedMoment?: SharedMoment;
+  sticker?: StickerMessageSnapshot | null;
 }): UserMessageContent[] {
   const { text, attachments, clientMessageId = null } = params;
+  if (params.sticker) {
+    const sticker: UserMessageContent = { text: '', attachments: [], sticker: params.sticker, clientMessageId };
+    if (!text && attachments.length === 0) return [sticker];
+    // 表情包保留独立消息语义，与同次图文共享提交和回复边界。
+    sticker.clientMessageId = clientMessageId ? `${clientMessageId}:sticker` : null;
+    return [sticker, ...splitUserMessageSubmission({ text, attachments, clientMessageId })];
+  }
   if (params.sharedRecord || params.sharedMoment) {
     const comment = text.trim();
     const record: UserMessageContent = {

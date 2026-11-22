@@ -2,25 +2,35 @@
 import { getAssistantDisplayName,
   aiAssistantRepository,
   configureAssistantRuntime,
+  HostRelationshipError,
+  runHostAuthorityMutation,
   getAuxiliaryModelSelection,
   requireAuxiliaryModel,
   resolveAuxiliaryModel,
   subscribeAuxiliaryModelsChanged,
 } from '@features/assistants';
 import { configureSpeechModelResolver, configureSpeechRecognitionModels, getSpeechRecognitionModelId, notifySpeechRecognitionModelsChanged, speechSettingsRepository } from '@features/speech/composition';
-import { configureAssistantVoiceModels, getAssistantVoiceModelId, notifyAssistantVoiceModelsChanged, assistantVoiceSettingsRepository } from '@features/assistants/composition';
+import { appointHostAIAssistantInTransaction, configureAssistantVoiceModels, getAssistantVoiceModelId, notifyAssistantVoiceModelsChanged, assistantVoiceSettingsRepository } from '@features/assistants/composition';
 import { configureTranslationModels, notifyTranslationModelsChanged, translationSettingsRepository } from '@features/integrations/composition';
 import { momentRepository } from '@features/moments';
-import { protocolRepository } from '@features/protocol';
+import { protocolRepository } from '@features/protocol/composition';
 import { userProfileRepository } from '@features/profile';
 import { ledgerRepository } from '@features/wallet';
 import {
   appendExternalAssistantMessage,
   resolveCanonicalConversation,
   upsertCallTimelineEntry,
+  conversationKeyOfDirect,
 } from '@features/chat';
-import { recordAssistantNicknameChangeInTransaction, resolveChatImageModelInput } from '@features/chat/composition';
-import { startHostRelationshipReplyExecution } from '@platform/device';
+import { recordAssistantNicknameChangeInTransaction, recordAssistantRecycleLifecycleInTransaction, resolveChatImageModelInput,
+  suspendAssistantChatInTransaction, purgeAssistantChatInTransaction, abortGroupSpeechTasks,
+  clearSessionTimelineCache, emitChatMessagesUpdated, emitChatTurnExecutionChanged,
+  configureRoleApplicationCards,
+} from '@features/chat/composition';
+import { purgeAssistantMomentsInTransaction } from '@features/moments/composition';
+import { getConversationTurnCoordinator } from '../runtime/ConversationTurnCoordinator';
+import { startHostRelationshipReplyExecution, dismissConversationNotifications } from '@platform/device';
+import { purgeAssistantSchedulesInTransaction } from '@features/companion/composition';
 import {
   callAudioPlayback,
   callBackgroundRepository,
@@ -33,7 +43,7 @@ import {
   requestCallMicrophonePermission,
   createCallExecutionAdapter,
 } from '@features/calls/composition';
-import { handleUserEndedCallFollowUp } from '@features/calls';
+import { handleUserEndedCallFollowUp, getActiveCallSnapshot, endCall } from '@features/calls';
 import { disableCompanionProductState, invalidateAISchedulesForRevokedOwner } from '@features/companion';
 import {
   assembleResolvedChatPromptPack,
@@ -57,6 +67,17 @@ export function configureAIRuntime(): void {
     return;
   }
   configured = true;
+  configureRoleApplicationCards({
+    assignLedger: (tx, assistantId) => aiAssistantRepository.setLedgerAIInTransaction(tx, assistantId),
+    async appointHost(tx, assistantId) {
+      try { return await appointHostAIAssistantInTransaction(tx, assistantId); }
+      catch (error) {
+        if (error instanceof HostRelationshipError) return null;
+        throw error;
+      }
+    },
+    runHostApproval: runHostAuthorityMutation,
+  });
 
   configureTranslationModels({
     repository: translationSettingsRepository,
@@ -150,6 +171,7 @@ export function configureAIRuntime(): void {
         temperature: assistant.temperature,
         topP: assistant.topP,
         disableThinking: assistant.disableThinking,
+        reasoningEffort: assistant.reasoningEffort,
         maxTokens: assistant.maxTokens,
         privateContextPrimaryLimit: assistant.privateContextPrimaryLimit,
         privateContextSecondaryLimit: assistant.privateContextSecondaryLimit,
@@ -178,6 +200,27 @@ export function configureAIRuntime(): void {
     onCallTerminated: handleUserEndedCallFollowUp,
   });
   configureAssistantRuntime({
+    recordRecycleLifecycleInTransaction: recordAssistantRecycleLifecycleInTransaction,
+    suspendAssistantInTransaction: async (transaction, assistantId) => {
+      const suspended = await suspendAssistantChatInTransaction(transaction, assistantId);
+      return async () => {
+        abortGroupSpeechTasks(suspended.taskIds);
+        for (const id of suspended.sessionIds) {
+          clearSessionTimelineCache(id);
+          await getConversationTurnCoordinator().abortInvalidatedTurn(id);
+          emitChatMessagesUpdated(id);
+          emitChatTurnExecutionChanged(id);
+        }
+        const call = getActiveCallSnapshot();
+        if (call?.aiAssistantId === assistantId) await endCall(call.id, 'blocked');
+        await dismissConversationNotifications(conversationKeyOfDirect(assistantId));
+      };
+    },
+    purgeAssistantInTransaction: async (transaction, assistantId, agentId) => {
+      await purgeAssistantSchedulesInTransaction(transaction, assistantId);
+      return [...await purgeAssistantChatInTransaction(transaction, assistantId),
+        ...await purgeAssistantMomentsInTransaction(transaction, agentId)];
+    },
     recordNicknameChangeInTransaction: recordAssistantNicknameChangeInTransaction,
     resolveCanonicalConversation: (aiId) => resolveCanonicalConversation({ aiId }),
     onHostRelationshipChanged: async (aiId, change, occurredAt) => {

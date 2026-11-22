@@ -25,6 +25,7 @@ import { initDatabase } from '@platform/persistence';
 import { leaveCallScreen } from '../../modules/kimiphone-notifications';
 import {
   aiAssistantRepository,
+  subscribeAssistantLifecycleChanged,
 } from '@features/assistants';
 import {
   addNotificationResponseListener,
@@ -79,6 +80,7 @@ import {
   runStartupRecovery,
 } from './runtime/StartupRecoveryCoordinator';
 import { getConversationTurnCoordinator } from './runtime/ConversationTurnCoordinator';
+import { startAssistantRecycleBinMaintenance } from './runtime/AssistantRecycleBinMaintenance';
 import { isAIMessageConversationForeground } from './runtime/AIMessageDeliveryCoordinator';
 import { setFloatingConversationDatabaseReady, syncFloatingConversation } from './runtime/FloatingConversationProjection';
 import {
@@ -439,6 +441,16 @@ function HostLifecycle({
   useEffect(() => {
     if (dbReady) void trackHostTask(refreshAllUnreadCounts());
   }, [dbReady, refreshAllUnreadCounts, trackHostTask]);
+
+  useEffect(() => {
+    if (!dbReady) return;
+    return subscribeAssistantLifecycleChanged(() => { void trackHostTask(refreshAllUnreadCounts()); });
+  }, [dbReady, refreshAllUnreadCounts, trackHostTask]);
+
+  useEffect(() => {
+    if (!dbReady) return;
+    return startAssistantRecycleBinMaintenance(trackHostTask);
+  }, [dbReady, trackHostTask]);
 
   const reconcileCompanionNotificationState = useCallback(async () => {
     if (resettingApplicationDataRef.current) {
@@ -1466,6 +1478,8 @@ function HostLifecycle({
           const segments: Record<ChatSubScreen, string> = {
             search: 'search',
             menu: 'menu',
+            conversationImport: 'conversation-import',
+            deepSeekImport: 'conversation-import/deepseek',
             protocol: 'protocol',
             statistics: 'statistics',
             callHistory: 'call-history',

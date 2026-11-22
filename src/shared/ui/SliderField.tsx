@@ -1,7 +1,8 @@
 /** 带文本输入的数值滑杆；草稿解析与自动保存仍由业务表单持有。 */
 import React, { useCallback, useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useTheme, useThemedStyles, type PresentationTheme } from '@shared/theme';
+import AppTextInput from './AppTextInput';
 import Slider from './Slider';
 
 export interface SliderFieldProps {
@@ -17,6 +18,8 @@ export interface SliderFieldProps {
   onBlur?: () => void;
   error?: string;
   disabled?: boolean;
+  integerInput?: boolean;
+  style?: StyleProp<ViewStyle>;
 }
 
 const createStyles = (theme: PresentationTheme) => StyleSheet.create({
@@ -31,7 +34,7 @@ const createStyles = (theme: PresentationTheme) => StyleSheet.create({
 });
 
 export default function SliderField({ label, description, value, inputValue, onInputChange,
-  min, max, step, onSetValue, onBlur, error, disabled = false,
+  min, max, step, onSetValue, onBlur, error, disabled = false, integerInput = false, style,
 }: SliderFieldProps) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -42,20 +45,20 @@ export default function SliderField({ label, description, value, inputValue, onI
   }, [onSetValue]);
 
   return (
-    <View style={styles.section}>
+    <View style={[styles.section, style]}>
       <View style={styles.header}>
         <Text style={styles.label}>{label}</Text>
-        <TextInput
+        <AppTextInput
           style={[styles.input, error && { borderColor: theme.colors.feedback.error }]}
           value={preview === null ? inputValue : String(preview)}
           onChangeText={onInputChange}
           onBlur={onBlur}
           editable={!disabled}
           accessibilityLabel={`${label}数值`}
-          keyboardType="decimal-pad"
+          keyboardType={integerInput ? 'number-pad' : 'decimal-pad'}
           returnKeyType="done"
           submitBehavior="blurAndSubmit"
-          maxLength={5}
+          maxLength={integerInput ? undefined : 5}
         />
       </View>
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}

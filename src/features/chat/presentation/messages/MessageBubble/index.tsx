@@ -450,7 +450,7 @@ function MessageBubble({
     </>
   );
 
-  if (isPaperNote && !isSharedCard) {
+  if (isPaperNote) {
     const speakerName = isSystem
       ? '系统'
       : isReasoning
@@ -458,9 +458,8 @@ function MessageBubble({
         : isMe
           ? userName?.trim() || '用户'
           : aiName?.trim() || 'AI';
-
-    return (
-      <PaperNoteMessageFrame speakerName={speakerName} isSelected={isSelected}>
+    const content = (
+      <>
         {isReasoning ? (
           <ReasoningHeader
             isExpanded={isExpanded}
@@ -468,9 +467,11 @@ function MessageBubble({
           />
         ) : null}
         {(!isReasoning || isExpanded) ? (
-          <View style={bubbleStyles.paperNoteContent}>
-            {bubbleContent}
-          </View>
+          isSharedCard ? bubbleContent : (
+            <View style={bubbleStyles.paperNoteContent}>
+              {bubbleContent}
+            </View>
+          )
         ) : null}
         {!isSystem ? <TokenInfo tokensUsed={tokensUsed} promptTokens={promptTokens} completionTokens={completionTokens} cachedTokens={cachedTokens} isMe={isMe} /> : null}
         {!isSystem && !isReasoning && translation ? (
@@ -484,6 +485,22 @@ function MessageBubble({
         {!isSystem && !isReasoning && (replyQuote || replyToText) ? (
           <ReplyQuote replyToText={replyToText} quote={replyQuote} messageId={messageId} onPreviewFile={onPreviewFile} isMe={isMe} />
         ) : null}
+      </>
+    );
+
+    // 卡片保留独立表面，但消息行仍归纸条布局，不能恢复头像和左右气泡对齐。
+    if (isSharedCard) {
+      return (
+        <View style={bubbleStyles.paperNoteCard}>
+          {content}
+          {isSelected ? <View style={bubbleStyles.selectedBubbleOverlay} /> : null}
+        </View>
+      );
+    }
+
+    return (
+      <PaperNoteMessageFrame speakerName={speakerName} isSelected={isSelected}>
+        {content}
       </PaperNoteMessageFrame>
     );
   }

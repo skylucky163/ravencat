@@ -1,6 +1,6 @@
-/** 全局默认提示词的 SQL 只属于 Prompting，排序交换在同一事务提交。 */
+/** 全局默认提示词的 SQL 只属于 Prompting，列表排序在同一事务提交。 */
 import { databaseCoordinator } from '@platform/persistence';
-import type { PromptDefaults, PromptDefaultsRepository } from '../domain/PromptDefaults';
+import type { LegacyGroupAdminPrompt, PromptDefaults, PromptDefaultsRepository } from '../domain/PromptDefaults';
 
 function executor(name: string) {
   return databaseCoordinator.openTaskExecutor({ name: `prompting.defaults.${name}`, feature: 'prompting', priority: 'runtime' });
@@ -23,6 +23,12 @@ export const sqlitePromptDefaultsRepository: PromptDefaultsRepository = {
       };
     });
   },
+  listLegacyGroupAdminPrompts() {
+    return executor('listLegacyGroupAdminPrompts').getAllAsync<LegacyGroupAdminPrompt>(
+      `SELECT group_id AS groupId, group_name AS groupName, content
+       FROM prompt_legacy_group_admin_texts ORDER BY group_name, group_id`,
+    );
+  },
   async saveOverride(definitionId, content) {
     await executor('saveOverride').runAsync(
       'INSERT INTO prompt_default_overrides (definition_id, content) VALUES (?, ?) ON CONFLICT(definition_id) DO UPDATE SET content = excluded.content',
@@ -42,10 +48,11 @@ export const sqlitePromptDefaultsRepository: PromptDefaultsRepository = {
   async deleteUserPrompt(id) {
     await executor('deleteUserPrompt').runAsync('DELETE FROM prompt_default_user_prompts WHERE id = ?', [id]);
   },
-  async reorderUserPrompts(first, second) {
+  async reorderUserPrompts(promptIds) {
     await executor('reorderUserPrompts').withExclusiveTransactionAsync(async (db) => {
-      await db.runAsync('UPDATE prompt_default_user_prompts SET sort_order = ? WHERE id = ?', [second.sortOrder, first.id]);
-      await db.runAsync('UPDATE prompt_default_user_prompts SET sort_order = ? WHERE id = ?', [first.sortOrder, second.id]);
+      for (const [index, id] of promptIds.entries()) {
+        await db.runAsync('UPDATE prompt_default_user_prompts SET sort_order = ? WHERE id = ?', [(index + 1) * 10, id]);
+      }
     });
   },
   async setEnabled(key, enabled) {

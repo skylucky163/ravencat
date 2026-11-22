@@ -18,4 +18,4 @@ Profile 是唯一资料 owner，SQLite adapter 只提交本次变更字段，事
 
 Host 的对话者身份提示词块聚合所有已填写的文字资料，不复制人设到另一张表，也不自动截断其他设定。头像供界面展示，不把本机图片 URI 当成文字提示词发送。群聊继续使用参与者目录中的用户名快照。
 
-验证：`node --no-warnings scripts/verify-user-profile-persona.mjs`；原生相册、键盘和返回手势需真机验收，不构建 APK。
+验证：`node --no-warnings tests/profile/verify-user-profile-persona.mjs`；原生相册、键盘和返回手势需真机验收，不构建 APK。

@@ -92,5 +92,5 @@ export function buildChatCodeWorkReference(message: {
   const block = readChatCodeBlock(message.text);
   if (!block || !canRenderChatCode(block)) return null;
   return '[网页作品引用] ' + JSON.stringify({ id: chatCodePreviewId(message), titleAtCreation: chatCodeTitle(block),
-    notice: '源码按需用 get_code_work 分页读取；当前名称和收纳状态以 list_code_works 查询为准。此引用不表示已入库。' });
+    notice: '源码按需用 get_code_work 分页读取；当前名称和收纳状态以 list_code_works 查询为准。' });
 }

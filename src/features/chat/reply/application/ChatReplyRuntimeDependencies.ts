@@ -87,6 +87,8 @@ export interface ChatReplyRuntimeDependencies {
     readImageGroundingReminder: (assistantId: string) => Promise<string | null>;
     /** 视觉识别任务的最终正文：AI 覆盖 → 全局默认 → 代码默认。 */
     resolveVisionOCRPrompt: (assistantId: string) => Promise<string>;
+    /** 群聊管理员调度的最终正文：全局默认 → 代码默认。 */
+    resolveGroupAdminPrompt: () => Promise<string>;
     assembleChat: (params: AssemblePromptPackParams) => Promise<PromptPack>;
     assembleLedger: (params: AssemblePromptPackParams) => Promise<PromptPack>;
     assembleStandalone: (params: AssembleStandalonePromptPackParams) => Promise<PromptPack>;

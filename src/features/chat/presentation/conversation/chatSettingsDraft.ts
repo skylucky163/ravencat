@@ -7,11 +7,13 @@ export interface ChatSettingsDraft {
   streamingReply: boolean | null;
   showTokenUsage: boolean;
   showActionSteps: boolean;
+  manualReply: boolean;
 }
 
 export function getChatSettingsDraft(ai: AIProfile): ChatSettingsDraft {
   return { allowMultipleBubbles: ai.allowMultipleBubbles, streamingReply: ai.streamingReply,
-    showTokenUsage: ai.showTokenUsage, showActionSteps: ai.showActionSteps };
+    showTokenUsage: ai.showTokenUsage, showActionSteps: ai.showActionSteps,
+    manualReply: ai.manualReply };
 }
 
 export function parseChatSettingsDraft(

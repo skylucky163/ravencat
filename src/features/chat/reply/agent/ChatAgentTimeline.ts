@@ -342,7 +342,7 @@ export class ChatAgentTimeline {
     const toolDisplayNames = this.resolveToolDisplayNames(toolCalls);
     const failed = [...step.outcomes.values()].some(isToolStatusFailure);
     step.toolItem = this.replaceItem(step.toolItem, {
-      text: buildToolStatusText(joinToolDisplayNames(toolDisplayNames), failed ? 'failed' : 'completed')
+      text: buildToolStatusText(joinToolDisplayNames(toolDisplayNames), failed ? 'failed' : 'completed', step.outcomes.values())
         + this.outputDeliveryText(step),
       status: failed ? 'failed' : 'completed',
       toolNames: toolCalls.map((toolCall) => toolCall.name),
@@ -377,6 +377,7 @@ export class ChatAgentTimeline {
           text: buildToolStatusText(
             joinToolDisplayNames(this.resolveToolDisplayNames(toolCalls)),
             'failed',
+            step.outcomes.values(),
           ),
           toolNames: toolCalls.map((toolCall) => toolCall.name),
           toolDisplayNames: this.resolveToolDisplayNames(toolCalls),
@@ -387,7 +388,7 @@ export class ChatAgentTimeline {
           : terminalCode === 'SUPERSEDED' ? '已被新输入替代' : `本轮回复失败（${terminalCode}）`;
         step.toolItem = this.replaceItem(step.toolItem, {
           text: buildToolStatusText(joinToolDisplayNames(this.resolveToolDisplayNames(this.timelineToolCalls(step))),
-            step.toolItem.status === 'failed' ? 'failed' : 'completed') + this.outputDeliveryText(step, reason),
+            step.toolItem.status === 'failed' ? 'failed' : 'completed', step.outcomes.values()) + this.outputDeliveryText(step, reason),
         });
       }
       if (step.reasoningItem && step.reasoningItem.status !== 'sent') {
@@ -440,7 +441,7 @@ export class ChatAgentTimeline {
       const status = step.toolItem.status === 'failed' ? 'failed'
         : step.toolItem.status === 'completed' ? 'completed' : 'running';
       step.toolItem = this.replaceItem(step.toolItem, {
-        text: buildToolStatusText(joinToolDisplayNames(this.resolveToolDisplayNames(this.timelineToolCalls(step))), status)
+        text: buildToolStatusText(joinToolDisplayNames(this.resolveToolDisplayNames(this.timelineToolCalls(step))), status, step.outcomes.values())
           + this.outputDeliveryText(step),
       });
     }
@@ -790,8 +791,9 @@ export class ChatAgentTimeline {
     const toolDisplayNames = [...(item.toolDisplayNames ?? [])];
     const status = item.status === 'failed' ? 'failed' : item.status === 'completed' ? 'completed' : 'running';
     // 选择结果与表情消息同属 T3；正式工具记录不再保留提交前的等待文案。
-    const text = this.requireStep(item.stepIndex).stickerItems.length > 0
-      ? buildToolStatusText(joinToolDisplayNames(toolDisplayNames), status)
+    const step = this.requireStep(item.stepIndex);
+    const text = step.stickerItems.length > 0
+      ? buildToolStatusText(joinToolDisplayNames(toolDisplayNames), status, step.outcomes.values())
       : item.text;
     const metadata = buildChatToolStatusMessageMetadata({
       aiConfig: params.aiConfig,

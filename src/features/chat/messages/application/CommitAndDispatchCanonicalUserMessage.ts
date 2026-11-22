@@ -13,6 +13,7 @@ import {
 } from './ChatMessageRuntime';
 
 export interface CommitAndDispatchCanonicalUserMessageParams {
+  requestReply?: boolean;
   message: CreateMessageInput;
   precedingMessages?: readonly CommitMessageInput[];
   previewText: string;
@@ -43,8 +44,10 @@ export async function commitAndDispatchCanonicalUserMessage(
 ): Promise<CommitAndDispatchCanonicalUserMessageResult> {
   let committedUserMessage: ChatMessage | null = null;
   let committedUserMessages: ChatMessage[] = [];
+  const requestReply = params.requestReply ?? !params.aiConfig.manualReply;
   try {
     const { message, messages, supersededRunId } = await commitCanonicalUserMessage({
+      requestReply,
       repository: params.repository,
       message: params.message,
       precedingMessages: params.precedingMessages,
@@ -64,6 +67,7 @@ export async function commitAndDispatchCanonicalUserMessage(
       sessionId: message.sessionId,
       message,
       supersededRunId,
+      requestReply,
       aiConfig: params.aiConfig,
       executionMode: params.executionMode ?? 'delegate_to_android_host',
       replyCallbacks: {

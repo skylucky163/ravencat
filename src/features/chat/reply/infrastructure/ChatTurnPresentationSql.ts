@@ -3,6 +3,47 @@ import { messageRepository } from '../../messages/infrastructure/SQLiteMessageRe
 import { buildSessionPreviewTextFromMessage } from '../../messages/domain/chatMessageMetadata';
 import type { ChatMessage, CreateMessageInput } from '../../messages/domain/ChatMessage';
 import type { ChatTurnDisplaySnapshot } from '../domain/ChatTurnPresentation';
+import { findReplyVersionSet, saveReplyVersion } from './ChatReplyVersionSql';
+
+/** T3 与最后一次正文发布各自完成同一裁决，不让通知回执或历史重读延长展示生命周期。 */
+export async function completeTurnPresentationInTransaction(
+  transaction: DatabaseTransactionExecutor,
+  runId: string,
+): Promise<boolean> {
+  const result = await transaction.runAsync(`UPDATE chat_turn_presentations SET state = 'completed', updated_at = ?
+    WHERE run_id = ? AND state = 'open'
+      AND EXISTS (SELECT 1 FROM conversation_turn_runs WHERE run_id = ? AND status = 'committed')
+      AND NOT EXISTS (SELECT 1 FROM chat_turn_display_items WHERE run_id = ? AND message_id IS NOT NULL
+        AND (shown_json IS NULL OR json_extract(shown_json, '$.text') <> json_extract(snapshot_json, '$.text')))`,
+  [new Date().toISOString(), runId, runId, runId]);
+  return result.changes === 1;
+}
+
+/** 由正式提交或中断封存的事务调用，旧版本与替换后的消息一起提交。 */
+export async function replaceRegeneratedReplyInTransaction(
+  transaction: DatabaseTransactionExecutor,
+  sessionId: string,
+  sourceRunId: string,
+  runId: string,
+  lock: boolean,
+) {
+  const old = await messageRepository.listTurnMessagesInTransaction(transaction, sourceRunId);
+  const existing = await findReplyVersionSet(transaction, sourceRunId);
+  const setId = existing?.id ?? sourceRunId;
+  if (!existing) await transaction.runAsync(`INSERT INTO chat_reply_version_sets
+    (id, session_id, current_run_id, selected_version_id, locked) VALUES (?, ?, ?, ?, ?)`,
+  [setId, sessionId, sourceRunId, sourceRunId, lock ? 1 : 0]);
+  await saveReplyVersion(transaction, setId, existing?.selected_version_id ?? sourceRunId, old);
+  await transaction.runAsync('UPDATE chat_reply_version_sets SET current_run_id = ?, selected_version_id = ? WHERE id = ?',
+    [runId, runId, setId]);
+  // 已产生的业务卡片不属于可替换回复。
+  const { mediaAssetCandidates } = await messageRepository.deleteMessagesWithMediaCandidatesInTransaction(
+    transaction, old.map(row => row.id), { preserveReplyVersions: true },
+  );
+  await transaction.runAsync('DELETE FROM chat_timeline_run_anchors WHERE session_id = ? AND turn_run_id = ?',
+    [sessionId, sourceRunId]);
+  return { setId, mediaAssetCandidates };
+}
 
 /** 只封存已交付正文；消息成立不要求本轮执行成功，也不推进回复游标或补发通知。 */
 export async function finalizeInterruptedTurnMessagesInTransaction(
@@ -10,24 +51,32 @@ export async function finalizeInterruptedTurnMessagesInTransaction(
   sessionId?: string,
   runId?: string,
 ): Promise<void> {
-  const runs = await transaction.getAllAsync<{ run_id: string; session_id: string; anchor_id: number; anchor_created_at: string }>(
-    `SELECT p.run_id, p.session_id,
-       CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END AS anchor_id,
-       COALESCE(origin.created_at, r.created_at) AS anchor_created_at FROM chat_turn_presentations p
+  const runs = await transaction.getAllAsync<{ run_id: string; session_id: string; anchor_id: number; anchor_created_at: string;
+    source_run_id: string | null; lock_version: number }>(
+    `SELECT p.run_id, p.session_id, CASE WHEN r.status = 'active' THEN r.regeneration_source_run_id END AS source_run_id,
+       p.reason = 'new_input' AS lock_version,
+       CASE WHEN r.kind = 'autonomous' THEN origin.id WHEN r.kind = 'summon' THEN a.id ELSE r.input_high_watermark END AS anchor_id,
+       COALESCE(CASE WHEN r.kind = 'summon' THEN a.created_at ELSE origin.created_at END, r.created_at) AS anchor_created_at FROM chat_turn_presentations p
      JOIN conversation_turn_runs r ON r.run_id = p.run_id
      JOIN sessions s ON s.id = p.session_id
+     LEFT JOIN chat_timeline_run_anchors a ON a.turn_run_id = r.run_id AND a.session_id = p.session_id
      LEFT JOIN messages origin ON origin.session_id = p.session_id AND
        ((r.kind = 'autonomous' AND origin.client_message_id = 'agent_activity:' || r.run_id || ':started')
          OR (r.kind <> 'autonomous' AND origin.id = r.input_high_watermark))
-     WHERE p.state = 'interrupted' AND (r.kind <> 'regenerate' OR r.status = 'committed')
-       AND CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END > COALESCE(s.visible_after_message_id, 0)
+     WHERE p.state = 'interrupted' AND (r.kind <> 'regenerate' OR r.status = 'committed'
+       OR (r.status = 'active' AND EXISTS (SELECT 1 FROM conversation_turn_state t
+         WHERE t.session_id = r.session_id AND t.active_run_id = r.run_id AND t.revision = r.revision_at_claim)))
+       AND ((r.kind = 'summon' AND r.created_at > COALESCE(s.visible_after_at, '')) OR (r.kind <> 'summon' AND CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END > COALESCE(s.visible_after_message_id, 0)))
        ${sessionId ? 'AND p.session_id = ?' : ''} ${runId ? 'AND p.run_id = ?' : ''}
        AND EXISTS (SELECT 1 FROM chat_turn_display_items i WHERE i.run_id = p.run_id
-         AND json_extract(i.shown_json, '$.kind') = 'assistant' AND length(json_extract(i.shown_json, '$.text')) > 0)
+         AND json_extract(i.shown_json, '$.kind') = 'assistant' AND length(trim(json_extract(i.shown_json, '$.text'))) > 0)
        AND EXISTS (SELECT 1 FROM chat_turn_display_items i WHERE i.run_id = p.run_id AND i.shown_json IS NOT NULL
          AND (i.message_id IS NULL OR json_extract(i.shown_json, '$.text') <> json_extract(i.snapshot_json, '$.text')))
      ORDER BY r.created_at, r.rowid`, [...(sessionId ? [sessionId] : []), ...(runId ? [runId] : [])]);
   for (const run of runs) {
+    if (run.source_run_id) await replaceRegeneratedReplyInTransaction(
+      transaction, run.session_id, run.source_run_id, run.run_id, run.lock_version === 1,
+    );
     // 同毫秒的新输入可能已经落库；以原任务定位锚定旧回复，不能让封存插入顺序重写对话顺序。
     await transaction.runAsync(`INSERT OR IGNORE INTO chat_timeline_run_anchors(session_id, turn_run_id, id, created_at)
       VALUES (?, ?, ?, ?)`, [run.session_id, run.run_id, run.anchor_id, run.anchor_created_at]);
@@ -80,9 +129,14 @@ export async function finalizeInterruptedTurnMessagesInTransaction(
         toolExecutions: latest.toolExecutions }), JSON.stringify(sealed), run.run_id, row.identity]);
       if (saved.senderType === 'assistant') lastAssistant = saved;
     }
-    if (lastAssistant) await messageRepository.updateSessionPreviewForCommittedMessageInTransaction(transaction, {
-      sessionId: run.session_id, messageId: lastAssistant.id, previewText: buildSessionPreviewTextFromMessage(lastAssistant),
-    });
+    if (lastAssistant) {
+      const set = await findReplyVersionSet(transaction, run.run_id);
+      if (set) await saveReplyVersion(transaction, set.id, set.selected_version_id,
+        await messageRepository.listTurnMessagesInTransaction(transaction, run.run_id));
+      await messageRepository.updateSessionPreviewForCommittedMessageInTransaction(transaction, {
+        sessionId: run.session_id, messageId: lastAssistant.id, previewText: buildSessionPreviewTextFromMessage(lastAssistant),
+      });
+    }
   }
 }
 

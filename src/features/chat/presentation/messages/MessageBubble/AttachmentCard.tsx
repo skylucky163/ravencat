@@ -25,7 +25,7 @@ function AttachmentCard({
     return <ImageAttachmentCard attachment={attachment} isMe={isMe} thumbnail={thumbnail} onLongPress={onAttachmentLongPress} />;
   }
 
-  return <FileAttachmentCard attachment={attachment} isMe={isMe} onPreview={onPreview} onLongPress={onAttachmentLongPress} />;
+  return <FileAttachmentCard attachment={attachment} isMe={isMe} compact={thumbnail} onPreview={onPreview} onLongPress={onAttachmentLongPress} />;
 }
 
 export default memo(AttachmentCard);

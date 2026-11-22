@@ -31,8 +31,8 @@ internal data class RavenCatOverlaySnapshot(
   /** 持久消息替换有限窗口；同一会话的未提交发送状态继续由原生输入区持有。 */
   fun withConversationPreview(sessionId: String?, committed: List<RavenCatOverlayMessage>): RavenCatOverlaySnapshot {
     val transient = if (sessionId == conversationSessionId) messages.filter { message ->
-      message.messageId == null && !(message.role == RavenCatOverlayMessageRole.USER &&
-        committed.any { it.correlationId == message.correlationId })
+      message.messageId == null && !(message.role in listOf(RavenCatOverlayMessageRole.USER, RavenCatOverlayMessageRole.ASSISTANT) &&
+        message.correlationId != null && committed.any { it.correlationId == message.correlationId })
     } else emptyList()
     val watermark = maxOf(
       if (sessionId == conversationSessionId) previewMessageWatermark else 0,
@@ -42,7 +42,7 @@ internal data class RavenCatOverlaySnapshot(
   }
 
   /** 回复回调与会话投影可能交错，按持久身份合并并移除该回复的 pending。 */
-  fun withReplyPreview(next: RavenCatOverlayMessage): RavenCatOverlaySnapshot {
+  fun withReplyPreview(next: RavenCatOverlayMessage, requestCorrelationId: String? = null): RavenCatOverlaySnapshot {
     // 同步窗口已越过或删除该消息后，迟到的回复回调不能把旧消息重新追加回来。
     if (next.messageId != null && next.messageId <= previewMessageWatermark &&
       messages.none { it.messageId == next.messageId }) {
@@ -51,8 +51,9 @@ internal data class RavenCatOverlaySnapshot(
       })
     }
     val retained = messages.filterNot {
-      it.role != RavenCatOverlayMessageRole.USER && next.correlationId != null &&
-        it.correlationId == next.correlationId && it.messageId != next.messageId
+      (it.role == RavenCatOverlayMessageRole.PENDING && requestCorrelationId != null && it.correlationId == requestCorrelationId) ||
+        (it.role != RavenCatOverlayMessageRole.USER && next.correlationId != null &&
+          it.correlationId == next.correlationId && it.messageId != next.messageId)
     }.toMutableList()
     val index = retained.indexOfLast {
       if (next.messageId != null) it.messageId == next.messageId

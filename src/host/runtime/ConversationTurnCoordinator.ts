@@ -147,7 +147,7 @@ export interface ConversationTurnCoordinator {
   hasActiveHandle(sessionId: string): boolean;
   cancelActiveTurnsForReset(): Promise<void>;
   resumeTurnsAfterReset(): void;
-  requestRegenerationFromHost(sessionId: string): Promise<boolean>;
+  requestReplyFromHost(sessionId: string): Promise<boolean>;
   abortInvalidatedTurn(sessionId: string): Promise<void>;
 }
 
@@ -162,6 +162,8 @@ interface ActiveHandle {
   abort: AbortController;
   completion: Promise<void>;
 }
+
+const INVALIDATED_TURN_REASON = 'TURN_INVALIDATED';
 
 function defaultYieldControl(): Promise<void> {
   return new Promise((resolve) => {
@@ -222,9 +224,11 @@ export function createConversationTurnCoordinator(
         deliveryTiming: context.deliveryTiming,
         correlationId: context.correlationId,
       });
-      const outcome = context.signal ? await new Promise<UserReplyTurnOutcome>((resolve, reject) => {
-        const signal = context.signal!;
+      const outcome = await new Promise<UserReplyTurnOutcome>((resolve, reject) => {
+        const signal = abort.signal;
         const stopped = () => {
+          // 恢复出厂仍须排空真实执行；仅已撤销 fence 的回合或宿主截止可提前结束等待。
+          if (!context.signal?.aborted && signal.reason !== INVALIDATED_TURN_REASON) return;
           signal.removeEventListener('abort', stopped);
           reject(new Error(String(signal.reason)));
         };
@@ -232,7 +236,7 @@ export function createConversationTurnCoordinator(
         // 迟到的执行仍有完成／拒绝消费者；事实资格由下面的 T4 和原 T3 fence 收口。
         execution.then(resolve, reject).finally(() => signal.removeEventListener('abort', stopped));
         if (signal.aborted) stopped();
-      }) : await execution;
+      });
       if (outcome === 'committed') {
         logTurnTimeline('assistant_turn_committed', {
           sessionId,
@@ -242,7 +246,7 @@ export function createConversationTurnCoordinator(
       }
       // run 仍 active 但无任何提交：revoke 收尾，不得留 active 悬挂。
       if (outcome === 'empty_reply') {
-        if (!abort.signal.aborted) regenerationError = '未生成新回复，已恢复原消息';
+        if (!abort.signal.aborted) regenerationError = '未生成完整回复';
         if (abort.signal.aborted) await revokeCancelled('empty_reply');
         else await deps.turns.revoke(run, 'failed', 'empty_reply');
       }
@@ -252,6 +256,10 @@ export function createConversationTurnCoordinator(
         const reason = String(context.signal?.reason ?? 'execution_host_timeout');
         try { await interruptChatRunPresentation(run.runId, reason); }
         finally { await deps.turns.revoke(run, 'failed', reason); }
+      } else if (abort.signal.aborted) {
+        // 用户停止或 T1 换代不等待底层 Promise；迟到执行继续受原提交 fence 约束。
+        try { await interruptChatRunPresentation(run.runId, 'cancelled_by_user'); }
+        finally { await deps.turns.revoke(run, 'cancelled', 'cancelled_by_user'); }
       } else if (!isChatReplyRunCancellationError(error)) {
         if (!abort.signal.aborted) regenerationError = reasonOf(error);
         try {
@@ -331,10 +339,10 @@ export function createConversationTurnCoordinator(
     let run = await deps.turns.claimIfIdle(sessionId, 'user_reply');
     if (!run) {
       const snapshot = await deps.turns.getSessionTurnSnapshot(sessionId);
-      if (!snapshot || (!snapshot.hasRegeneration && snapshot.highWatermark <= snapshot.replyCursor)) {
+      if (!snapshot || (!snapshot.hasRegeneration && !snapshot.hasSummon && snapshot.highWatermark <= snapshot.replyCursor)) {
         return 'skipped';
       }
-      if (!snapshot.hasRegeneration && await deps.turns.findTerminalRunCovering(sessionId, snapshot.highWatermark)) {
+      if (!snapshot.hasRegeneration && !snapshot.hasSummon && await deps.turns.findTerminalRunCovering(sessionId, snapshot.highWatermark)) {
         return 'skipped';
       }
       run = await deps.turns.takeOverOrphan(sessionId, 'user_reply');
@@ -471,11 +479,12 @@ export function createConversationTurnCoordinator(
         const handle = activeHandles.get(sessionId);
         if (handle?.runId === supersededRunId) {
           // 协作式省 token；正确性由 T1 事务的 supersede 保证。
-          handle.abort.abort();
+          handle.abort.abort(INVALIDATED_TURN_REASON);
           // 先移除句柄，再允许新 claim。
           activeHandles.delete(sessionId);
         }
       }
+      if (payload.requestReply === false) return;
       if (payload.executionMode === 'inline_current_host') {
         // 只有显式声明、且会等待回复终态的受控 execution host 才能就地 claim + 执行。
         await launch(sessionId, 'claimIfIdle', {
@@ -545,11 +554,11 @@ export function createConversationTurnCoordinator(
           if (activeHandles.has(session.sessionId)) {
             continue;
           }
-          if (!session.hasRegeneration && session.highWatermark <= session.replyCursor) {
+          if (!session.hasRegeneration && !session.hasSummon && session.highWatermark <= session.replyCursor) {
             continue;
           }
           // 防隐式 retry：failed/cancelled 覆盖的区间不被 recovery 自动重新 claim。
-          if (!session.hasRegeneration && await deps.turns.findTerminalRunCovering(session.sessionId, session.highWatermark)) {
+          if (!session.hasRegeneration && !session.hasSummon && await deps.turns.findTerminalRunCovering(session.sessionId, session.highWatermark)) {
             continue;
           }
           pendingSessionIds.push(session.sessionId);
@@ -569,7 +578,7 @@ export function createConversationTurnCoordinator(
       }
     },
 
-    async requestRegenerationFromHost(sessionId) {
+    async requestReplyFromHost(sessionId) {
       if (!acceptingTurns) return false;
       if (!deps.executionHost) throw new Error('聊天执行宿主尚未装配');
       return deps.executionHost.start([sessionId], {});
@@ -581,7 +590,7 @@ export function createConversationTurnCoordinator(
       const active = await deps.turns.getActiveRun(sessionId);
       // 取消通知可能晚于新 owner 的 claim；只清理已经失去持久所有权的原句柄。
       if (active?.runId === handle.runId || activeHandles.get(sessionId) !== handle) return;
-      handle.abort.abort();
+      handle.abort.abort(INVALIDATED_TURN_REASON);
       activeHandles.delete(sessionId);
       emitChatTypingStatusChanged(sessionId, false, handle.runId);
     },
@@ -630,6 +639,7 @@ async function resolveSessionAIConfig(sessionId: string): Promise<AIConfig | nul
     temperature: assistant.temperature,
     topP: assistant.topP,
     disableThinking: assistant.disableThinking,
+    reasoningEffort: assistant.reasoningEffort,
     maxTokens: assistant.maxTokens,
     privateContextPrimaryLimit: assistant.privateContextPrimaryLimit,
     privateContextSecondaryLimit: assistant.privateContextSecondaryLimit,

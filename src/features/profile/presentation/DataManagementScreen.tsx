@@ -12,9 +12,10 @@ interface Props {
   onBack(): void;
   backupRuntime: BackupRuntime;
   onClearData(): Promise<void>;
+  onOpenAIRecycleBin(): void;
 }
 
-export function DataManagementScreen({ onBack, backupRuntime, onClearData }: Props) {
+export function DataManagementScreen({ onBack, backupRuntime, onClearData, onOpenAIRecycleBin }: Props) {
   const theme = useTheme();
   const styles = useThemedStyles(createDataManagementStyles);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -42,15 +43,14 @@ export function DataManagementScreen({ onBack, backupRuntime, onClearData }: Pro
     <NavigationHeader title="数据管理" onGoBack={onBack} />
     <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
       <ThemedSurface nativeGlass variant="card" style={styles.section}>
-        <View style={styles.row} accessible accessibilityState={{ disabled: true }}
-          accessibilityLabel="最近删除，恢复已删除的 AI 和聊天记录，暂未开放">
-          <History size={20} color={theme.colors.text.tertiary} />
+        <TouchableOpacity style={styles.row} onPress={onOpenAIRecycleBin} disabled={busy} accessibilityRole="button"
+          accessibilityState={{ disabled: busy }} accessibilityLabel="AI 回收站，恢复 7 天内删除的 AI">
+          <History size={20} color={theme.colors.text.primary} />
           <View style={styles.textBlock}>
-            <Text style={styles.placeholderTitle}>最近删除</Text>
-            <Text style={styles.description}>恢复已删除的 AI 和聊天记录</Text>
+            <Text style={styles.title}>AI 回收站</Text>
+            <Text style={styles.description}>恢复或彻底删除 7 天内移除的 AI</Text>
           </View>
-          <Text style={styles.placeholder}>暂未开放</Text>
-        </View>
+        </TouchableOpacity>
       </ThemedSurface>
 
       <ThemedSurface nativeGlass variant="card" style={styles.section}>

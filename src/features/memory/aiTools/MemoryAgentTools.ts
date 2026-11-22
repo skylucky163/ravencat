@@ -24,8 +24,8 @@ async function result<T>(context: AgentToolExecutionContext, operation: () => Pr
 export const RememberMemoryTool = {
   name: 'remember_memory',
   definition: {
-    name: 'remember_memory', description: '明确保存一条独立长期记忆，无需向量模型；只保存你提供的正文与摘要，不自动摘录原话。',
-    parameters: { type: 'object', properties: { content: { type: 'string', description: '完整记忆正文，最多 500 个 Unicode 字符' }, summary: { type: 'string', description: '可选的检索摘要，最多 50 个 Unicode 字符', maxLength: 50 } }, required: ['content'], additionalProperties: false },
+    name: 'remember_memory', description: '保存一条你希望记得的长期记忆。',
+    parameters: { type: 'object', properties: { content: { type: 'string', description: '完整记忆正文' }, summary: { type: 'string', description: '可选的检索摘要，最多 50 个 Unicode 字符', maxLength: 50 } }, required: ['content'], additionalProperties: false },
   },
   execute: (input: { content: string; summary?: string }, context: AgentToolExecutionContext) => result(context, () =>
     rememberMemory(context.task.assistantId, input.content, JSON.stringify([context.runId, context.toolCallId]), input.summary ?? null)),
@@ -34,7 +34,7 @@ export const ConvertExitedGroupHistoryTool = {
   name: 'convert_exited_group_history_to_memory',
   definition: {
     name: 'convert_exited_group_history_to_memory',
-    description: '将自己已退出群聊的冻结摘要与聊天记录交给模型提炼为一条长期记忆，自动以【群聊·退出时群名】为标题，返回 memoryId（id）供 update_memory 继续整理。group_id 来自自己的退出历史背景；仍在群内不能使用。重复转换同一份退出记录返回已有记忆，不覆盖后续编辑；不改变用户的历史注入开关。',
+    description: '将自己已退出群聊的冻结摘要与聊天记录交给模型提炼为一条长期记忆，可用 update_memory 继续整理。',
     parameters: { type: 'object', properties: { group_id: { type: 'string', minLength: 1, maxLength: 120,
       description: '自己已退出群聊的 group_id / conversationId' } }, required: ['group_id'], additionalProperties: false },
   },
@@ -56,7 +56,7 @@ export const UpdateMemoryTool = {
     name: 'update_memory', description: '按 memoryId 更新当前 AI 已有的一条记忆；先用 recall_memory 确认目标。content 会整体替换原正文，需保留仍有效的信息。',
     parameters: { type: 'object', properties: {
       memoryId: { type: 'string', description: '已保存或检索结果中的记忆条目 id' },
-      content: { type: 'string', description: '更新后的完整记忆正文，最多 500 个 Unicode 字符，不是要追加的片段' },
+      content: { type: 'string', description: '更新后的完整记忆正文' },
       summary: { type: 'string', description: '可选的检索摘要，最多 50 字；省略保留原摘要，空字符串清除摘要', maxLength: 50 },
     }, required: ['memoryId', 'content'], additionalProperties: false },
   },

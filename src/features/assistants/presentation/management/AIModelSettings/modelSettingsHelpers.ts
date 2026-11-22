@@ -4,12 +4,7 @@ import type { AIModelSettingsUpdate } from '../../../domain/AssistantRepository'
 import type { DraftCommit, DraftErrors } from '@shared/ui/AutoSaveDraftEditor';
 import { readDraftInteger, readDraftNumber } from '@shared/ui/draftValidation';
 
-export const DEFAULT_MAX_TOKENS = 2000;
-export const UNLIMITED_MAX_TOKENS = '无限制';
-export interface ConnectionParams { temperature: number | null; topP: number | null; maxTokens: number | null; disableThinking: boolean }
-export function getMaxTokensInputValue(value: number | null): string {
-  return value === null ? UNLIMITED_MAX_TOKENS : String(value);
-}
+export interface ConnectionParams { temperature: number | null; topP: number | null; maxTokens: number | null; disableThinking: boolean; reasoningEffort: import('@platform/ai').ReasoningEffort }
 export interface ModelSettingsDraft {
   serviceConfigId: string;
   apiBaseUrl: string;
@@ -20,14 +15,15 @@ export interface ModelSettingsDraft {
   maxTokens: string;
   enableTools: boolean;
   disableThinking: boolean;
+  reasoningEffort: import('@platform/ai').ReasoningEffort;
 }
 export function getModelSettingsDraft(ai: AIProfile): ModelSettingsDraft {
   return {
     serviceConfigId: ai.serviceConfigId ?? '',
     apiBaseUrl: ai.apiBaseUrl ?? '', apiKey: ai.apiKey ?? '', selectedModel: ai.model,
     tempInput: ai.temperature === null ? '' : String(ai.temperature),
-    topPInput: ai.topP === null ? '' : String(ai.topP), maxTokens: getMaxTokensInputValue(ai.maxTokens),
-    enableTools: ai.enableTools, disableThinking: ai.disableThinking,
+    topPInput: ai.topP === null ? '' : String(ai.topP), maxTokens: ai.maxTokens === null ? '' : String(ai.maxTokens),
+    enableTools: ai.enableTools, disableThinking: ai.disableThinking, reasoningEffort: ai.reasoningEffort,
   };
 }
 export function parseModelSettingsDraft(draft: ModelSettingsDraft, changed: (keyof ModelSettingsDraft)[]): DraftCommit<ModelSettingsDraft, AIModelSettingsUpdate> {
@@ -45,8 +41,7 @@ export function parseModelSettingsDraft(draft: ModelSettingsDraft, changed: (key
       if (parsed.error) { errors[key] = parsed.error; continue; }
       patch[spec.field] = parsed.value;
     } else if (key === 'maxTokens') {
-      const parsed = draft.maxTokens === UNLIMITED_MAX_TOKENS
-        ? { value: null, error: null } : readDraftInteger(draft.maxTokens, 'Max Tokens');
+      const parsed = readDraftInteger(draft.maxTokens, 'Max Tokens', true);
       if (parsed.error) { errors[key] = parsed.error; continue; }
       patch.maxTokens = parsed.value;
     } else if (key === 'serviceConfigId') {
@@ -57,6 +52,8 @@ export function parseModelSettingsDraft(draft: ModelSettingsDraft, changed: (key
       patch[key] = draft[key].trim();
     } else if (key === 'enableTools' || key === 'disableThinking') {
       patch[key] = draft[key];
+    } else if (key === 'reasoningEffort') {
+      patch.reasoningEffort = draft.reasoningEffort;
     }
     accepted.push(key);
   }

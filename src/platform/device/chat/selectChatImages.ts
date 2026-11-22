@@ -1,7 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
-
-const MAX_CHAT_IMAGE_SIZE = 5 * 1024 * 1024;
+import { assertChatAttachmentSize } from './chatAttachmentSelection';
 
 export interface SelectedChatImage {
   uri: string;
@@ -28,9 +27,7 @@ export async function selectChatImages(selectionLimit: number): Promise<Selected
   return result.assets.map((asset) => {
     const file = new File(asset.uri);
     const fileSize = file.size;
-    if (fileSize > MAX_CHAT_IMAGE_SIZE) {
-      throw new Error('图片不能超过 5MB');
-    }
+    assertChatAttachmentSize(fileSize, 'image');
 
     return {
       uri: asset.uri,

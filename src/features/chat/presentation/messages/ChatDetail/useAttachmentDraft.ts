@@ -20,6 +20,7 @@ import {
   persistDeviceMedia,
   pickChatDocumentFromDevice,
   pickChatImagesFromDevice,
+  writeChatTextDraft,
 } from '@platform/device/DeviceMediaService';
 
 function buildReadyAttachment(draft: AttachmentDraftItem): ChatAttachment | null {
@@ -46,19 +47,19 @@ function buildReadyAttachment(draft: AttachmentDraftItem): ChatAttachment | null
   };
 }
 
-function buildInitialDraft(params: {
-  id: string;
+type AttachmentDraftSource = {
   type: ChatAttachmentType;
   source: ChatAttachmentSource;
-  originalUri: string;
   fileName: string;
   mimeType?: string | null;
   fileSize?: number | null;
   width?: number | null;
   height?: number | null;
-}): AttachmentDraftItem {
+} & ({ originalUri: string; text?: never } | { text: string; originalUri?: never });
+
+function buildInitialDraft(params: AttachmentDraftSource, id: string): AttachmentDraftItem {
   return {
-    id: params.id,
+    id,
     type: params.type,
     source: params.source,
     originalUri: params.originalUri,
@@ -79,16 +80,7 @@ function buildInitialDraft(params: {
   };
 }
 
-const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'bmp'];
 const MAX_CHAT_IMAGE_SELECTION = 9;
-
-function isImageFile(fileName: string, mimeType?: string | null): boolean {
-  if (mimeType?.startsWith('image/')) {
-    return true;
-  }
-  const extension = fileName.toLowerCase().split('.').pop() ?? '';
-  return IMAGE_EXTENSIONS.includes(extension);
-}
 
 export function useAttachmentDraft() {
   const [draftAttachments, setDraftAttachments] = useState<AttachmentDraftItem[]>([]);
@@ -131,16 +123,7 @@ export function useAttachmentDraft() {
     setDraftAttachments(draftRef.current);
   }, [releaseDraft]);
 
-  const prepareAttachments = useCallback(async (items: {
-    type: ChatAttachmentType;
-    source: ChatAttachmentSource;
-    originalUri: string;
-    fileName: string;
-    mimeType?: string | null;
-    fileSize?: number | null;
-    width?: number | null;
-    height?: number | null;
-  }[]) => {
+  const prepareAttachments = useCallback(async (items: AttachmentDraftSource[], append = false) => {
     for (const params of items) {
       if (params.type === 'file') {
         assertChatAttachmentFileSupported({
@@ -148,18 +131,20 @@ export function useAttachmentDraft() {
         });
       }
     }
-    const operationId = operationIdRef.current + 1;
-    operationIdRef.current = operationId;
-    draftRef.current.forEach(releaseDraft);
-    const initialDrafts = items.map((params) => buildInitialDraft({
-      ...params,
-      id: createAttachmentDraftId(params.type === 'image' ? 'img' : 'file'),
+    if (!append) {
+      operationIdRef.current += 1;
+      draftRef.current.forEach(releaseDraft);
+    }
+    const operationId = operationIdRef.current;
+    const drafts = items.map((source) => ({
+      source,
+      initialDraft: buildInitialDraft(source, createAttachmentDraftId(source.type === 'image' ? 'img' : 'file')),
     }));
-    draftRef.current = initialDrafts;
-    setDraftAttachments(initialDrafts);
+    const initialDrafts = drafts.map(({ initialDraft }) => initialDraft);
+    draftRef.current = append ? [...draftRef.current, ...initialDrafts] : initialDrafts;
+    setDraftAttachments(draftRef.current);
 
-    const results = await Promise.allSettled(initialDrafts.map(async (initialDraft) => {
-      const params = initialDraft;
+    const results = await Promise.allSettled(drafts.map(async ({ source, initialDraft }) => {
       let persistedUri: string | null = null;
 
       try {
@@ -168,16 +153,15 @@ export function useAttachmentDraft() {
           status: 'persisting',
         });
 
-        const localUri = await persistDeviceMedia({
-          sourceUri: params.originalUri,
-          category:
-            params.type === 'image'
-              ? PERSISTENT_MEDIA_CATEGORY.chatImage
-              : PERSISTENT_MEDIA_CATEGORY.chatFile,
-          entityId: initialDraft.id,
-          originalFileName: params.fileName,
-          mimeType: params.mimeType,
-        });
+        const localUri = source.originalUri === undefined
+          ? await writeChatTextDraft(initialDraft.id, source.text)
+          : await persistDeviceMedia({
+            sourceUri: source.originalUri,
+            category: source.type === 'image' ? PERSISTENT_MEDIA_CATEGORY.chatImage : PERSISTENT_MEDIA_CATEGORY.chatFile,
+            entityId: initialDraft.id,
+            originalFileName: source.fileName,
+            mimeType: source.mimeType,
+          });
         persistedUri = localUri;
         draftLeases.current.set(localUri, ownChatAttachmentDraftFile(localUri));
         if (operationIdRef.current !== operationId || !draftRef.current.some((draft) => draft.id === initialDraft.id)) {
@@ -185,7 +169,7 @@ export function useAttachmentDraft() {
           return;
         }
 
-        if (params.type === 'image') {
+        if (source.type === 'image') {
           setDraftIfLatest(operationId, {
             ...initialDraft,
             localUri,
@@ -205,8 +189,8 @@ export function useAttachmentDraft() {
 
         const parseResult = await attachmentParser.parseFile({
           localUri,
-          fileName: params.fileName,
-          mimeType: params.mimeType,
+          fileName: source.fileName,
+          mimeType: source.mimeType,
         });
 
         if (parseResult.parseStatus !== 'success') {
@@ -234,7 +218,7 @@ export function useAttachmentDraft() {
         }
         const message = error instanceof Error ? error.message : '附件处理失败';
 
-        if (params.type === 'file') {
+        if (source.type === 'file') {
           removeAttachment(initialDraft.id);
           throw error;
         }
@@ -291,37 +275,30 @@ export function useAttachmentDraft() {
     return true;
   }, [prepareAttachments]);
 
-  // 常见图片文件后缀（用于文件选择器选择的图片识别）
   const selectDocumentAttachment = useCallback(async () => {
     const document = await pickChatDocumentFromDevice();
     if (!document) {
       return false;
     }
 
-    // 检查是否是图片文件，如果是则按图片类型处理
-    const shouldTreatAsImage = isImageFile(document.fileName, document.mimeType);
-
-    if (shouldTreatAsImage) {
-      await prepareAttachments([{
-        type: 'image',
-        source: document.source,
-        originalUri: document.uri,
-        fileName: document.fileName,
-        mimeType: document.mimeType,
-        fileSize: document.fileSize,
-      }]);
-    } else {
-      await prepareAttachments([{
-        type: 'file',
-        source: document.source,
-        originalUri: document.uri,
-        fileName: document.fileName,
-        mimeType: document.mimeType,
-        fileSize: document.fileSize,
-      }]);
-    }
+    await prepareAttachments([{
+      type: document.type,
+      source: document.source,
+      originalUri: document.uri,
+      fileName: document.fileName,
+      mimeType: document.mimeType,
+      fileSize: document.fileSize,
+    }]);
     return true;
   }, [prepareAttachments]);
+
+  const attachPastedText = useCallback((text: string) => prepareAttachments([{
+    type: 'file',
+    source: 'clipboard',
+    fileName: '粘贴文本.txt',
+    mimeType: 'text/plain',
+    text,
+  }], true), [prepareAttachments]);
 
   const readyAttachments = useMemo(() => {
     return draftAttachments.map(buildReadyAttachment).filter((attachment): attachment is ChatAttachment => attachment !== null);
@@ -332,19 +309,23 @@ export function useAttachmentDraft() {
     submit: (attachments: ChatAttachment[], consumeDraft: () => void) => Promise<T>,
   ): Promise<T> => {
     const draft = draftRef.current;
-    const operationId = operationIdRef.current;
     const attachments = draft.map(buildReadyAttachment).filter((attachment): attachment is ChatAttachment => attachment !== null);
     const releaseSubmission = retainChatAttachmentDraftFiles(attachments);
     const consumeDraft = () => {
-      // 发送途中移除单张仍属于同批；重新选择的下一批不能被旧提交清空。
-      if (operationIdRef.current === operationId) clearAttachment();
+      // 只消费本次提交捕获的草稿，发送期间新粘贴或新选择的附件继续保留。
+      const consumedIds = new Set(attachments.map(({ id }) => id));
+      const remaining = draftRef.current.filter((item) => !consumedIds.has(item.id));
+      if (remaining.length === draftRef.current.length) return;
+      draftRef.current.filter((item) => consumedIds.has(item.id)).forEach(releaseDraft);
+      draftRef.current = remaining;
+      setDraftAttachments(remaining);
     };
     try {
       return await submit(attachments, consumeDraft);
     } finally {
       releaseSubmission();
     }
-  }, [clearAttachment]);
+  }, [releaseDraft]);
 
   return {
     draftAttachments,
@@ -357,6 +338,7 @@ export function useAttachmentDraft() {
     selectImageAttachment,
     capturePhotoAttachment,
     selectDocumentAttachment,
+    attachPastedText,
     clearAttachment,
     removeAttachment,
   };

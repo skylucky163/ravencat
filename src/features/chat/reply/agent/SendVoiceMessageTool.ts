@@ -42,16 +42,21 @@ export async function sendVoiceMessage(
   if (!text) return toolFailure('VOICE_TEXT_EMPTY', '语音消息尚未发送：正文不能为空。');
   throwIfAbortSignalAborted(context.abortSignal);
 
-  let transcript = text;
-  let synthesisText = text;
-  if (modelSnapshot) {
-    const metadata = readSpeechMetadata(modelSnapshot.metadataJson);
-    try {
-      ({ transcript, synthesisText } = prepareSpeechText(text, metadata.provider, modelSnapshot.model));
-    } catch (error) {
-      return toolFailure('VOICE_TEXT_INVALID', `语音消息尚未发送：${(error as Error).message}`);
-    }
+  const speechModel = modelSnapshot === undefined
+    ? await resolveTextToSpeechModel({ assistantId: context.task.assistantId, consumer: 'chatVoiceMessage' })
+    : modelSnapshot;
+  if (!speechModel) {
+    return toolFailure('VOICE_TTS_NOT_CONFIGURED', '语音消息尚未发送：未配置可用的 TTS 模型。请告知用户在角色的「模型设置」中选择语音模型。');
   }
+
+  const metadata = readSpeechMetadata(speechModel.metadataJson);
+  let preparedText: ReturnType<typeof prepareSpeechText>;
+  try {
+    preparedText = prepareSpeechText(text, metadata.provider, speechModel.model);
+  } catch (error) {
+    return toolFailure('VOICE_TEXT_INVALID', `语音消息尚未发送：${(error as Error).message}`);
+  }
+  const { transcript, synthesisText } = preparedText;
 
   const synthesized = await synthesizeTextToSpeech({
     text: synthesisText,
@@ -59,7 +64,7 @@ export async function sendVoiceMessage(
     consumer: 'chatVoiceMessage',
     signal: context.abortSignal,
     delivery: { speed: input.speed, emotion: input.emotion, instructions: input.instructions, audioTag: input.audioTag },
-    modelSnapshot,
+    modelSnapshot: speechModel,
   });
   if (!synthesized.success || !synthesized.audioUri || !synthesized.mimeType) {
     const rawError = synthesized.rawError || '语音合成失败';
@@ -161,7 +166,6 @@ function toolFailure(code: string, modelContent: string): AgentToolExecutionResu
 
 function classifyTTSFailure(rawError: string): string {
   const value = rawError.toLowerCase();
-  if (value.includes('未配置')) return 'VOICE_TTS_NOT_CONFIGURED';
   if (value.includes('timeout') || value.includes('超时')) return 'VOICE_TTS_TIMEOUT';
   if (value.includes('network') || value.includes('网络')) return 'VOICE_TTS_NETWORK_FAILED';
   if (value.includes('429') || value.includes('rate')) return 'VOICE_TTS_RATE_LIMITED';

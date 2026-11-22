@@ -1,25 +1,27 @@
 /** 提供聊天文本输入、附件操作、回复状态与主题快捷面板。 */
 
-import { AppTextInput, showAppDialog } from '@shared/ui';
+import { showAppDialog } from '@shared/ui';
 import React, { useRef, useState, useCallback, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, type LayoutChangeEvent, Keyboard } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BrainCircuit, Keyboard as KeyboardIcon } from 'lucide-react-native';
+import { BrainCircuit, CirclePlay, Keyboard as KeyboardIcon } from 'lucide-react-native';
 import ChatEmojiPanel from './ChatEmojiPanel';
 import ChatToolPanel from './ChatToolPanel';
 import ChatAttachmentComposerTray from './ChatAttachmentComposerTray';
+import { ChatSendButton } from './ChatSendButton';
 import { ChatVoiceReviewPanel } from './ChatVoiceReviewPanel';
 import { ChatVoiceRecordingFeedback } from './ChatVoiceRecordingFeedback';
 import type {
   AttachmentDraftItem,
   StickerMessageSnapshot,
 } from '@features/chat/messages/domain';
-import { createInputAreaStyles } from './chatInputStyles';
+import { createInputAreaStyles, GLASS_COMPOSER_CONTROL_SIZE } from './chatInputStyles';
 import { isMoonKimiTheme, ThemedSurface, useTheme } from '@shared/theme';
 import { MoonKimiComposer } from './MoonKimiComposer';
 import type { MoonKimiQuickAction } from './MoonKimiComposer';
 import { resolveTogetherListeningToolPanelHandler } from './chatToolPanelCapability';
-import { CHAT_INPUT_MAX_LENGTH } from './chatInputLimits';
+import { CHAT_TEXT_ATTACHMENT_MAX_LENGTH } from '../../../messages/domain/ChatAttachment';
+import { ChatComposerTextInput } from './ChatComposerTextInput';
 import type { ChatComposerSurface } from './useChatComposerSurface';
 import type { ChatVoiceMessageReviewDraft, ChatVoiceRecordingState } from './chatTypes';
 
@@ -37,7 +39,10 @@ export interface InputAreaReplyTarget {
 interface ChatInputAreaProps {
   value: string;
   onChangeText: (text: string) => void;
-  onSend: () => void;
+  onSend: () => Promise<unknown> | unknown;
+  onInvoke?: () => Promise<unknown> | unknown;
+  onStopReply?: () => void;
+  isStoppingReply?: boolean;
   voiceRecordingState?: ChatVoiceRecordingState;
   voiceRecordingProgress?: { durationMs: number; level: number };
   /** 语音录制 / STT 的即时失败文案；由输入区直接可见，不走历史消息 error 通道。 */
@@ -63,6 +68,7 @@ interface ChatInputAreaProps {
   onImagePress?: () => Promise<unknown> | unknown;
   onCameraPress?: () => Promise<unknown> | unknown;
   onFilePress?: () => Promise<unknown> | unknown;
+  onAttachPastedText?: (text: string) => Promise<void>;
   onStickerPress?: (sticker: StickerMessageSnapshot) => Promise<unknown> | unknown;
   onVideoCallPress?: () => Promise<unknown> | unknown;
   onTogetherListeningPress?: () => Promise<unknown> | unknown;
@@ -84,6 +90,9 @@ export default function ChatInputArea({
   value,
   onChangeText,
   onSend,
+  onInvoke,
+  onStopReply,
+  isStoppingReply = false,
   voiceRecordingState = 'idle',
   voiceRecordingProgress = { durationMs: 0, level: 0 },
   voiceRecordingError = null,
@@ -103,6 +112,7 @@ export default function ChatInputArea({
   onImagePress,
   onCameraPress,
   onFilePress,
+  onAttachPastedText,
   onStickerPress,
   onVideoCallPress,
   onTogetherListeningPress,
@@ -120,10 +130,29 @@ export default function ChatInputArea({
   surfaceHeight,
 }: ChatInputAreaProps) {
   const theme = useTheme();
+  const handleOverflowPaste = onAttachPastedText && !disabled
+    ? (text: string | null) => {
+      if (text == null) {
+        showAppDialog({ title: '粘贴文本过长', message: `转为 TXT 最多支持 ${CHAT_TEXT_ATTACHMENT_MAX_LENGTH.toLocaleString('zh-CN')} 字符，请分段粘贴。`, tone: 'warning' });
+        return;
+      }
+      void onAttachPastedText(text).catch((error: unknown) => {
+        showAppDialog({ title: '附件处理失败', message: error instanceof Error ? error.message : '无法将粘贴文本转为 TXT', tone: 'error' });
+      });
+    }
+    : undefined;
   const styles = useMemo(() => createInputAreaStyles(theme), [theme]);
   const isMoonKimi = isMoonKimiTheme(theme);
+  const usesGlass = theme.effects.glass.enabled;
   const inputRef = useRef<TextInput | null>(null);
   const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [pendingSubmissions, setPendingSubmissions] = useState(0);
+  const [isInvoking, setIsInvoking] = useState(false);
+  const trackSubmission = useCallback(async (submit: () => Promise<unknown> | unknown) => {
+    setPendingSubmissions(count => count + 1);
+    try { return await submit(); }
+    finally { setPendingSubmissions(count => count - 1); }
+  }, []);
   const voiceButtonSizeRef = useRef({ width: 0, height: 0 });
   const shouldCancelVoiceRef = useRef(false);
   const [isCancellingVoice, setIsCancellingVoice] = useState(false);
@@ -164,7 +193,7 @@ export default function ChatInputArea({
     }
     if (!canSend) return;
 
-    onSend();
+    void trackSubmission(onSend);
 
     // Android Edge-to-Edge 模式下，延迟聚焦避免键盘动画冲突
     setTimeout(() => {
@@ -242,10 +271,10 @@ export default function ChatInputArea({
 
   const handleStickerPress = useCallback((sticker: StickerMessageSnapshot) => {
     onActiveSurfaceChange('none');
-    void Promise.resolve(onStickerPress?.(sticker)).catch((error) => {
+    void trackSubmission(() => onStickerPress?.(sticker)).catch((error) => {
       showAppDialog({ title: '表情包发送失败', message: error instanceof Error ? error.message : '发送表情包失败', tone: 'error' });
     });
-  }, [onActiveSurfaceChange, onStickerPress]);
+  }, [onActiveSurfaceChange, onStickerPress, trackSubmission]);
 
   const runAttachmentAction = useCallback(async (
     action: (() => Promise<unknown> | unknown) | undefined,
@@ -312,6 +341,58 @@ export default function ChatInputArea({
     })();
   }, [onActiveSurfaceChange, onVoiceModeEnter]);
 
+  // 输入行保持透明，输入框和独立按钮各自采样聊天玻璃场景。
+  const glassButtonTouchTarget = usesGlass && styles.glassButtonTouchTarget;
+  const renderButton = (button: React.ReactElement) => usesGlass ? (
+    <ThemedSurface
+      variant="inputBar"
+      cornerRadius={GLASS_COMPOSER_CONTROL_SIZE / 2}
+      style={styles.glassButton}
+    >
+      {button}
+    </ThemedSurface>
+  ) : button;
+  // 单聊和群聊共用此入口，各种输入形态只负责将它放到自己的操作栏。
+  const invokeDisabled = disabled || isPreparingAttachment || hasFailedAttachment || pendingSubmissions > 0 || isInvoking;
+  const replyButtonStyle = [
+    isMoonKimi ? styles.moonKimiInputIconButton : styles.iconButton,
+    usesGlass && (voiceReviewDraft ? styles.glassButtonTouchTarget : styles.glassFieldReplyButton),
+  ];
+  const replyStopButton = onStopReply ? (
+    <TouchableOpacity
+      style={replyButtonStyle}
+      onPress={onStopReply}
+      disabled={isStoppingReply}
+      accessibilityRole="button"
+      accessibilityLabel="终止回复"
+      accessibilityState={{ disabled: isStoppingReply, busy: isStoppingReply }}
+    >
+      <Ionicons name="stop-circle" size={26} color={theme.colors.icon.primary} />
+    </TouchableOpacity>
+  ) : onInvoke ? (
+    <TouchableOpacity style={replyButtonStyle}
+      accessibilityRole="button" accessibilityLabel="召唤回复" disabled={invokeDisabled}
+      accessibilityState={{ disabled: invokeDisabled, busy: isInvoking }}
+      onPress={() => {
+        setIsInvoking(true);
+        void Promise.resolve(onInvoke()).catch(error => {
+          showAppDialog({ title: '召唤失败', message: error instanceof Error ? error.message : '请求失败', tone: 'error' });
+        }).finally(() => setIsInvoking(false));
+      }}>
+      <CirclePlay size={26} strokeWidth={1.5} color={invokeDisabled ? theme.colors.icon.secondary : theme.colors.icon.primary} />
+    </TouchableOpacity>
+  ) : null;
+  const renderField = (field: React.ReactElement) => usesGlass ? (
+    <ThemedSurface
+      variant="inputBar"
+      cornerRadius={GLASS_COMPOSER_CONTROL_SIZE / 2}
+      style={styles.glassField}
+    >
+      {field}
+      {replyStopButton}
+    </ThemedSurface>
+  ) : field;
+
   return (
     <View style={styles.container} onLayout={onLayout}>
       {isVoiceFeedbackVisible && (
@@ -359,20 +440,24 @@ export default function ChatInputArea({
           onChangeTranscript={onVoiceReviewTranscriptChange ?? (() => undefined)}
           onSend={() => { void onVoiceReviewSend?.(); }}
           onCancel={() => { void onVoiceReviewCancel?.(); }}
+          replyStopButton={replyStopButton && renderButton(replyStopButton)}
           paddingBottom={paddingBottom}
           styles={styles}
           theme={theme}
         />
       ) : isVoiceMode ? (
-        <ThemedSurface
-          nativeGlass
-          style={[styles.inputContainer, { paddingBottom }]}
-          variant="inputBar"
-        >
-          <TouchableOpacity style={styles.voiceButton} onPress={leaveVoiceMode}>
-            <KeyboardIcon size={24} color={theme.colors.icon.primary} />
-          </TouchableOpacity>
-          <View
+        <View style={[styles.inputContainer, { paddingBottom }]}>
+          {renderButton(
+            <TouchableOpacity
+              style={[styles.voiceButton, glassButtonTouchTarget]}
+              onPress={leaveVoiceMode}
+              accessibilityRole="button"
+              accessibilityLabel="切换到键盘"
+            >
+              <KeyboardIcon size={24} color={theme.colors.icon.primary} />
+            </TouchableOpacity>
+          )}
+          {renderField(<View
             style={[styles.input, { alignItems: 'center', justifyContent: 'center' }]}
             onLayout={(event) => { voiceButtonSizeRef.current = event.nativeEvent.layout; }}
             onStartShouldSetResponder={() => !disabled && voiceRecordingState === 'idle'}
@@ -400,8 +485,9 @@ export default function ChatInputArea({
                     ? isCancellingVoice ? '松开取消，移回继续' : '松开发送，滑出取消'
                     : '按住说话'}
             </Text>
-          </View>
-        </ThemedSurface>
+          </View>)}
+          {!usesGlass && replyStopButton}
+        </View>
       ) : isMoonKimi ? (
         <MoonKimiComposer
           actions={moonKimiQuickActions}
@@ -414,6 +500,7 @@ export default function ChatInputArea({
           isPreparingAttachment={isPreparingAttachment}
           isToolPanelVisible={isToolPanelVisible}
           onChangeText={onChangeText}
+          onOverflowPaste={handleOverflowPaste}
           onDisabledPress={showDisabledMessage}
           onFocus={handleInputFocus}
           onQuickActionPress={onMoonKimiQuickActionPress}
@@ -421,6 +508,7 @@ export default function ChatInputArea({
           onToggleToolPanel={toggleToolPanel}
           onVoiceModePress={enterVoiceMode}
           paddingBottom={paddingBottom}
+          replyStopButton={replyStopButton}
           shouldShowQuickActions={shouldShowMoonKimiQuickActions}
           shouldShowSendButton={shouldShowSendButton}
           styles={styles}
@@ -428,24 +516,27 @@ export default function ChatInputArea({
           value={value}
         />
       ) : (
-        <ThemedSurface
-          nativeGlass
-          style={[styles.inputContainer, { paddingBottom }]}
-          variant="inputBar"
-        >
-          <TouchableOpacity style={styles.voiceButton} onPress={enterVoiceMode}>
-            <Ionicons name="mic-outline" size={26} color={theme.colors.icon.primary} />
-          </TouchableOpacity>
-          <AppTextInput
+        <View style={[styles.inputContainer, { paddingBottom }]}>
+          {renderButton(
+            <TouchableOpacity
+              style={[styles.voiceButton, glassButtonTouchTarget]}
+              onPress={enterVoiceMode}
+              accessibilityRole="button"
+              accessibilityLabel="切换到语音"
+            >
+              <Ionicons name="mic-outline" size={26} color={theme.colors.icon.primary} />
+            </TouchableOpacity>
+          )}
+          {renderField(<ChatComposerTextInput
             ref={inputRef}
-            style={styles.input}
+            style={usesGlass && replyStopButton ? [styles.input, styles.glassInputWithReplyButton] : styles.input}
             value={value}
             onChangeText={onChangeText}
             placeholder={disabled ? disabledPlaceholder : ''}
             placeholderTextColor={theme.colors.text.tertiary}
-            maxLength={CHAT_INPUT_MAX_LENGTH}
+            onOverflowPaste={handleOverflowPaste}
             autoGrow
-            textAlignVertical="top"
+            textAlignVertical={usesGlass ? 'center' : 'top'}
             scrollEnabled
             editable={!disabled}
             blurOnSubmit={false}
@@ -455,43 +546,54 @@ export default function ChatInputArea({
               }
             }}
             onFocus={handleInputFocus}
-          />
+          />)}
 
-          {shouldShowSendButton ? (
-            <TouchableOpacity
-              style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
-              onPress={handleSend}
-              disabled={!canSend && !(disabled && disabledPressMessage)}
-            >
-              <Text style={styles.sendButtonText}>
-                {isPreparingAttachment ? '处理中' : '发送'}
-              </Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.rightActions}>
-              <TouchableOpacity
-                style={[styles.iconButton, isEmojiPanelVisible && styles.iconButtonActive]}
-                onPress={toggleEmojiPanel}
-              >
-                <Ionicons
-                  name={isEmojiPanelVisible ? "happy" : "happy-outline"}
-                  size={26}
-                  color={isEmojiPanelVisible ? theme.colors.text.primary : theme.colors.icon.primary}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.iconButton, isToolPanelVisible && styles.iconButtonActive]}
-                onPress={toggleToolPanel}
-              >
-                <Ionicons
-                  name={isToolPanelVisible ? "add-circle" : "add-circle-outline"}
-                  size={26}
-                  color={isToolPanelVisible ? theme.colors.text.primary : theme.colors.icon.primary}
-                />
-              </TouchableOpacity>
-            </View>
-          )}
-        </ThemedSurface>
+          <View style={styles.rightActions}>
+            {!usesGlass && replyStopButton}
+            {shouldShowSendButton ? renderButton(
+              <ChatSendButton
+                size={23}
+                isDisabled={!canSend}
+                isPreparing={isPreparingAttachment}
+                onPress={handleSend}
+                keepPressableWhenDisabled={disabled && Boolean(disabledPressMessage)}
+                style={[styles.sendButton, glassButtonTouchTarget]}
+                theme={theme}
+              />
+            ) : (
+              <>
+                {renderButton(
+                  <TouchableOpacity
+                    style={[styles.iconButton, isEmojiPanelVisible && styles.iconButtonActive, glassButtonTouchTarget]}
+                    onPress={toggleEmojiPanel}
+                    accessibilityRole="button"
+                    accessibilityLabel="表情包"
+                  >
+                    <Ionicons
+                      name={isEmojiPanelVisible ? "happy" : "happy-outline"}
+                      size={26}
+                      color={isEmojiPanelVisible ? theme.colors.text.primary : theme.colors.icon.primary}
+                    />
+                  </TouchableOpacity>
+                )}
+                {renderButton(
+                  <TouchableOpacity
+                    style={[styles.iconButton, isToolPanelVisible && styles.iconButtonActive, glassButtonTouchTarget]}
+                    onPress={toggleToolPanel}
+                    accessibilityRole="button"
+                    accessibilityLabel="功能面板"
+                  >
+                    <Ionicons
+                      name={isToolPanelVisible ? "add-circle" : "add-circle-outline"}
+                      size={26}
+                      color={isToolPanelVisible ? theme.colors.text.primary : theme.colors.icon.primary}
+                    />
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </View>
+        </View>
       )}
 
       {/* 表情面板 */}

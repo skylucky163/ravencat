@@ -1,11 +1,14 @@
 /** 独立原文窗口按 canonical 顺序读取，查看搜索语境不改聊天列表与摘要进度。 */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme, useThemedStyles, type PresentationTheme } from '@shared/theme';
 import { NavigationHeader } from '@shared/ui';
 import { readConversationMessageContext } from '../../messages/application/ReadChatMessageContext';
 import type { ChatMessageContext } from '../../messages/domain/ChatMessageContext';
+import type { FilePreviewParams } from '../shell/chatScreenTypes';
+import AttachmentCard from './MessageBubble/AttachmentCard';
+import FilePreview from './FilePreview';
 
 const createStyles = (theme: PresentationTheme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background.screen },
@@ -28,6 +31,7 @@ export default function ChatMessageContextScreen({ conversationId, messageId, on
   const [context, setContext] = useState<ChatMessageContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [file, setFile] = useState<FilePreviewParams | null>(null);
   const request = useRef({ revision: 0, pending: false }).current;
   const list = useRef<FlatList>(null);
   const load = useCallback(async (anchorId: number, before = 10, after = 10) => {
@@ -62,7 +66,9 @@ export default function ChatMessageContextScreen({ conversationId, messageId, on
       renderItem={({ item }) => <View style={[styles.card, item.messageId === messageId && styles.anchor]}>
         <Text style={styles.author}>{item.author.role === 'user' ? '我' : item.author.name}{item.messageId === messageId ? ' · 搜索结果' : ''}</Text>
         <Text style={styles.date}>{new Date(item.createdAt).toLocaleString()}</Text>
-        <Text style={styles.text} selectable>{item.text}</Text>
+        {item.text ? <Text style={styles.text} selectable>{item.text}</Text> : null}
+        {item.userAttachments?.map(attachment => <AttachmentCard key={attachment.id} attachment={attachment}
+          isMe={item.author.role === 'user'} onPreview={setFile} />)}
       </View>}
       ListEmptyComponent={!loading && !error ? <Text style={styles.status}>这条消息已删除或不再可见</Text> : null}
       ListFooterComponent={<View>
@@ -72,5 +78,8 @@ export default function ChatMessageContextScreen({ conversationId, messageId, on
         {context && <TouchableOpacity style={styles.button} disabled={loading} onPress={() => void load(messageId)}><Text style={styles.action}>回到搜索结果</Text></TouchableOpacity>}
       </View>}
     />
+    {file && <Modal visible animationType="slide" onRequestClose={() => setFile(null)}>
+      <FilePreview {...file} onBack={() => setFile(null)} />
+    </Modal>}
   </SafeAreaView>;
 }

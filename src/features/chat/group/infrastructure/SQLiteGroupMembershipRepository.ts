@@ -21,7 +21,7 @@ async function requireActor(tx: DatabaseTransactionExecutor, actor: GroupActor, 
   if (actor.kind === 'user') return { groupName: group.name, actorName: '用户' };
   const member = await tx.getFirstAsync<{ name: string; is_host_ai: number; joined: number }>(`SELECT a.name, a.is_host_ai,
     EXISTS (SELECT 1 FROM group_chat_members m WHERE m.group_id = ? AND m.ai_assistant_id = a.id AND m.enabled = 1) AS joined
-    FROM ai_assistants a WHERE a.id = ?`, [groupId, actor.assistantId]);
+    FROM ai_assistants a WHERE a.id = ? AND a.deleted_at IS NULL`, [groupId, actor.assistantId]);
   if (!member) throw new GroupMembershipError('操作群聊的 AI 已不存在');
   if (access !== 'any' && (member.joined !== 1 || (access === 'host' && member.is_host_ai !== 1))) {
     throw new GroupMembershipError(access === 'host'
@@ -53,7 +53,7 @@ export class SQLiteGroupMembershipRepository implements GroupMembershipRepositor
     for (const assistantId of assistantIds) {
       const target = await tx.getFirstAsync<{ name: string; agent_id: string; is_blocked: number }>(
         `SELECT a.name, a.agent_id, EXISTS (SELECT 1 FROM ai_blacklist b
-          WHERE b.ai_id = a.id AND b.blocked_until > ?) AS is_blocked FROM ai_assistants a WHERE a.id = ?`, [now, assistantId]);
+          WHERE b.ai_id = a.id AND b.blocked_until > ?) AS is_blocked FROM ai_assistants a WHERE a.id = ? AND a.deleted_at IS NULL`, [now, assistantId]);
       if (!target) throw new GroupMembershipError('所选 AI 已不存在');
       const member = await tx.getFirstAsync<{ enabled: number; muted: number }>(
         'SELECT enabled, muted FROM group_chat_members WHERE group_id = ? AND ai_assistant_id = ?', [groupId, assistantId]);

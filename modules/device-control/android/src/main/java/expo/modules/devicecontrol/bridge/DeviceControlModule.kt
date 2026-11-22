@@ -14,6 +14,7 @@ import expo.modules.devicecontrol.controller.MediaSessionSnapshotReader
 import expo.modules.devicecontrol.controller.MediaSessionTransportController
 import expo.modules.devicecontrol.controller.NotificationListenerAccessReader
 import expo.modules.devicecontrol.controller.SystemCalendarController
+import expo.modules.devicecontrol.controller.SystemAlarmController
 import expo.modules.devicecontrol.controller.XiaohongshuNoteAutomation
 import expo.modules.devicecontrol.model.SoftLockCommand
 import expo.modules.devicecontrol.model.SoftLockCommandParseResult
@@ -41,6 +42,24 @@ import expo.modules.kotlin.modules.ModuleDefinition
 class DeviceControlModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("RavenCatDeviceControl")
+
+    AsyncFunction("showSystemAlarms") {
+      SystemAlarmController.showAlarms(appContext.currentActivity)
+    }.runOnQueue(Queues.MAIN)
+    AsyncFunction("dismissSystemAlarm") { mode: String, hour: Int?, minute: Int?, label: String? ->
+      SystemAlarmController.dismissAlarm(appContext.currentActivity, mode, hour, minute, label)
+    }.runOnQueue(Queues.MAIN)
+    AsyncFunction("snoozeSystemAlarm") { minutes: Int? ->
+      SystemAlarmController.snoozeAlarm(appContext.currentActivity, minutes)
+    }.runOnQueue(Queues.MAIN)
+    AsyncFunction("getNextSystemAlarm") {
+      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      SystemAlarmController.getNextAlarm(context)
+    }
+
+    AsyncFunction("setSystemAlarm") { hour: Int, minute: Int, label: String?, daysOfWeek: List<Int> ->
+      SystemAlarmController.setAlarm(appContext.currentActivity, hour, minute, label, daysOfWeek)
+    }.runOnQueue(Queues.MAIN)
 
     Function("beginXiaohongshuNote") { XiaohongshuNoteAutomation.begin() }
     Function("cancelXiaohongshuNote") { id: String -> XiaohongshuNoteAutomation.cancel(id) }

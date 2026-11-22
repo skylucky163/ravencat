@@ -98,9 +98,11 @@ export class AIAssistantRepository implements IAIAssistantRepository {
       groupContextSecondaryLimit: row.group_context_secondary_limit as number,
       enableTools: row.enable_tools === 1,
       disableThinking: row.disable_thinking === 1,
+      reasoningEffort: row.reasoning_effort as AIProfile['reasoningEffort'],
       streamingReply: row.streaming_reply === null ? null : row.streaming_reply === 1,
       showTokenUsage: row.show_token_usage === 1,
       showActionSteps: row.show_action_steps === 1,
+      manualReply: row.manual_reply === 1,
       // 2.x 读取旧列仅用于覆盖未完成迁移的数据库；3.0 删除旧列和该回退。
       allowMultipleBubbles: row.allow_multiple_bubbles === undefined || row.allow_multiple_bubbles === null
         ? row.enable_short_text_protocol !== 0
@@ -220,6 +222,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
         FROM ai_assistants a
         ${this.buildActiveBlockJoin(now)}
         ${this.buildCanonicalConversationJoin()}
+        WHERE a.deleted_at IS NULL
         ORDER BY a.created_at ASC
       `);
 
@@ -235,7 +238,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     const database = databaseCoordinator.openTaskExecutor({
       name: 'assistants.listIds', feature: 'assistants', priority: 'runtime',
     });
-    const rows = await database.getAllAsync<{ id: string }>('SELECT id FROM ai_assistants ORDER BY created_at ASC');
+    const rows = await database.getAllAsync<{ id: string }>('SELECT id FROM ai_assistants WHERE deleted_at IS NULL ORDER BY created_at ASC');
     return rows.map((row) => row.id);
   }
 
@@ -255,6 +258,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
                 WHERE b.ai_id = a.id AND b.blocked_until > ?
               ) AS is_blocked
        FROM ai_assistants a
+       WHERE a.deleted_at IS NULL
        ORDER BY a.created_at ASC`,
       [new Date().toISOString()]
     );
@@ -274,7 +278,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
          FROM ai_assistants a
          ${this.buildActiveBlockJoin(now)}
          ${this.buildCanonicalConversationJoin()}
-         WHERE a.id = ?`,
+         WHERE a.id = ? AND a.deleted_at IS NULL`,
         [assistantId]
       );
 
@@ -299,7 +303,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
          FROM ai_assistants a
          ${this.buildActiveBlockJoin(now)}
          ${this.buildCanonicalConversationJoin()}
-         WHERE a.is_ledger_ai = 1
+         WHERE a.is_ledger_ai = 1 AND a.deleted_at IS NULL
          LIMIT 1`
       );
 
@@ -324,7 +328,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
          FROM ai_assistants a
          ${this.buildActiveBlockJoin(now)}
          ${this.buildCanonicalConversationJoin()}
-         WHERE a.is_host_ai = 1
+         WHERE a.is_host_ai = 1 AND a.deleted_at IS NULL
          LIMIT 1`
       );
 
@@ -352,7 +356,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
                 WHERE b.ai_id = a.id AND b.blocked_until > ?
               ) AS is_blocked
        FROM ai_assistants a
-       WHERE a.is_host_ai = 1
+       WHERE a.is_host_ai = 1 AND a.deleted_at IS NULL
        LIMIT 1`,
       [new Date().toISOString()]
     );
@@ -369,8 +373,8 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     const connection = await database.withExclusiveTransactionAsync(async (transaction) => {
       await transaction.runAsync(
         `INSERT INTO ai_assistants
-         (id, agent_id, name, nickname, avatar, avatar_media_asset_id, model, api_key, api_base_url, system_prompt, temperature, top_p, max_tokens, private_context_primary_limit, private_context_secondary_limit, group_context_primary_limit, group_context_secondary_limit, enable_tools, disable_thinking, enable_short_text_protocol, allow_multiple_bubbles, streaming_reply, show_token_usage, show_action_steps, supports_vision, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,      [
+         (id, agent_id, name, nickname, avatar, avatar_media_asset_id, model, api_key, api_base_url, system_prompt, temperature, top_p, max_tokens, private_context_primary_limit, private_context_secondary_limit, group_context_primary_limit, group_context_secondary_limit, enable_tools, disable_thinking, reasoning_effort, enable_short_text_protocol, allow_multiple_bubbles, streaming_reply, show_token_usage, show_action_steps, manual_reply, supports_vision, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,      [
           ai.id,
           ai.agentId,
           ai.name,
@@ -383,13 +387,14 @@ export class AIAssistantRepository implements IAIAssistantRepository {
           ai.systemPrompt || null,
           ai.temperature,
           ai.topP,
-          ai.maxTokens === undefined ? 2000 : ai.maxTokens,
+          ai.maxTokens,
           ai.privateContextPrimaryLimit,
           ai.privateContextSecondaryLimit,
           ai.groupContextPrimaryLimit,
           ai.groupContextSecondaryLimit,
           ai.enableTools ? 1 : 0,
           ai.disableThinking ? 1 : 0,
+          ai.reasoningEffort,
           // 2.x 双写旧列供降级安装读取；3.0 删除旧列和这一次写入。
           ai.allowMultipleBubbles === false ? 0 : 1,
           // 2.x 双写旧列供降级安装读取；3.0 删除旧列和这一次写入。
@@ -397,6 +402,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
           ai.streamingReply === null ? null : ai.streamingReply ? 1 : 0,
           ai.showTokenUsage ? 1 : 0,
           ai.showActionSteps ? 1 : 0,
+          ai.manualReply ? 1 : 0,
           ai.supportsVision ? 1 : 0,
           now,
           now
@@ -426,7 +432,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     const columns: Record<keyof AIModelSettingsUpdate, string> = {
       model: 'model', apiKey: 'api_key', apiBaseUrl: 'api_base_url', serviceConfigId: 'service_config_id',
       temperature: 'temperature', topP: 'top_p', maxTokens: 'max_tokens',
-      enableTools: 'enable_tools', disableThinking: 'disable_thinking',
+      enableTools: 'enable_tools', disableThinking: 'disable_thinking', reasoningEffort: 'reasoning_effort',
     };
     const fields: string[] = [];
     const values: (string | number | null)[] = [];
@@ -444,7 +450,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     // 更新与 canonical 投影读取共享事务；提交后再解析头像和通知消费者。
     const row = await database.withExclusiveTransactionAsync(async (transaction) => {
       if (settings.apiBaseUrl !== undefined || settings.apiKey !== undefined || settings.serviceConfigId !== undefined) {
-        const current = await transaction.getFirstAsync<{ service_config_id: string | null; api_base_url: string | null; api_key: string | null }>('SELECT service_config_id, api_base_url, api_key FROM ai_assistants WHERE id = ?', [assistantId]);
+        const current = await transaction.getFirstAsync<{ service_config_id: string | null; api_base_url: string | null; api_key: string | null }>('SELECT service_config_id, api_base_url, api_key FROM ai_assistants WHERE id = ? AND deleted_at IS NULL', [assistantId]);
         if (!current) throw new Error(`AI 助手不存在：${assistantId}`);
         const previous = current.service_config_id ? await readModelService(transaction, current.service_config_id) : null;
         const baseUrl = settings.apiBaseUrl !== undefined ? settings.apiBaseUrl ?? '' : previous ? previous.baseUrl : current.api_base_url ?? '';
@@ -452,14 +458,14 @@ export class AIAssistantRepository implements IAIAssistantRepository {
         const serviceId = await bindModelService(transaction, getModelServiceConnection(baseUrl, apiKey), settings.serviceConfigId);
         await transaction.runAsync('UPDATE ai_assistants SET service_config_id = ?, api_base_url = ?, api_key = ? WHERE id = ?', [serviceId, serviceId ? null : baseUrl, serviceId ? null : apiKey, assistantId]);
       }
-      await transaction.runAsync(`UPDATE ai_assistants SET ${fields.join(', ')} WHERE id = ?`, values);
+      await transaction.runAsync(`UPDATE ai_assistants SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`, values);
       const persisted = await transaction.getFirstAsync<Record<string, unknown>>(
         `SELECT a.*, b.blocked_until, b.reason as block_reason,
                 ${this.buildCanonicalConversationProjection()}
          FROM ai_assistants a
          ${this.buildActiveBlockJoin(now)}
          ${this.buildCanonicalConversationJoin()}
-         WHERE a.id = ?`, [assistantId],
+         WHERE a.id = ? AND a.deleted_at IS NULL`, [assistantId],
       );
       if (!persisted) throw new Error(`AI 助手不存在：${assistantId}`);
       return this.readModelConnection(transaction, persisted);
@@ -515,6 +521,10 @@ export class AIAssistantRepository implements IAIAssistantRepository {
       fields.push('show_action_steps = ?');
       values.push(settings.showActionSteps ? 1 : 0);
     }
+    if (settings.manualReply !== undefined) {
+      fields.push('manual_reply = ?');
+      values.push(settings.manualReply ? 1 : 0);
+    }
     const contextColumns = {
       privateContextPrimaryLimit: 'private_context_primary_limit',
       privateContextSecondaryLimit: 'private_context_secondary_limit',
@@ -531,7 +541,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     let nicknameChange: AssistantSettingsUpdateResult['nicknameChange'] = null;
     if (settings.nickname !== undefined) {
       const previous = await transaction.getFirstAsync<{ nickname: string | null }>(
-        'SELECT nickname FROM ai_assistants WHERE id = ?', [assistantId],
+        'SELECT nickname FROM ai_assistants WHERE id = ? AND deleted_at IS NULL', [assistantId],
       );
       if (!previous) return { updated: false, nicknameChange: null };
       if (previous.nickname !== settings.nickname) {
@@ -544,7 +554,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     fields.push('updated_at = ?');
     values.push(now, assistantId);
     const result = await transaction.runAsync(
-      `UPDATE ai_assistants SET ${fields.join(', ')} WHERE id = ?`, values,
+      `UPDATE ai_assistants SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`, values,
     );
     return { updated: result.changes > 0, nicknameChange };
   }
@@ -552,7 +562,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
   async getNicknameContext(assistantId: string): Promise<AssistantNicknameContext | null> {
     const database = databaseCoordinator.openTaskExecutor({ name: 'assistants.nicknameContext', feature: 'assistants', priority: 'runtime' });
     return database.getFirstAsync<{ nickname: string | null }>(
-      'SELECT nickname FROM ai_assistants WHERE id = ?', [assistantId],
+      'SELECT nickname FROM ai_assistants WHERE id = ? AND deleted_at IS NULL', [assistantId],
     );
   }
 
@@ -569,7 +579,10 @@ export class AIAssistantRepository implements IAIAssistantRepository {
    * 事务外先收集会让窗口期内新提交的消息引用漏出候选集：那些消息随 identity 一起消失，
    * 但它们引用的资产永远不会进入 release 候选，形成长期 orphan。
    */
-  async delete(id: string): Promise<AIAssistantDeletionResult> {
+  async delete(id: string, recycled?: {
+    deletedAt: string;
+    beforeDelete(transaction: DatabaseTransactionExecutor, agentId: string): Promise<readonly string[]>;
+  }): Promise<AIAssistantDeletionResult> {
     const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'assistants.delete', feature: 'assistants', priority: 'runtime' });
     let deleted = false;
     const mediaAssetCandidates = new Set<string>();
@@ -577,11 +590,14 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     await database.withExclusiveTransactionAsync(async (txn) => {
       const assistant = await txn.getFirstAsync<{
         is_host_ai: number;
+        agent_id: string;
+        deleted_at: string | null;
       }>(
-        'SELECT is_host_ai FROM ai_assistants WHERE id = ? LIMIT 1',
+        'SELECT is_host_ai, agent_id, deleted_at FROM ai_assistants WHERE id = ? LIMIT 1',
         [id]
       );
       if (!assistant) return;
+      if (recycled && assistant.deleted_at !== recycled.deletedAt) return;
 
       // AI 删除后由外键级联删除 sessions 详情行，identity 删除会级联清理这些会话的 messages。
       const sessionRows = await txn.getAllAsync<{ id: string }>(
@@ -603,6 +619,9 @@ export class AIAssistantRepository implements IAIAssistantRepository {
         directSessionIds,
       )) {
         mediaAssetCandidates.add(assetId);
+      }
+      if (recycled) {
+        for (const assetId of await recycled.beforeDelete(txn, assistant.agent_id)) mediaAssetCandidates.add(assetId);
       }
 
       if (assistant.is_host_ai === 1) {
@@ -681,7 +700,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
       avatar: string | null;
       avatar_media_asset_id: string | null;
     }>(
-      'SELECT avatar, avatar_media_asset_id FROM ai_assistants WHERE id = ? LIMIT 1',
+      'SELECT avatar, avatar_media_asset_id FROM ai_assistants WHERE id = ? AND deleted_at IS NULL LIMIT 1',
       [ownerId],
     );
     return row
@@ -701,7 +720,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
   }
 
   async canManageApplicationSettingsInTransaction(transaction: DatabaseTransactionExecutor, actorId: string, targetId: string | null): Promise<boolean> {
-    const actor = await transaction.getFirstAsync<{ is_host_ai: number }>('SELECT is_host_ai FROM ai_assistants WHERE id = ?', [actorId]);
+    const actor = await transaction.getFirstAsync<{ is_host_ai: number }>('SELECT is_host_ai FROM ai_assistants WHERE id = ? AND deleted_at IS NULL', [actorId]);
     return actor !== null && (actorId === targetId || actor.is_host_ai === 1);
   }
 
@@ -709,14 +728,14 @@ export class AIAssistantRepository implements IAIAssistantRepository {
     const database = databaseCoordinator.openTaskExecutor({ name: 'assistants.get-profile-cover', feature: 'assistants', priority: 'interactive' });
     return database.getFirstAsync<{ mediaAssetId: string | null }>(
       `SELECT (SELECT media_asset_id FROM assistant_profile_covers WHERE assistant_id = a.id) AS mediaAssetId
-       FROM ai_assistants a WHERE a.id = ?`, [assistantId]);
+       FROM ai_assistants a WHERE a.id = ? AND a.deleted_at IS NULL`, [assistantId]);
   }
 
   /** 目标身份由可信调用方固定，事务内 CAS 同时保护首次设置、并发修改和角色删除。 */
   async tryCommitProfileCoverInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string, expectedMediaAssetId: string | null, mediaAssetId: string): Promise<boolean> {
     const result = await transaction.runAsync(
       `INSERT INTO assistant_profile_covers (assistant_id, media_asset_id)
-       SELECT id, ? FROM ai_assistants a WHERE id = ?
+       SELECT id, ? FROM ai_assistants a WHERE id = ? AND deleted_at IS NULL
          AND (SELECT media_asset_id FROM assistant_profile_covers WHERE assistant_id = a.id) IS ?
        ON CONFLICT(assistant_id) DO UPDATE SET media_asset_id = excluded.media_asset_id`,
       [mediaAssetId, assistantId, expectedMediaAssetId]);
@@ -726,7 +745,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
   }
 
   async changeNameInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string, expectedName: string, name: string): Promise<boolean> {
-    const result = await transaction.runAsync('UPDATE ai_assistants SET name = ?, updated_at = ? WHERE id = ? AND name = ?',
+    const result = await transaction.runAsync('UPDATE ai_assistants SET name = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND name = ?',
       [name, new Date().toISOString(), assistantId, expectedName]);
     return result.changes === 1;
   }
@@ -738,6 +757,7 @@ export class AIAssistantRepository implements IAIAssistantRepository {
            avatar_media_asset_id = ?,
            updated_at = ?
        WHERE id = ?
+         AND deleted_at IS NULL
          AND ((avatar IS NULL AND ? IS NULL) OR avatar = ?)
          AND (
            (avatar_media_asset_id IS NULL AND ? IS NULL)
@@ -759,26 +779,43 @@ export class AIAssistantRepository implements IAIAssistantRepository {
   /**
    * 设置记账AI助手
    */
-  async setLedgerAI(aiId: string): Promise<boolean> {
-    const now = new Date().toISOString();
-
-    const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'assistants.setLedgerAI', feature: 'assistants', priority: 'runtime' });
-    
-    // 先清除所有AI的记账AI标记
-    await database.runAsync(
-      'UPDATE ai_assistants SET is_ledger_ai = 0, updated_at = ?',
-      [now]
+  async setLedgerAI(aiId: string | null): Promise<boolean> {
+    return databaseCoordinator.transaction(
+      { name: 'assistants.setLedgerAI', feature: 'assistants', priority: 'runtime' },
+      (tx) => this.setLedgerAIInTransaction(tx, aiId),
     );
+  }
 
-    // 如果指定了AI，则设置该AI为记账AI
-    if (aiId) {
-      await database.runAsync(
-        'UPDATE ai_assistants SET is_ledger_ai = 1, updated_at = ? WHERE id = ?',
-        [now, aiId]
+  async setLedgerAIInTransaction(tx: DatabaseTransactionExecutor, aiId: string | null): Promise<boolean> {
+    const now = new Date().toISOString();
+    if (aiId !== null) {
+      const target = await tx.runAsync(
+        'UPDATE ai_assistants SET is_ledger_ai = 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL',
+        [now, aiId],
       );
+      if (target.changes === 0) return false;
     }
-
+    await tx.runAsync(
+      'UPDATE ai_assistants SET is_ledger_ai = 0, updated_at = ? WHERE is_ledger_ai = 1 AND id IS NOT ?',
+      [now, aiId],
+    );
     return true;
+  }
+
+  async readRoleHolderInTransaction(tx: DatabaseTransactionExecutor, role: 'host' | 'ledger') {
+    const field = role === 'host' ? 'is_host_ai' : 'is_ledger_ai';
+    return tx.getFirstAsync<{ id: string; name: string }>(
+      `SELECT id, name FROM ai_assistants WHERE ${field} = 1 AND deleted_at IS NULL LIMIT 1`,
+    );
+  }
+
+  readHostAppointmentCandidate(tx: DatabaseTransactionExecutor, aiId: string) {
+    return tx.getFirstAsync<{ model: string; blocked_until: string | null }>(
+      `SELECT a.model, b.blocked_until FROM ai_assistants a
+       ${this.buildActiveBlockJoin(new Date().toISOString())}
+       WHERE a.id = ? AND a.deleted_at IS NULL LIMIT 1`,
+      [aiId],
+    );
   }
 }
 

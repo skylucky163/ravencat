@@ -1,5 +1,6 @@
 /** 同一投影决定摘要与尚未总结原文；对话计数，应用事件随所属范围交接。 */
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
+import { formatChatFileReference } from '../../messages/domain/ChatAttachment';
 import { buildChatCodeWorkReference } from '../../messages/domain/ChatCodeBlock';
 import { buildChatSystemEventModelText, buildSessionPreviewTextFromMessage, buildVoiceMessageModelText, buildReplyQuoteModelText, getMessageAttachments, getMessageSticker, getMessageSharedRecord, getMessageSharedMoment, isCallStatusMessageMetadata, isTogetherListeningMessageMetadata, parseMessageMetadata } from '../../messages/domain/chatMessageMetadata';
 import { buildStickerModelText } from '../../messages/domain/ChatSticker';
@@ -44,11 +45,12 @@ export function projectChatContextMessage(message: ChatMessage, cursor: ChatCano
   const sharedMoment = getMessageSharedMoment(message);
   const text = sharedMoment ? buildSharedMomentText(sharedMoment) : sharedRecord ? buildSharedChatRecordText(sharedRecord, message.text) : voice || (sticker ? buildStickerModelText(sticker)
     : message.isMe ? buildSessionPreviewTextFromMessage(message) : buildChatCodeWorkReference(message) ?? message.text);
-  // 历史原文只投影素材引用，不读文件；图片 ID 留在模型上下文，列表预览保持展示语义。
-  const imageReferences = getMessageAttachments(message).flatMap(attachment =>
-    attachment.type === 'image' && attachment.mediaAssetId
-      ? [`图片：${attachment.fileName || '未命名图片'}；mediaAssetId=${attachment.mediaAssetId}`] : []);
-  const content = [text, ...imageReferences].filter(Boolean).join('\n').trim();
+  // 历史原文携带按需读取的标识，附件正文仍由当前输入或单独读取工具提供。
+  const attachmentReferences = getMessageAttachments(message).flatMap(attachment =>
+    attachment.type === 'file'
+      ? [formatChatFileReference(message.id, attachment)]
+      : attachment.mediaAssetId ? [`图片：${attachment.fileName || '未命名图片'}；mediaAssetId=${attachment.mediaAssetId}`] : []);
+  const content = [text, ...attachmentReferences].filter(Boolean).join('\n').trim();
   if (!content) return null;
   return { cursor, messageId: message.id, kind: 'dialogue', role: message.isMe ? 'user' : 'assistant',
     content: [buildReplyQuoteModelText(message), content].filter(Boolean).join('\n'),

@@ -51,14 +51,14 @@ export const CreateAIScheduleTool = {
   name: 'create_ai_schedule',
   definition: {
     name: 'create_ai_schedule',
-    description: '主动伴随开启时安排未来自主唤醒，默认同时写入手机系统日历提醒用户。缺少日历权限会报错且不会创建任何日程；首次遇到应告知用户可在小程序的“权限与后台运行”开启系统日历权限。用户拒绝或已表达仅内部提醒偏好时，显式设 system_calendar=false，不要反复索要权限。已有同一安排应修改，不要重复创建；日程不是预写消息，到点依据最新上下文决定行动',
+    description: '主动伴随开启时安排未来自主唤醒，默认同时写入手机系统日历提醒用户。缺少日历权限会报错。同一安排用 update_ai_schedule 修改。日程只约定到点自主行动，不预写消息内容。',
     parameters: {
       type: 'object',
       properties: {
         remind_at: { type: 'string', description: '带 Z 或 UTC offset 的未来绝对时间' },
         summary: { type: 'string', description: '用于列表浏览的简短事件摘要，最多 160 字符' },
         details: { type: 'string', description: '未来理解事件所需的背景，最多 4000 字符' },
-        system_calendar: { type: 'boolean', default: true, description: '默认 true：同时创建内部 AI 日程和系统日历到点提醒。用户拒绝日历授权或偏好仅内部提醒时设 false；不可因缺权限自行静默降级' },
+        system_calendar: { type: 'boolean', default: true, description: '默认 true；只保留内部提醒时设 false。' },
         recurrence: recurrenceParameter,
         source_message_ids: {
           type: 'array',
@@ -121,7 +121,7 @@ export const UpdateAIScheduleTool = {
   name: 'update_ai_schedule',
   definition: {
     name: 'update_ai_schedule',
-    description: '修改尚未到期的日程（包括重复规则），保留原 ID。重复系列只修改下一期即对后续生效，已执行历史不变。只想移除系统日历事件并保留内部提醒时，使用 remove_ai_schedule_calendar_events，可处理历史和整个系列，不要取消日程。当前正在执行本日程时，可单独传 next_follow_up_minutes 调整本轮结束后的下一次未回复续轮间隔，不改变用户默认值或开关。',
+    description: '修改尚未到期的日程，保留原 ID。重复系列只修改下一期即对后续生效，已执行历史不变。只想移除系统日历事件并保留内部提醒时，使用 remove_ai_schedule_calendar_events，可处理历史和整个系列。当前正在执行本日程时，可单独传 next_follow_up_minutes 调整本轮结束后的下一次未回复续轮间隔，不改变用户默认值或开关。',
     parameters: {
       type: 'object',
       properties: {
@@ -131,7 +131,7 @@ export const UpdateAIScheduleTool = {
         details: { type: 'string', description: '可选，新的详情' },
         system_calendar: { type: 'boolean', description: '可选，不传则保留原设置。true 同步系统日历，false 仅保留内部日程并移除关联系统事件；已有系统事件的修改或移除需要日历权限' },
         recurrence: recurrenceParameter,
-        next_follow_up_minutes: { type: 'integer', minimum: 2, maximum: 43200, description: '仅对当前 run 正在执行的 schedule_id 可用；单独传此字段，从本轮结束后计时，仅调整下一次续轮。不能开启用户关闭的续轮。' },
+        next_follow_up_minutes: { type: 'integer', minimum: 2, maximum: 43200, description: '仅对当前 run 正在执行的 schedule_id 可用；单独传此字段，从本轮结束后计时，仅调整下一次续轮。' },
       },
       required: ['schedule_id'],
       additionalProperties: false,
@@ -154,7 +154,7 @@ export const RemoveAIScheduleCalendarEventsTool = {
   name: 'remove_ai_schedule_calendar_events',
   definition: {
     name: 'remove_ai_schedule_calendar_events',
-    description: '只移除自己创建的 AI 日程关联的手机系统日历事件，保留应用内日程、提醒、重复规则及历史。支持单条、整个重复系列或本人所有日程（含历史）。同时关闭所选日程的系统日历关联，整个系列后续期次保持仅应用内；不取消任何内部日程，不删除用户其他日历事件。用户要求仅应用内时优先使用此工具，不要调用 cancel_ai_schedule。之后新建日程仍须尊重用户偏好，传 system_calendar=false。缺日历权限时也先关闭关联，但旧系统事件需要恢复权限后才能移除，必须如实告知。',
+    description: '移除自己创建的 AI 日程关联的手机系统日历事件，保留应用内日程。支持单条、整个重复系列或本人所有日程（含历史）。用户要求仅应用内时用本工具，取消整个日程才用 cancel_ai_schedule。',
     parameters: {
       type: 'object',
       properties: {

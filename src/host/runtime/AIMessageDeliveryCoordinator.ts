@@ -8,9 +8,9 @@
  * 唯一负责「assistant 正文已持久交付之后怎么办」的判定：
  * 
  * - 当前会话正在前台真实呈现 → 抑制系统通知（已读标记由 Host UI 随未读刷新同序完成）；
+ * - 主理 AI 当前单聊由悬浮 CHAT 面板承载 → 不再发系统通知；
  * - 其余情况（App 后台 / 前台其它页面）→ Native NotificationManager 聚合通知，
  *   通知点击导航由既有 notification response 链承担；
- * - payload.userNotificationHandled（如 RavenCat overlay preview 已承载展示）→ 不再发系统通知。
  *
  * 该判定必须在 Headless execution host 的 runtime 中同样成立，
  * 因此不得放在 KimiPhoneHost 组件树里：前台事实来自 ChatForegroundContext 快照
@@ -19,6 +19,7 @@
  */
 import { AppState } from 'react-native';
 import { getAIAssistantById, getAssistantDisplayName } from '@features/assistants';
+import { updateReplyPreview } from '@features/floatingLayer';
 import {
   conversationKeyOfDirect,
   conversationKeyOfGroup,
@@ -26,6 +27,7 @@ import {
   type AIMessageReceivedPayload,
   type AIMessageDeliveryReceipt,
   notifyAIMessageObservers,
+  isChatAssistantMessageRead,
 } from '@features/chat';
 import {
   configureAIMessageDeliveryHandler,
@@ -41,6 +43,7 @@ import {
   beginMessageArrival,
   awaitMessageArrival,
   finishMessageArrival,
+  dismissReadMessageNotifications,
 } from '@platform/device';
 import { logTurnTimeline } from '@shared/diagnostics/TurnTimelineLog';
 
@@ -73,11 +76,6 @@ function buildNotificationEventId(payload: AIMessageReceivedPayload): string {
   return `message:${payload.committedMessageId}`;
 }
 
-async function resolveNotificationAssistantName(payload: AIMessageReceivedPayload): Promise<string> {
-  const assistant = await getAIAssistantById(payload.aiId);
-  return assistant ? getAssistantDisplayName(assistant) : payload.aiName;
-}
-
 async function deliverAIMessage(
   payload: AIMessageReceivedPayload
 ): Promise<AIMessageDeliveryReceipt> {
@@ -88,6 +86,26 @@ async function deliverAIMessage(
   if (!payload.arrivalAlreadyScheduled) {
     applyAssistantMessageArrivalSnapshot(await awaitMessageArrival(conversationKey, payload.committedMessageId));
   }
+  // 持久交付和设备到达之间可能经历回收；历史正文仍保留，新的通知和悬浮展示不再出现。
+  const assistant = await getAIAssistantById(payload.aiId);
+  if (!assistant) return { status: 'suppressed_unavailable', errorCategory: null };
+  // 所有来源都先交给同一个悬浮消费入口；原生按当前会话和 CHAT 页可见性返回回执。
+  // 群聊不属于主理 AI 的单聊面板，不能借相同的 sessionId 接管展示。
+  let displayed = false;
+  if (payload.conversationKind !== 'group') {
+    try {
+      displayed = await updateReplyPreview({
+        sessionId: payload.sessionId,
+        correlationId: buildNotificationEventId(payload),
+        requestCorrelationId: payload.requestCorrelationId,
+        messageId: payload.committedMessageId,
+        status: 'reply',
+        text: payload.message,
+      });
+    } catch (error) {
+      console.warn('[AIMessageDeliveryCoordinator] 悬浮展示失败，继续系统交付：', error);
+    }
+  }
   if (isAIMessageConversationForeground(payload)) {
     logTurnTimeline('notification_suppressed', { sessionId: payload.sessionId });
     return {
@@ -95,9 +113,7 @@ async function deliverAIMessage(
       errorCategory: null,
     };
   }
-
-  if (payload.userNotificationHandled) {
-    // RavenCat overlay preview 等消费者已承载展示，保留其精确 displayed receipt 语义。
+  if (displayed) {
     return {
       status: 'handled_by_consumer',
       errorCategory: null,
@@ -106,12 +122,13 @@ async function deliverAIMessage(
 
   // 聚合维度：群聊按 group:<groupId> + 群名，单聊按 ai:<aiId> + AI 名；发送者名用于群 InboxStyle 行。
   const isGroupConversation = payload.conversationKind === 'group' && Boolean(payload.groupId);
-  const aiDisplayName = await resolveNotificationAssistantName(payload);
+  const aiDisplayName = getAssistantDisplayName(assistant);
   const conversationTitle = isGroupConversation
     ? payload.groupName || aiDisplayName
     : aiDisplayName;
 
   const posted = await sendAIMessageNotification({
+    committedMessageId: payload.committedMessageId,
     turnRunId: payload.turnRunId,
     aiId: payload.aiId,
     aiName: aiDisplayName,
@@ -132,6 +149,15 @@ async function deliverAIMessage(
     eventId: buildNotificationEventId(payload),
   });
   if (posted) {
+    // 用户可能在原生发布期间展开面板；先前的阅读回执若早于 notify，需在发布后补撤销。
+    // 后续阅读仍由实际 View 回执负责，数据库只保存一份阅读事实。
+    if (await isChatAssistantMessageRead({ messageId: payload.committedMessageId, clientMessageId: payload.clientMessageId })) {
+      await dismissReadMessageNotifications({
+        sessionId: payload.sessionId,
+        messageIds: payload.committedMessageId === undefined ? [] : [String(payload.committedMessageId)],
+        clientMessageIds: [buildNotificationEventId(payload)],
+      });
+    }
     logTurnTimeline('notification_enqueued', { sessionId: payload.sessionId });
     return {
       status: 'shown',

@@ -1,6 +1,6 @@
 /** 提供消息列表项、可触摸气泡及加载控件等列表子组件。 */
 
-import { getMessageSharedMoment, getMessageSharedRecord, parseMessageMetadata } from '../../../messages/domain/chatMessageMetadata';
+import { buildAssistantRecycleLifecycleText, getMessageSharedMoment, getMessageSharedRecord, parseMessageMetadata } from '../../../messages/domain/chatMessageMetadata';
 import React, { memo, useCallback, useMemo } from 'react';
 import {
   View,
@@ -17,6 +17,8 @@ import MessageBubble from '../MessageBubble';
 import ActionGroupProcessCard from '../MessageBubble/ActionGroupProcessCard';
 import { createLayoutProbeHandler, isLayoutProbeEnabled } from '../MessageBubble/layoutProbe';
 import TogetherListeningActivityCard from './TogetherListeningActivityCard';
+import { RoleApplicationCard } from './RoleApplicationCard';
+import { readRoleApplicationCard } from '../../../messages/domain/RoleApplicationCard';
 import ChatMessageInlineActions from './ChatMessageInlineActions';
 import type { ChatMessage } from '@features/chat/messages/domain/ChatMessage';
 import type {
@@ -59,6 +61,7 @@ interface MessageListItemProps {
   isVoiceTranscriptExpanded?: boolean;
   onOpenAssistantProfile?: (aiId: string) => void;
   onMessageLongPress?: (message: ChatMessage, position: { x: number; y: number }) => void;
+  onShareMessage?: (messageId: number) => void;
   onRetryMessage?: (messageId: number) => void;
   onHideTranslation?: (messageId: number) => void;
   onPreviewFile: (params: { fileUri: string; fileName: string; mimeType?: string | null }) => void;
@@ -99,6 +102,7 @@ export const MessageListItem = memo(function MessageListItem({
   onToggleSelection,
   isVoiceTranscriptExpanded,
   onMessageLongPress,
+  onShareMessage,
   onOpenAssistantProfile,
   onRetryMessage,
   onHideTranslation,
@@ -110,6 +114,7 @@ export const MessageListItem = memo(function MessageListItem({
 }: MessageListItemProps) {
   const theme = useTheme();
   const styles = useThemedStyles(createMessageListPartsStyles);
+  const isMoonKimi = isMoonKimiTheme(theme);
   const {
     msg,
     actionGroup,
@@ -147,12 +152,20 @@ export const MessageListItem = memo(function MessageListItem({
     }, 'messageListItem');
   }, [msg.id, msg.isMe, msg.senderType, presentationRunKey, theme.id]);
 
+  const roleApplication = readRoleApplicationCard(msg);
   const content = (
     <>
       {actionGroup ? (
         <ActionGroupProcessCard
           group={actionGroup}
           onNestedScrollActiveChange={onNestedScrollActiveChange}
+        />
+      ) : roleApplication ? (
+        <RoleApplicationCard
+          card={roleApplication}
+          message={msg}
+          identity={resolvedAIIdentity}
+          onOpenAssistantProfile={selectionMode ? undefined : onOpenAssistantProfile}
         />
       ) : togetherListeningCard ? (
         <TogetherListeningActivityCard
@@ -196,6 +209,7 @@ export const MessageListItem = memo(function MessageListItem({
           isVoiceTranscriptExpanded={isVoiceTranscriptExpanded}
           onOpenAssistantProfile={selectionMode ? undefined : onOpenAssistantProfile}
           onMessageLongPress={onMessageLongPress}
+          onShareMessage={onShareMessage}
           onRetryMessage={onRetryMessage}
           onHideTranslation={onHideTranslation}
           onPreviewFile={onPreviewFile}
@@ -206,7 +220,7 @@ export const MessageListItem = memo(function MessageListItem({
   );
 
   return (
-    <View onLayout={layoutProbeHandler}>
+    <View onLayout={layoutProbeHandler} style={showSpeakerSeparator && isMoonKimi ? styles.moonKimiSpeakerSpacing : undefined}>
       {showSpeakerSeparator && isPaperNoteTheme(theme) ? (
         <View
           pointerEvents="none"
@@ -223,7 +237,7 @@ export const MessageListItem = memo(function MessageListItem({
           </Text>
         </View>
       ) : null}
-      {showTimeSeparator && !isPaperNoteTheme(theme) && !isMoonKimiTheme(theme) ? (
+      {showTimeSeparator && !isPaperNoteTheme(theme) && !isMoonKimi ? (
         <View style={styles.timeSeparator}>
           <Text style={styles.timeSeparatorText}>{timeText}</Text>
         </View>
@@ -273,6 +287,7 @@ interface TouchableMessageBubbleProps {
   isVoiceTranscriptExpanded?: boolean;
   onOpenAssistantProfile?: (aiId: string) => void;
   onMessageLongPress?: (message: ChatMessage, position: { x: number; y: number }) => void;
+  onShareMessage?: (messageId: number) => void;
   onRetryMessage?: (messageId: number) => void;
   onHideTranslation?: (messageId: number) => void;
   onPreviewFile: (params: { fileUri: string; fileName: string; mimeType?: string | null }) => void;
@@ -318,6 +333,7 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
   isSelected,
   isVoiceTranscriptExpanded,
   onMessageLongPress,
+  onShareMessage,
   onOpenAssistantProfile,
   onRetryMessage,
   onHideTranslation,
@@ -328,6 +344,10 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
   const styles = useThemedStyles(createMessageListPartsStyles);
   const interactionProfile = getChatInteractionProfile(theme);
   const touchPositionRef = React.useRef({ x: 0, y: 0 });
+  const metadata = parseMessageMetadata(msg);
+  const recycleText = msg.senderType === 'system' && metadata?.type === 'assistantRecycleLifecycle'
+    ? buildAssistantRecycleLifecycleText(metadata, { audience: 'user', assistantName: metadata.assistantDisplayName ?? resolvedAIIdentity.name ?? 'AI' })
+    : null;
 
   // 开发态布局探针：`TouchableWithoutFeedback` 不落原生节点，所以内容包装 View 就是
   // 本组件能测到的最外层，也是"列表项根 → 气泡"之间的最后一层。
@@ -352,9 +372,7 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
     interactionProfile.enableVoiceMessageLongPressMenu
     && Boolean(voice)
     && Boolean(onMessageLongPress);
-  // 操作栏语义是“整轮 AI 回复的 footer”，不是“每条 assistant 消息的装饰”。
-  // 因此必须挂在 run 内最后一个用户可见 assistant 输出上，否则一次 run 有多少个
-  // 物理 assistant 消息（多 step、多分段）就会渲染多少条操作栏。
+  // 快捷操作只挂在整轮回复的最后一个可见助手气泡上。
   const shouldShowInlineActions =
     !hideInlineActions &&
     interactionProfile.showAssistantInlineActions &&
@@ -415,7 +433,7 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
         sharedRecord={getMessageSharedRecord(msg)}
         sharedMoment={getMessageSharedMoment(msg)}
         sharedComment={msg.text}
-        text={voice ? msg.text : bubbleText}
+        text={recycleText ?? (voice ? msg.text : bubbleText)}
         messageId={msg.id}
         clientMessageId={msg.clientMessageId}
         isMe={msg.isMe}
@@ -423,9 +441,9 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
         tokensUsed={displayTokensUsed}
         promptTokens={msg.promptTokens}
         completionTokens={msg.completionTokens}
-        cachedTokens={parseMessageMetadata(msg)?.cachedTokens}
+        cachedTokens={metadata?.cachedTokens}
         replyToText={msg.replyToText}
-        replyQuote={parseMessageMetadata(msg)?.replyQuote}
+        replyQuote={metadata?.replyQuote}
         onOpenAssistantProfile={onOpenAssistantProfile}
         avatar={resolvedAIIdentity.avatar as string | null}
         userAvatar={userAvatar as string | null}
@@ -455,10 +473,6 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
         onAttachmentLongPress={shouldHandleLongPress ? handleAttachmentLongPress : undefined}
       />
 
-      {shouldShowInlineActions ? (
-        <ChatMessageInlineActions style={inlineActionsStyle} />
-      ) : null}
-
       {msg.isMe && msg.status === 'failed' ? (
         <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
           <Text style={styles.retryText}>!</Text>
@@ -478,13 +492,22 @@ export const TouchableMessageBubble = memo(function TouchableMessageBubble({
   }
 
   return (
-    <TouchableWithoutFeedback
-      onPress={handlePress}
-      onPressIn={shouldHandleLongPress ? handlePressIn : undefined}
-      onLongPress={shouldHandleLongPress ? handleLongPress : undefined}
-    >
-      {content}
-    </TouchableWithoutFeedback>
+    <>
+      <TouchableWithoutFeedback
+        onPress={handlePress}
+        onPressIn={shouldHandleLongPress ? handlePressIn : undefined}
+        onLongPress={shouldHandleLongPress ? handleLongPress : undefined}
+      >
+        {content}
+      </TouchableWithoutFeedback>
+      {shouldShowInlineActions && (
+        <ChatMessageInlineActions
+          text={msg.text}
+          onShare={onShareMessage ? () => onShareMessage(msg.id) : undefined}
+          style={inlineActionsStyle}
+        />
+      )}
+    </>
   );
 }, areTouchableMessageBubbleEqual);
 
@@ -531,6 +554,7 @@ function areMessageListItemEqual(
     prevProps.showAssistantName === nextProps.showAssistantName &&
     prevProps.onOpenAssistantProfile === nextProps.onOpenAssistantProfile &&
     prevProps.onMessageLongPress === nextProps.onMessageLongPress &&
+    prevProps.onShareMessage === nextProps.onShareMessage &&
     prevProps.onRetryMessage === nextProps.onRetryMessage &&
     prevProps.onHideTranslation === nextProps.onHideTranslation &&
     prevProps.onPreviewFile === nextProps.onPreviewFile &&
@@ -573,6 +597,7 @@ function areTouchableMessageBubbleEqual(
     prevProps.showAssistantName === nextProps.showAssistantName &&
     prevProps.onOpenAssistantProfile === nextProps.onOpenAssistantProfile &&
     prevProps.onMessageLongPress === nextProps.onMessageLongPress &&
+    prevProps.onShareMessage === nextProps.onShareMessage &&
     prevProps.onRetryMessage === nextProps.onRetryMessage &&
     prevProps.onHideTranslation === nextProps.onHideTranslation &&
     prevProps.onPreviewFile === nextProps.onPreviewFile &&

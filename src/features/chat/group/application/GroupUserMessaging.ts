@@ -1,8 +1,6 @@
-/** 提交群用户消息，并把跨页面自动召唤交给群应用层调度。 */
+/** 群消息只提交事实与计划换代；模型请求由显式召唤拥有。 */
 
 import { commitGroupUserMessage } from './GroupMessageCommit';
-import { invokeGroupChat } from './GroupChatMessaging';
-import { scheduleGroupAutoInvocation } from './GroupAutoInvocationScheduler';
 import { abortGroupSpeechPlanExecution } from './GroupSpeechExecutionAbort';
 import { emitChatGroupSpeechPlanChanged } from '../../messages/events/ChatEvents';
 import { recordUserStickerUse } from '@features/stickers';
@@ -29,10 +27,5 @@ export async function sendGroupUserMessage(params: SendGroupUserMessageParams) {
   // 群消息已经提交；订阅者异常不能让分享方误认为未发送并再次提交。
   try { emitChatGroupSpeechPlanChanged(params.groupId); }
   catch (error) { console.warn('[GroupUserMessaging] 已提交群消息的计划通知失败：', error); }
-  scheduleGroupAutoInvocation({
-    groupId: params.groupId,
-    latestUserMessageId: message.id,
-    invoke: () => invokeGroupChat(params.groupId),
-  });
   return message;
 }

@@ -14,6 +14,7 @@ Phone Tools 是主理 AI 的手机能力产品面。产品目录、工具执行�
 | 剪贴板文字 | read_clipboard | Device Observer 的按需读取 / Phone Tools 授权入口 |
 | 屏幕读取 | read_screen_accessibility、read_screen_ocr | Screen Observation（screenCapture） |
 | 应用动作 | open_app、soft_lock_app、release_soft_lock | Device Control |
+| 系统闹钟 | set_alarm、show_alarms、dismiss_alarm、snooze_alarm、get_next_alarm | Device Control 授权入口 / Android 系统时钟 |
 | App-specific 数据与媒体 | 网易云八工具 | neteaseMusic 工具包及各底层 owner |
 | 文字卡片笔记 | xiaohongshu_get_page 及逐步输入、导航、话题、发布工具 | Phone Tools 授权 / Device Control 原生页面适配 |
 | 系统状态与授权 | 权限与后台运行 | System Access |
@@ -73,7 +74,24 @@ open_app 只接受 exact Android package，经过当前 Host Authority、输入�
 
 `launch_dispatched` 只代表请求交给 Android，不证明目标已经成为前台。需要解析和确认时，由模型独立组合 search_installed_apps、open_app、get_foreground_app，不把 URL、songId 等深度参数塞进万能 open_app。
 
-## 7. 按需拆包与主动开关
+## 7. 系统闹钟
+
+`set_alarm` 属于“手机应用操作”包，仅当前主理 AI 可用，手机工具页、提示词中心共用单项授权与星标。模型参数在唯一 Runtime schema 边界校验：本地 24 小时时分、可选名称、可选 ISO 星期数组（1=周一、7=周日）；省略或空数组表示下一次该时分的一次性闹钟，否则按周重复。不接受日期，不能把任意未来日期伪装成下一次响铃。
+
+工具在 Host Authority 串行边界内检查取消并派发一次 Android `AlarmClock.ACTION_SET_ALARM`，原生主线程要求 RavenCat Activity 拥有焦点，避免后台启动被静默拦截后误报。声明普通 `com.android.alarm.permission.SET_ALARM` 权限，不申请精确闹钟、日历、无障碍或后台保活权限；请求 `EXTRA_SKIP_UI=true`，但具体时钟仍可能展示确认界面。`alarm_request_dispatched` 仅表示启动请求已派发，没有保存回执或可用的闹钟 ID；无时钟、非前台、系统拒绝分别明确失败，不自动重试。响铃、编辑、关闭及删除由系统时钟管理，不写 RavenCat SQLite，不创建 AI 日程或 Service。接口依据 [Android AlarmClock 契约](https://developer.android.com/reference/android/provider/AlarmClock#ACTION_SET_ALARM)。
+
+闹钟仅使用 Android 公开接口，不做厂商时钟或无障碍适配。所有闹钟工具沿用主理身份、单项权限与星标，归入“手机应用操作”包。手机目录与模型 schema 都说明以下边界：
+
+| 工具 | 实际能力与限制 |
+| --- | --- |
+| `show_alarms` | 请求打开系统时钟闹钟页面供用户管理；不读取或返回列表。 |
+| `dismiss_alarm` | 请求取消下一次响铃；一次性闹钟停用，重复闹钟仅跳过下一次。可按 next、all、label、time 搜索；all 也不会删除或永久关闭重复闹钟。标签是包含匹配，时分是最接近匹配，多条匹配时系统可能要求用户选择。时间传入本地 24 小时制，原生转换为小时与 AM/PM，避免含糊。 |
+| `snooze_alarm` | 请求当前响铃闹钟稍后再响，可指定本次分钟数；省略使用时钟默认值，不修改默认配置，无响铃时无操作。 |
+| `get_next_alarm` | 读取当前用户由任意应用通过 `AlarmManager.setAlarmClock` 登记的下一个触发时间；可后台查询，不返回名称、ID、重复规则或完整列表。not_scheduled 不能证明时钟里没有停用或未登记闹钟。 |
+
+前三项动作与设置闹钟共用原生前台焦点和单次派发边界，接收方不支持时明确失败；`alarm_request_dispatched` 没有完成回执，不能宣称已删除、已修改或已成功取消。Android 标准接口未提供读取全部、编辑、永久删除已有闹钟，因此不注册这些名称，也不通过新增闹钟冒充编辑。依据 [AlarmClock](https://developer.android.com/reference/android/provider/AlarmClock) 与 [getNextAlarmClock](https://developer.android.com/reference/android/app/AlarmManager#getNextAlarmClock())。
+
+## 8. 按需拆包与主动开关
 
 Host 在一次 run 开始冻结授权，通过固定目录提供包 ID、用途与本次可用工具名；具体 description/参数只在当前请求的 function schema 提供。目录与历史之后的 open/closed 状态分离，展开不改稳定前缀，详见[默认 Prompt 组装](../prompt/default-prompt-assembly.md)。
 
@@ -91,7 +109,7 @@ Host 在一次 run 开始冻结授权，通过固定目录提供包 ID、用途�
 
 展开与本轮已授权工具相交，不能复活关闭权限的工具。用户特批星标是按 AI 固定的直接暴露偏好：只有本轮已授权工具才直接带 schema，不受包收起操作影响，星标不授予调用权限。
 
-## 8. 展示、网易云与验证
+## 9. 展示、网易云与验证
 
 小红书工具的输入、区域坐标、一次发布凭据及真机验证边界见[小红书文字笔记](xiaohongshu-text-note.md)。这条链路不改变现有剪贴板读取权限；粘贴只写入 AI 已提供的单个话题，不在后台读取用户剪贴板。
 
@@ -100,3 +118,5 @@ Chat 保存原始 runtime tool identity，只在 presentation 映射 `cloudmusic
 网易云当前八工具、公开数据、官方 App 点歌和 exact-package MediaSession 见[工具包契约](netease-music-tool-package.md)。一起听是[独立 Activity](together-listening.md)，不属于该包或播放检测的自动副作用。
 
 相关验证保护 Host 身份、Protected Apps、冻结快照、launch 一次、schema、展开期与 Chat 原子提交。真实 Accessibility/OCR、OEM 窗口、音乐网络/MediaSession/权限撤销需设备验收。未实现的 AI 委派、协作会话与其他 App 集成不进入当前产品承诺。
+
+`npm run verify:system-alarm` 验证闹钟参数、主理身份、取消、原生参数与结果映射；Device Control 的 `SystemAlarmControllerTest` 在 JVM 验证实际 Intent、星期转换、焦点限制与明确失败。具体机型时钟是否保存、跳过界面和锁屏响铃仍需设备验收。

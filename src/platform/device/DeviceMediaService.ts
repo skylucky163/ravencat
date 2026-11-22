@@ -72,6 +72,10 @@ export async function persistDeviceMedia(params: Parameters<typeof persistentMed
   return persistentMediaStore.persistMedia(params);
 }
 
+export function writeChatTextDraft(id: string, text: string) {
+  return persistentMediaStore.writeChatTextDraft(id, text);
+}
+
 export async function deletePersistentMediaIfExists(uri?: string | null) {
   return persistentMediaStore.deleteIfExists(uri);
 }

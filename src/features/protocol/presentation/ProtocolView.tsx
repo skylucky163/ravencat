@@ -1,27 +1,22 @@
 // 协议空间管理界面。
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, type ListRenderItemInfo } from 'react-native';
+import { FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View, type ListRenderItemInfo } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import type { AIProfile } from '@features/assistants';
+import type { ProtocolEditor } from '../application/ProtocolEditor';
 import type { Protocol } from '../domain/ProtocolRepository';
-import {
-  deleteProtocol,
-  listProtocolsByAI,
-  PROTOCOL_MAX_LENGTH,
-  saveProtocol,
-} from '../composition';
 import NavigationHeader from '@shared/ui/NavigationHeader';
 import EmptyState from '@shared/ui/EmptyState';
 import ListItem from '@shared/ui/ListItem';
-import { ModalSheet, HeaderAddButton, useBusyBackHandler, showAppDialog } from '@shared/ui';
-import { useTheme, useThemedStyles } from '@shared/theme';
+import { ModalSheet, HeaderAddButton, InputField, useBusyBackHandler, showAppDialog } from '@shared/ui';
+import { useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
 
-interface ProtocolViewProps {
+export interface ProtocolViewProps {
   onBack?: () => void;
-  aiAssistant?: AIProfile | null;
+  aiAssistantId: string;
+  editor: ProtocolEditor;
   onConvertToMemory: (protocol: Protocol, values: { content: string; summary: string | null }) => Promise<void>;
 }
 
@@ -66,6 +61,9 @@ const createStyles = (theme: PresentationTheme) =>
     modalScroll: {
       flexShrink: 1,
     },
+    field: {
+      marginBottom: 0,
+    },
     input: {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: theme.colors.border.default,
@@ -107,8 +105,7 @@ const createStyles = (theme: PresentationTheme) =>
     },
   });
 
-export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }: ProtocolViewProps) {
-  const theme = useTheme();
+export default function ProtocolView({ onBack, aiAssistantId, editor, onConvertToMemory }: ProtocolViewProps) {
   const styles = useThemedStyles(createStyles);
 
   const [protocols, setProtocols] = useState<Protocol[]>([]);
@@ -123,12 +120,7 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
   const loadProtocols = useCallback(async () => {
     try {
       setLoading(true);
-      if (!aiAssistant?.id) {
-        setProtocols([]);
-        return;
-      }
-
-      const list = await listProtocolsByAI(aiAssistant.id);
+      const list = await editor.list(aiAssistantId);
       setProtocols(list);
     } catch (error) {
       console.error('Failed to load protocols:', error);
@@ -136,7 +128,7 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
     } finally {
       setLoading(false);
     }
-  }, [aiAssistant?.id]);
+  }, [aiAssistantId, editor]);
 
   useEffect(() => {
     void loadProtocols();
@@ -182,16 +174,11 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
         return;
       }
 
-      if (!editingProtocol && !aiAssistant?.id) {
-        showAppDialog({ title: '错误', message: '未选择 AI 助手，无法添加协议', tone: 'error' });
-        return;
-      }
-
       setSaving(true);
-      await saveProtocol({
-        protocolId: editingProtocol?.id || null,
-        aiAssistantId: aiAssistant?.id || '',
-        content: inputContent.trim(),
+      await editor.save({
+        protocolId: editingProtocol?.id ?? null,
+        aiAssistantId,
+        content: inputContent,
         summary: inputSummary.trim() || null,
       });
 
@@ -204,8 +191,9 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
       setSaving(false);
     }
   }, [
-    aiAssistant?.id,
+    aiAssistantId,
     editingProtocol,
+    editor,
     inputContent,
     inputSummary,
     loadProtocols,
@@ -221,7 +209,7 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteProtocol(protocol.aiAssistantId, protocol.id);
+            await editor.remove(protocol.aiAssistantId, protocol.id);
             await loadProtocols();
           } catch (error) {
             console.error('Failed to delete protocol:', error);
@@ -230,7 +218,7 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
         },
       },
     ] });
-  }, [loadProtocols]);
+  }, [editor, loadProtocols]);
 
   const handleConvert = useCallback((protocol: Protocol, content: string, summary: string | null) => {
     if (saving) return;
@@ -318,25 +306,25 @@ export default function ProtocolView({ onBack, aiAssistant, onConvertToMemory }:
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-                <TextInput
-                  style={styles.input}
+                <InputField
+                  style={styles.field}
+                  inputStyle={styles.input}
                   multiline
+                  autoGrow
                   placeholder="固定注入的提示词或信息"
-                  placeholderTextColor={theme.colors.text.tertiary}
                   value={inputContent}
                   onChangeText={setInputContent}
                   editable={!saving}
-                  maxLength={PROTOCOL_MAX_LENGTH}
                   textAlignVertical="top"
                 />
                 <Text style={styles.charCount}>
-                  {inputContent.length}/{PROTOCOL_MAX_LENGTH}
+                  {inputContent.length} 字
                 </Text>
 
-                <TextInput
-                  style={styles.summaryInput}
+                <InputField
+                  style={styles.field}
+                  inputStyle={styles.summaryInput}
                   placeholder="摘要（用于检索）"
-                  placeholderTextColor={theme.colors.text.tertiary}
                   value={inputSummary}
                   onChangeText={setInputSummary}
                   editable={!saving}

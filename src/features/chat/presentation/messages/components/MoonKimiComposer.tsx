@@ -8,12 +8,12 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { ArrowUp, CirclePlus, LoaderCircle, WifiHigh, type LucideIcon } from 'lucide-react-native';
-import { AppTextInput } from '@shared/ui';
+import { CirclePlus, WifiHigh, type LucideIcon } from 'lucide-react-native';
 
 import type { PresentationTheme } from '@shared/theme';
 import type { createInputAreaStyles } from './chatInputStyles';
-import { CHAT_INPUT_MAX_LENGTH } from './chatInputLimits';
+import { ChatSendButton } from './ChatSendButton';
+import { ChatComposerTextInput, type OverflowPasteHandler } from './ChatComposerTextInput';
 
 type InputAreaStyles = ReturnType<typeof createInputAreaStyles>;
 
@@ -34,6 +34,7 @@ interface MoonKimiComposerProps {
   isPreparingAttachment: boolean;
   isToolPanelVisible: boolean;
   onChangeText: (text: string) => void;
+  onOverflowPaste?: OverflowPasteHandler;
   onDisabledPress: () => void;
   onFocus: () => void;
   onQuickActionPress?: (action: MoonKimiQuickAction) => void;
@@ -41,6 +42,7 @@ interface MoonKimiComposerProps {
   onToggleToolPanel: () => void;
   onVoiceModePress: () => void;
   paddingBottom: number;
+  replyStopButton?: React.ReactNode;
   shouldShowQuickActions: boolean;
   shouldShowSendButton: boolean;
   styles: InputAreaStyles;
@@ -59,6 +61,7 @@ export function MoonKimiComposer({
   isPreparingAttachment,
   isToolPanelVisible,
   onChangeText,
+  onOverflowPaste,
   onDisabledPress,
   onFocus,
   onQuickActionPress,
@@ -66,6 +69,7 @@ export function MoonKimiComposer({
   onToggleToolPanel,
   onVoiceModePress,
   paddingBottom,
+  replyStopButton,
   shouldShowQuickActions,
   shouldShowSendButton,
   styles,
@@ -108,14 +112,14 @@ export function MoonKimiComposer({
               style={{ transform: [{ rotate: '90deg' }, { translateY: -1 }] }}
             />
           </TouchableOpacity>
-          <AppTextInput
+          <ChatComposerTextInput
             ref={inputRef}
             style={styles.moonKimiInput}
             value={value}
             onChangeText={onChangeText}
             placeholder={disabled ? disabledPlaceholder : '尽管问，带图也行'}
             placeholderTextColor={theme.colors.text.tertiary}
-            maxLength={CHAT_INPUT_MAX_LENGTH}
+            onOverflowPaste={onOverflowPaste}
             autoGrow
             textAlignVertical="center"
             scrollEnabled
@@ -124,6 +128,7 @@ export function MoonKimiComposer({
             onPressIn={disabled ? onDisabledPress : undefined}
             onFocus={onFocus}
           />
+          {replyStopButton}
           <TouchableOpacity
             style={[
               styles.moonKimiInputIconButton,
@@ -139,17 +144,15 @@ export function MoonKimiComposer({
             />
           </TouchableOpacity>
           {shouldShowSendButton ? (
-            <TouchableOpacity
-              style={[styles.moonKimiSendButton, !canSend && styles.moonKimiSendButtonDisabled]}
+            <ChatSendButton
+              size={23}
+              isDisabled={!canSend}
+              isPreparing={isPreparingAttachment}
               onPress={onSend}
-              disabled={!canSend && !allowDisabledPress}
-            >
-              {isPreparingAttachment ? (
-                <LoaderCircle size={16} strokeWidth={2} color={theme.colors.icon.inverse} />
-              ) : (
-                <ArrowUp size={16} strokeWidth={2} color={theme.colors.icon.inverse} />
-              )}
-            </TouchableOpacity>
+              keepPressableWhenDisabled={allowDisabledPress}
+              style={styles.moonKimiSendButton}
+              theme={theme}
+            />
           ) : null}
         </View>
         {!isInputSurfaceVisible ? (

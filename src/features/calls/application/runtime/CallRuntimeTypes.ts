@@ -37,8 +37,6 @@ export interface StartOutgoingCallParams {
 }
 
 export interface IncomingCallRequest {
-  reason: string;
-  urgency: 'low' | 'normal' | 'high';
   openingLine: string;
   expectedMode: 'voice' | 'video';
   source?: CallSource;

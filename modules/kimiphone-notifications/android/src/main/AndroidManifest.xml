@@ -17,7 +17,7 @@
       android:launchMode="singleTop"
       android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
     <activity
-      android:name="expo.modules.kimiphonenotifications.TogetherListeningNotificationActivity"
+      android:name="expo.modules.kimiphonenotifications.NotificationOpenActivity"
       android:exported="false"
       android:excludeFromRecents="true"
       android:launchMode="singleTop"

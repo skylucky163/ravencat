@@ -6,6 +6,7 @@ export { callBackgroundRepository } from './infrastructure/SQLiteCallBackgroundR
 export { configureCallRingtoneRuntime } from './application/CallRingtoneSettings';
 export { callRingtoneRepository } from './infrastructure/SQLiteCallRingtoneRepository';
 export { callRepository } from './infrastructure/SQLiteCallRepository';
+export { buildCallTranscriptSearch } from './infrastructure/SQLiteCallHistoryRepository';
 export { callAudioPlayback } from './infrastructure/NativeCallAudioAdapter';
 export { createCallExecutionAdapter } from './infrastructure/NativeCallExecutionAdapter';
 export { createCallMediaRuntime } from './application/runtime/CallMediaRuntime';

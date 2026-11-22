@@ -6,6 +6,10 @@ export function readPromptDefaults() {
   return getPromptingRuntimeDependencies().defaults.read();
 }
 
+export function listLegacyGroupAdminPrompts() {
+  return getPromptingRuntimeDependencies().defaults.listLegacyGroupAdminPrompts();
+}
+
 export async function getAppToolPackageSettings() {
   return (await readPromptDefaults()).appToolPackages;
 }
@@ -43,8 +47,8 @@ export function deleteDefaultUserPrompt(id: string) {
   return getPromptingRuntimeDependencies().defaults.deleteUserPrompt(id);
 }
 
-export function moveDefaultUserPrompt(first: DefaultUserPrompt, second: DefaultUserPrompt) {
-  return getPromptingRuntimeDependencies().defaults.reorderUserPrompts(first, second);
+export function reorderDefaultUserPrompts(promptIds: readonly string[]) {
+  return getPromptingRuntimeDependencies().defaults.reorderUserPrompts(promptIds);
 }
 
 export function setDefaultPromptSwitch(key: string, enabled: boolean) {

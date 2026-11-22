@@ -1,6 +1,5 @@
 /** 提供群聊创建、删除、查询、资料与管理员配置更新用例，并校验外部输入。 */
 import { getChatGroupRuntimeDependencies } from './ChatGroupRuntime';
-import { cancelGroupAutoInvocation } from './GroupAutoInvocationScheduler';
 import {
   releaseMediaAssetCandidates,
   createMediaAssetWithReference,
@@ -26,7 +25,6 @@ export interface CreateGroupChatParams {
     apiKey: string;
     apiBaseUrl: string;
     serviceConfigId?: string | null;
-    systemPrompt?: string | null;
     temperature?: number | null;
     topP?: number | null;
     maxTokens?: number | null;
@@ -60,7 +58,6 @@ function validateCreateGroupChatParams(params: CreateGroupChatParams): {
   adminModel: string;
   adminApiKey: string;
   adminApiBaseUrl: string;
-  adminSystemPrompt: string | null;
 } {
   const name = String(params.name || '').trim();
   if (!name) {
@@ -87,15 +84,12 @@ function validateCreateGroupChatParams(params: CreateGroupChatParams): {
     throw new Error('请输入管理员 API Key');
   }
 
-  const adminSystemPrompt = String(params.admin.systemPrompt || '').trim() || null;
-
   return {
     name,
     memberAIIds,
     adminModel,
     adminApiKey,
     adminApiBaseUrl,
-    adminSystemPrompt,
   };
 }
 
@@ -127,7 +121,6 @@ export async function deleteGroupChat(groupId: string): Promise<boolean> {
   // 共享同一个 exclusive transaction，窗口期内新提交的群消息引用不会漏出候选集。
   const deleted = await getChatGroupRuntimeDependencies().groups.delete(normalizedGroupId);
   if (deleted.deleted) {
-    cancelGroupAutoInvocation(normalizedGroupId);
     await releaseMediaAssetCandidates(deleted.mediaAssetCandidates);
   }
   return deleted.deleted;
@@ -261,10 +254,9 @@ export async function createGroupChat(
       apiKey: normalized.adminApiKey,
       apiBaseUrl: normalized.adminApiBaseUrl,
       serviceConfigId: params.admin.serviceConfigId,
-      systemPrompt: normalized.adminSystemPrompt,
-      temperature: params.admin.temperature ?? null,
-      topP: params.admin.topP ?? null,
-      maxTokens: params.admin.maxTokens === undefined ? 2000 : params.admin.maxTokens,
+      temperature: params.admin.temperature,
+      topP: params.admin.topP,
+      maxTokens: params.admin.maxTokens,
       contextMessageCount: 20,
     },
     members: selectedAssistants.map((assistant, index) => ({

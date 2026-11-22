@@ -32,8 +32,8 @@ export default function MemoryEditorScreen({ assistantId, memoryId, onBack }: {
     initialized.current = true;
     if (currentEditing) { setContent(currentEditing.content); setSummary(currentEditing.summary ?? ''); }
   }, [snapshot, currentEditing]);
-  const count = Array.from(content.trim()).length;
   const summaryCount = Array.from(summary.trim()).length;
+  const canSave = !busy && content.trim().length > 0 && summaryCount <= 50;
   const run = async (operation: () => Promise<unknown>, close = false) => {
     setBusy(true);
     try { await operation(); if (close) onBack(); }
@@ -57,8 +57,7 @@ export default function MemoryEditorScreen({ assistantId, memoryId, onBack }: {
             <TextInput style={styles.input} value={summary} onChangeText={setSummary} editable={!busy} placeholder="摘要（选填，用于检索）" placeholderTextColor={theme.colors.text.tertiary} />
             <Text style={summaryCount > 50 ? styles.danger : styles.meta}>摘要 {summaryCount} / 50 字</Text>
             <TextInput multiline style={[styles.input, styles.editor]} value={content} onChangeText={setContent} editable={!busy} placeholder="写下值得记住的内容…" placeholderTextColor={theme.colors.text.tertiary} />
-            <Text style={count > 500 ? styles.danger : styles.meta}>{count} / 500 字</Text>
-            <Pressable style={[styles.button, (busy || !count || count > 500 || summaryCount > 50) && styles.disabled]} disabled={busy || !count || count > 500 || summaryCount > 50} onPress={() => { void run(() => editing ? editMemory(assistantId, memoryId!, content, summary) : rememberMemory(assistantId, content, null, summary), true); }}><Text style={styles.buttonText}>{busy ? '正在保存…' : '保存记忆'}</Text></Pressable>
+            <Pressable style={[styles.button, !canSave && styles.disabled]} disabled={!canSave} onPress={() => { void run(() => editing ? editMemory(assistantId, memoryId!, content, summary) : rememberMemory(assistantId, content, null, summary), true); }}><Text style={styles.buttonText}>{busy ? '正在保存…' : '保存记忆'}</Text></Pressable>
             {editing && <>
               <View style={styles.card}>
                 <Text style={styles.label}>为这条记忆新建关联组</Text>

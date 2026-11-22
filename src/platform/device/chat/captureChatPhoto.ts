@@ -1,7 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
-
-const MAX_CHAT_IMAGE_SIZE = 5 * 1024 * 1024;
+import { File } from 'expo-file-system';
+import { assertChatAttachmentSize } from './chatAttachmentSelection';
 
 export interface CapturedChatPhoto {
   uri: string;
@@ -11,20 +10,6 @@ export interface CapturedChatPhoto {
   width?: number | null;
   height?: number | null;
   source: 'camera';
-}
-
-async function resolveAssetSize(uri: string, providedSize?: number | null): Promise<number | null> {
-  if (providedSize && Number.isFinite(providedSize)) {
-    return providedSize;
-  }
-
-  try {
-    const info = await FileSystem.getInfoAsync(uri);
-    return info.exists ? info.size ?? null : null;
-  } catch (error) {
-    console.warn('[captureChatPhoto] Failed to resolve asset size:', error);
-    return null;
-  }
 }
 
 export async function captureChatPhoto(): Promise<CapturedChatPhoto | null> {
@@ -44,10 +29,8 @@ export async function captureChatPhoto(): Promise<CapturedChatPhoto | null> {
   }
 
   const asset = result.assets[0];
-  const fileSize = await resolveAssetSize(asset.uri, asset.fileSize ?? null);
-  if (fileSize && fileSize > MAX_CHAT_IMAGE_SIZE) {
-    throw new Error('图片不能超过 5MB');
-  }
+  const fileSize = new File(asset.uri).size;
+  assertChatAttachmentSize(fileSize, 'image');
 
   return {
     uri: asset.uri,

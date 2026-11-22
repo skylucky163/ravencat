@@ -9,7 +9,7 @@
  * buildChatBatchAIInput 仅保留为组合能力；群聊成员已从持久时间线逐条组装输入。
  */
 
-import type { ChatAttachment } from '../../messages/domain/ChatAttachment';
+import { formatChatFileReference, type ChatAttachment } from '../../messages/domain/ChatAttachment';
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
 import {
   buildStickerMessagePreviewText,
@@ -44,6 +44,9 @@ export interface ChatUserMessageModelInput {
   modelInput: ModelInputContent;
 }
 
+/** 旧上传策略允许直接阅读的短文档继续整段交付，更长的文档改为按需读取。 */
+const MAX_INLINE_CHAT_FILE_CHARACTERS = 6_000;
+
 function buildFileFallbackPrompt(fileName: string): string {
   return [
     `用户发送了一个文件：${fileName}。`,
@@ -70,6 +73,7 @@ async function appendAttachmentParts(
   attachment: ChatAttachment,
   messageText: string,
   assistantId: string,
+  messageId: number,
   signal?: AbortSignal,
   authorLabel = '用户',
 ): Promise<void> {
@@ -115,15 +119,15 @@ async function appendAttachmentParts(
 
   const parsedText = attachment.parsedText?.trim();
   if (parsedText) {
-    parts.push({ type: 'text', text: `${authorLabel}发送了文件：${attachment.fileName}` });
-    parts.push({ type: 'text', text: `文件正文：\n${parsedText}` });
-    if (messageText) {
-      parts.push({ type: 'text', text: `用户补充说明：${messageText}` });
+    if (attachment.source === 'clipboard' || Array.from(parsedText).length > MAX_INLINE_CHAT_FILE_CHARACTERS) {
+      parts.push({ type: 'text', text: `${authorLabel}发送了${formatChatFileReference(messageId, attachment)}\n如需正文，请用 read_chat_file 分页读取。若当前没有此工具，请提示用户在 AI 工具设置中开启文件读取。` });
+    } else {
+      parts.push({ type: 'text', text: `${authorLabel}发送了文件：${attachment.fileName}` });
+      parts.push({ type: 'text', text: `文件正文：\n${parsedText}` });
     }
-    return;
+  } else {
+    parts.push({ type: 'text', text: authorLabel === '用户' ? buildFileFallbackPrompt(attachment.fileName) : `${authorLabel}的文件：\n${buildFileFallbackPrompt(attachment.fileName)}` });
   }
-
-  parts.push({ type: 'text', text: authorLabel === '用户' ? buildFileFallbackPrompt(attachment.fileName) : `${authorLabel}的文件：\n${buildFileFallbackPrompt(attachment.fileName)}` });
   if (messageText) {
     parts.push({ type: 'text', text: `用户补充说明：${messageText}` });
   }
@@ -197,7 +201,7 @@ export async function buildChatUserMessageModelInput(
     for (const [index, entry] of record.entries.entries()) {
       for (const attachment of entry.attachments) {
         // 文件正文已经随作者写入上方记录；图片沿用现有视觉处理，并带上原作者。
-        if (attachment.type === 'image') await appendAttachmentParts(parts, attachment, '', assistantId, signal, `分享记录第 ${index + 1} 项中${sharedRecordAuthorLabel(entry, currentAgentId)}`);
+        if (attachment.type === 'image') await appendAttachmentParts(parts, attachment, '', assistantId, message.id, signal, `分享记录第 ${index + 1} 项中${sharedRecordAuthorLabel(entry, currentAgentId)}`);
       }
     }
     return { displayText, modelInput: parts.some((part) => part.type === 'image_url') ? parts : joinTextParts(parts) };
@@ -232,7 +236,7 @@ export async function buildChatUserMessageModelInput(
     }
   } else {
     for (const attachment of attachments) {
-      await appendAttachmentParts(parts, attachment, text, assistantId, signal);
+      await appendAttachmentParts(parts, attachment, text, assistantId, message.id, signal);
     }
   }
 

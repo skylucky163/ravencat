@@ -120,28 +120,9 @@ export interface CompanionExecutionHostMessageParams {
 }
 
 export interface CompanionExecutionHostReplyCallbacks {
-  onReplyDisplaySegment?: (
-    payload: { sessionId: string; clientMessageId: string; text: string; previewText: string },
-  ) => void | CompanionReplyProjectionReceipt | Promise<void | CompanionReplyProjectionReceipt>;
-  onReplySegment?: (
-    payload: CompanionReplySegmentPayload,
-  ) => void | CompanionReplyProjectionReceipt | Promise<void | CompanionReplyProjectionReceipt>;
   onFinalReply?: (payload: CompanionReplyFinalPayload) => void;
   onReplyCommitted?: () => void;
   onReplyFailed?: (payload: CompanionReplyFailedPayload) => void;
-}
-
-export interface CompanionReplyProjectionReceipt {
-  userNotificationHandled: boolean;
-}
-
-export interface CompanionReplySegmentPayload {
-  sessionId: string;
-  messageId: number;
-  clientMessageId?: string;
-  text: string;
-  previewText: string;
-  segmentIndex: number;
 }
 
 export interface CompanionReplyFinalPayload {

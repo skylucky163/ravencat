@@ -21,7 +21,7 @@ async function execute(command: () => Promise<unknown>): Promise<AgentToolExecut
 export const AddOwnStickerTool = {
   name: 'add_own_sticker',
   definition: {
-    name: 'add_own_sticker', description: '用 mediaAssetId 收藏到自己的表情库，可直接使用聊天图片说明中的 mediaAssetId；联网图片先用 download_image 下载并取得 mediaAssetId。仅支持静态图片。',
+    name: 'add_own_sticker', description: '收藏一张静态图片到自己的表情库。',
     parameters: { type: 'object', properties: {
       media_asset_id: { type: 'string', minLength: 1, maxLength: 120, description: '聊天图片或 download_image 返回的 mediaAssetId' },
       name: { type: 'string', minLength: 1, maxLength: 120, description: '可选初始名称，识别成功后使用标准标注名称' },

@@ -28,7 +28,11 @@ class RavenCatConversationReadReceiptTest {
   private val activity = activityController.get()
   private val root = FrameLayout(activity)
   private val receipts = mutableListOf<Pair<String, List<Long>>>()
-  private val report: (String, List<Long>) -> Unit = { session, ids -> receipts.add(session to ids) }
+  private val clientReceipts = mutableListOf<List<String>>()
+  private val report: (String, List<Long>, List<String>) -> Unit = { session, ids, clients ->
+    receipts.add(session to ids)
+    clientReceipts.add(clients)
+  }
 
   @After fun destroyActivity() { activityController.pause().stop().destroy() }
 
@@ -118,6 +122,23 @@ class RavenCatConversationReadReceiptTest {
     attach(view)
     frame()
     assertTrue(receipts.isEmpty())
+  }
+
+  @Test fun runtimeBodyReportsStableIdentityBeforeCanonicalMessageExists() {
+    val view = RavenCatConversationView(activity, report)
+    view.render(RavenCatOverlaySnapshot(conversationSessionId = "a", messages = listOf(
+      RavenCatOverlayMessage(RavenCatOverlayMessageRole.ASSISTANT, "已交付正文", "client-reply"),
+    )))
+    attach(view)
+    frame()
+    assertTrue(receipts.last().second.isEmpty())
+    assertEquals(listOf("client-reply"), clientReceipts.last())
+    view.render(RavenCatOverlaySnapshot(conversationSessionId = "a", messages = listOf(
+      RavenCatOverlayMessage(RavenCatOverlayMessageRole.ASSISTANT, "已交付正文", "client-reply", 10),
+    )))
+    frame()
+    assertEquals(listOf(10L), receipts.last().second)
+    assertEquals(listOf("client-reply"), clientReceipts.last())
   }
 
   private fun findScrollView(view: View): ScrollView {

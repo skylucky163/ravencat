@@ -1,5 +1,6 @@
 /** Host 只编排跨 Feature 原子转存；两边 SQL 和记忆输入边界仍由各自 owner 提供。 */
-import { protocolRepository, type Protocol } from '@features/protocol';
+import type { Protocol } from '@features/protocol';
+import { protocolRepository } from '@features/protocol/composition';
 import { getMemoryRuntimeDependencies, memoryEntryRepository, prepareMemoryRecord, emitMemoryChanged } from '@features/memory/composition';
 import { databaseCoordinator } from '@platform/persistence';
 

@@ -41,8 +41,8 @@ Assistants presentation 负责只读主页、独立编辑页、资料输入校�
 ## 验证
 
 `npm run verify:assistant-profile` 验证名称与昵称合并展示、独立编辑路由与返回保存边界、AI 朋友圈资料与路由、资料事实同步、编辑页返回拦截、读取失败与重试，以及迁移后的名称、人设和上下文失焦保存、多气泡立即保存、无效条数拦截、清空人设、写入失败保留草稿、空名称与头像独立更新、头像错误重试及恢复、返回等待和恢复默认头像。
-`node --no-warnings scripts/verify-prompt-overview.mjs` 验证人设只读展示及重新获得焦点后的数据库同步。
+`node --no-warnings tests/prompting/verify-prompt-overview.mjs` 验证人设只读展示及重新获得焦点后的数据库同步。
 模型自动保存回归确认迁移到 shared/ui 后的行为保持不变；助手 Repository 验证头像提交不覆盖名称或模型配置。
-`node --no-warnings scripts/verify-moments-timeline.mjs` 验证 AI 作者筛选先于分页、混合作者不漏页和删除游标行后的续页；`node --no-warnings scripts/verify-moments-loading.mjs` 验证 AI 头像与默认封面，以及 AI 朋友圈不读取用户封面或提供用户发布入口。
+`node --no-warnings tests/moments/verify-moments-timeline.mjs` 验证 AI 作者筛选先于分页、混合作者不漏页和删除游标行后的续页；`node --no-warnings tests/moments/verify-moments-loading.mjs` 验证 AI 头像与默认封面，以及 AI 朋友圈不读取用户封面或提供用户发布入口。
 `npm run verify:assistant-settings` 验证主页设置入口、独立模型页、正式和旧地址、Host 装配、对话目标与背景键，以及提交事实到当前聊天的身份隔离。原有自动保存专项继续验证错误草稿、离开前提交和固定起点的保存屏障。
 不构建 APK，原生相册与真实键盘交互需要真机确认。

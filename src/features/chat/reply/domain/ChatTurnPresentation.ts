@@ -47,10 +47,8 @@ export interface ChatTurnExecutionStatus {
 
 export interface ChatTurnPresentationHistory {
   runId: string;
-  kind: 'user_reply' | 'regenerate';
   state: 'open' | 'completed' | 'interrupted';
   reason: string | null;
-  committed: boolean;
   createdAt: string;
   items: ChatTurnDisplayVersion[];
 }

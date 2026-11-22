@@ -1,10 +1,11 @@
 /** AI 主理与拉黑状态仓储的 SQLite 实现。 */
-import { databaseCoordinator, type CoordinatedDatabaseExecutor } from '@platform/persistence';
+import { databaseCoordinator, type CoordinatedDatabaseExecutor, type DatabaseReadExecutor, type DatabaseTransactionExecutor } from '@platform/persistence';
 import {
   createHostAIAppointmentCooldown,
   HOST_AI_RELATIONSHIP_STATE_ID,
   HostRelationshipError,
   type IAIHostRepository,
+  type HostAppointmentAvailability,
   type HostCooldownStatus,
   type BlockAIParams,
   type BlockedAIRecord,
@@ -24,6 +25,10 @@ export class AIHostRepository implements IAIHostRepository {
       feature: 'assistants',
       priority: 'runtime',
     });
+    return this.readCurrentHostAIId(database);
+  }
+
+  private async readCurrentHostAIId(database: DatabaseReadExecutor): Promise<string | null> {
     const row = await database.getFirstAsync<{ id: string }>(
       'SELECT id FROM ai_assistants WHERE is_host_ai = 1 LIMIT 1'
     );
@@ -34,67 +39,42 @@ export class AIHostRepository implements IAIHostRepository {
    * 设置主理AI
    */
   async setHostAI(aiId: string): Promise<boolean> {
-    if (!aiId) {
-      throw new HostRelationshipError('assistant_not_found', '主理 AI 不能为空');
-    }
-    const now = new Date().toISOString();
     const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'assistants.setHostAI', feature: 'assistants', priority: 'runtime' });
-    await database.withExclusiveTransactionAsync(async (txn) => {
-      const target = await txn.getFirstAsync<{ id: string; is_host_ai: number }>(
-        'SELECT id, is_host_ai FROM ai_assistants WHERE id = ? LIMIT 1',
-        [aiId]
-      );
-      if (!target) {
-        throw new HostRelationshipError('assistant_not_found', '指定的 AI 不存在');
-      }
-      if (target.is_host_ai === 1) return;
-
-      const relationship = await txn.getFirstAsync<{
-        appointment_cooldown_end: string | null;
-      }>(
-        `SELECT appointment_cooldown_end FROM host_ai_relationship_state
-         WHERE id = ? LIMIT 1`,
-        [HOST_AI_RELATIONSHIP_STATE_ID]
-      );
-      if (
-        relationship?.appointment_cooldown_end
-        && relationship.appointment_cooldown_end > now
-      ) {
-        throw new HostRelationshipError(
-          'host_appointment_cooldown_active',
-          '撤销主理 AI 后需要等待七天才能重新任命'
-        );
-      }
-
-      const existing = await txn.getFirstAsync<{ id: string }>(
-        'SELECT id FROM ai_assistants WHERE is_host_ai = 1 LIMIT 1'
-      );
-      if (existing) {
-        throw new HostRelationshipError(
-          'host_already_assigned',
-          '必须先合法撤销当前主理 AI，不能直接覆盖'
-        );
-      }
-      await txn.runAsync(
-        'UPDATE ai_assistants SET is_host_ai = 0, updated_at = ? WHERE is_host_ai = 1',
-        [now]
-      );
-      const result = await txn.runAsync(
-        `UPDATE ai_assistants SET
-           is_host_ai = 1,
-           host_cooldown_start = NULL,
-           host_cooldown_end = NULL,
-           host_revoke_cooldown_start = NULL,
-           host_revoke_cooldown_end = NULL,
-           updated_at = ?
-         WHERE id = ?`,
-        [now, aiId]
-      );
-      if (result.changes !== 1) {
-        throw new HostRelationshipError('assistant_not_found', '指定的 AI 不存在');
-      }
-    });
+    await database.withExclusiveTransactionAsync((tx) => this.setHostAIInTransaction(tx, aiId));
     return true;
+  }
+
+  /** 返回是否发生新任命，供提交后只对真实身份变化派发通知。 */
+  async setHostAIInTransaction(tx: DatabaseTransactionExecutor, aiId: string): Promise<boolean> {
+    const incumbentId = await this.readCurrentHostAIId(tx);
+    if (incumbentId === aiId) return false;
+    if (incumbentId) {
+      throw new HostRelationshipError('host_already_assigned', '必须先撤销当前主理 AI 才能重新任命');
+    }
+    if ((await this.readHostCooldown(tx)).isInCooldown) {
+      throw new HostRelationshipError('host_appointment_cooldown_active', '主理 AI 的任命冷静期仍未结束');
+    }
+    const result = await tx.runAsync(
+      `UPDATE ai_assistants SET
+         is_host_ai = 1,
+         host_cooldown_start = NULL,
+         host_cooldown_end = NULL,
+         host_revoke_cooldown_start = NULL,
+         host_revoke_cooldown_end = NULL,
+         updated_at = ?
+       WHERE id = ? AND deleted_at IS NULL`,
+      [new Date().toISOString(), aiId],
+    );
+    if (result.changes !== 1) throw new HostRelationshipError('assistant_not_found', '指定的 AI 不存在');
+    return true;
+  }
+
+  getAppointmentAvailability(): Promise<HostAppointmentAvailability> {
+    return databaseCoordinator.read({ name: 'assistants.host-appointment-availability', feature: 'assistants', priority: 'surface' }, async (db) => {
+      if (await this.readCurrentHostAIId(db)) return { status: 'occupied' };
+      const cooldown = await this.readHostCooldown(db);
+      return cooldown.endAt ? { status: 'cooldown', endAt: cooldown.endAt } : { status: 'vacant' };
+    });
   }
 
   /**
@@ -133,6 +113,10 @@ export class AIHostRepository implements IAIHostRepository {
   /** 检查撤销后禁止重新任命的全局七天冷静期。 */
   async checkHostCooldown(): Promise<HostCooldownStatus> {
     const database: CoordinatedDatabaseExecutor = databaseCoordinator.openTaskExecutor({ name: 'assistants.checkHostCooldown', feature: 'assistants', priority: 'runtime' });
+    return this.readHostCooldown(database);
+  }
+
+  async readHostCooldown(database: DatabaseReadExecutor): Promise<HostCooldownStatus> {
     const row = await database.getFirstAsync<{
       appointment_cooldown_end: string | null;
       last_revoked_ai_id: string | null;
@@ -162,7 +146,7 @@ export class AIHostRepository implements IAIHostRepository {
         `UPDATE host_ai_relationship_state
          SET appointment_cooldown_start = NULL, appointment_cooldown_end = NULL, updated_at = ?
          WHERE id = ? AND last_revoked_ai_id = ? AND appointment_cooldown_end > ?
-           AND EXISTS (SELECT 1 FROM ai_assistants WHERE id = ? AND is_host_ai = 0)`,
+           AND EXISTS (SELECT 1 FROM ai_assistants WHERE id = ? AND is_host_ai = 0 AND deleted_at IS NULL)`,
         [now, HOST_AI_RELATIONSHIP_STATE_ID, actorAIId, now, actorAIId],
       );
       if (result.changes !== 1) return false;
@@ -266,7 +250,7 @@ export class AIHostRepository implements IAIHostRepository {
   }
 }
 
-async function upsertAppointmentCooldown(
+export async function upsertAppointmentCooldown(
   txn: Pick<CoordinatedDatabaseExecutor, 'runAsync'>,
   input: { revokedAIId: string; startAt: string; endAt: string }
 ): Promise<void> {

@@ -3,9 +3,11 @@ import { createRandomUUID, ImageFileReadError, inspectLocalImage, readLocalImage
 import { downloadWebImage } from '@platform/web';
 import { generateImage } from '@platform/ai';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
-import { resolveImageGenerationModel } from './ImageGenerationModels';
+import { resolveImageGenerationModel, type CustomImageConnection } from './ImageGenerationModels';
 import { getImageGenerationCapabilities, validateImageGenerationParameters, validateImageGenerationReference, type ImageGenerationParameters, type ImageGenerationReferenceInfo } from '@platform/ai/imageGenerationConfig';
 import type { ImageGenerationPreview } from '@platform/ai/ImageGenerationStream';
+import type { ImageGenerationConnection } from '@platform/ai/ImageGenerationRequest';
+import type { GeneratedImageContent } from '@platform/ai/ImageGenerationClient';
 
 export interface ImageGenerationProgress {
   stage: 'preparing' | 'generating' | 'downloading' | 'checking' | 'saving';
@@ -13,6 +15,7 @@ export interface ImageGenerationProgress {
 }
 export interface ImageGenerationRunOptions {
   parameters?: ImageGenerationParameters;
+  customConnection?: CustomImageConnection;
   reference?: { uri: string } & ImageGenerationReferenceInfo;
   onProgress?(progress: ImageGenerationProgress): void;
 }
@@ -28,12 +31,12 @@ export interface PreparedGeneratedImage {
 export function cleanupGeneratedImage(uri: string): void {
   try { new File(uri).delete(); } catch (error) { console.warn('[AIImage] 生图暂存文件清理失败：', error); }
 }
-export async function prepareGeneratedImage(prompt: string, signal: AbortSignal, fileName?: string, options: ImageGenerationRunOptions = {}): Promise<PreparedGeneratedImage> {
+export async function prepareGeneratedImage(prompt: string, signal: AbortSignal, fileName?: string, options: ImageGenerationRunOptions = {}, modelSnapshot?: ImageGenerationConnection): Promise<PreparedGeneratedImage> {
   throwIfAbortSignalAborted(signal);
   const text = prompt.trim();
   if (!text) throw new ImageGenerationFailure('IMAGE_GENERATION_PROMPT_REQUIRED', '请输入生图提示词', false);
   if (text.length > IMAGE_GENERATION_PROMPT_MAX_LENGTH) throw new ImageGenerationFailure('IMAGE_GENERATION_PROMPT_TOO_LONG', `提示词不能超过 ${IMAGE_GENERATION_PROMPT_MAX_LENGTH} 字`, false);
-  const model = await resolveImageGenerationModel();
+  const model = modelSnapshot ?? await resolveImageGenerationModel(options.customConnection);
   const capabilities = getImageGenerationCapabilities(model.profile, model.model);
   if (text.length > capabilities.promptMaxLength) throw new ImageGenerationFailure('IMAGE_GENERATION_PROMPT_TOO_LONG', `当前模型的提示词不能超过 ${capabilities.promptMaxLength} 字`, false);
   const parameterError = validateImageGenerationParameters(capabilities, options.parameters ?? {}, options.reference !== undefined);
@@ -49,22 +52,28 @@ export async function prepareGeneratedImage(prompt: string, signal: AbortSignal,
       throwIfAbortSignalAborted(signal); options.onProgress!({ stage: 'generating', preview });
     } } : {}) });
   if (result.success === false) throw new ImageGenerationFailure(result.code, result.error, result.retryable);
+  return stageGeneratedImage(result.image, signal, fileName, options.onProgress);
+}
+
+/** 检测和正式生图共用真实文件核验；调用方拥有暂存文件的清理或提交。 */
+export async function stageGeneratedImage(content: GeneratedImageContent, signal: AbortSignal, fileName?: string,
+  onProgress?: ImageGenerationRunOptions['onProgress']): Promise<PreparedGeneratedImage> {
   throwIfAbortSignalAborted(signal);
   let uri: string;
-  if (result.image.kind === 'url') {
-    options.onProgress?.({ stage: 'downloading' });
-    const download = await downloadWebImage(result.image.url, null, signal);
+  if (content.kind === 'url') {
+    onProgress?.({ stage: 'downloading' });
+    const download = await downloadWebImage(content.url, null, signal);
     if (download.ok === false) throw new ImageGenerationFailure(download.error.code, download.error.message, false);
     uri = download.data.uri;
   } else {
     const file = new File(Paths.cache, `generated-${createRandomUUID()}`);
     uri = file.uri;
-    try { file.write(result.image.base64, { encoding: 'base64' }); }
+    try { file.write(content.base64, { encoding: 'base64' }); }
     catch (error) { cleanupGeneratedImage(uri); throw new ImageFileReadError('生成图片无法写入暂存文件', { cause: error }); }
   }
   try {
     throwIfAbortSignalAborted(signal);
-    options.onProgress?.({ stage: 'checking' });
+    onProgress?.({ stage: 'checking' });
     const image = await inspectLocalImage(uri);
     throwIfAbortSignalAborted(signal);
     const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' }[image.mimeType];

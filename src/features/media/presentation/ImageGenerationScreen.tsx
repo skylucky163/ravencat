@@ -6,10 +6,12 @@ import { Button, ConfiguredModelPicker, InputField, ImageViewerModal, KeyboardAv
 import { generateImageForUser, saveUserGeneratedImage, type UserGeneratedImage } from '../application/GenerateImageForUser';
 import { getImageGenerationModelSettings, selectImageGenerationModel, subscribeImageGenerationModelsChanged } from '../application/ImageGenerationModels';
 import type { ImageGenerationProgress } from '../application/PrepareGeneratedImage';
-import type { ImageGenerationParameters } from '@platform/ai/imageGenerationConfig';
+import { getImageSizeRatio, type ImageGenerationParameters } from '@platform/ai/imageGenerationConfig';
 import { pickImageGenerationReference, releaseImageGenerationReference, type ImageGenerationReferenceSelection } from '../application/ImageGenerationReference';
 import ImageGenerationCanvas from './ImageGenerationCanvas';
 import ImageGenerationParametersForm from './ImageGenerationParametersForm';
+import CustomImageParametersForm from './CustomImageParametersForm';
+import { useCustomImageParameters } from './useCustomImageParameters';
 
 interface Props { isActive: boolean; onBack(): void; onManageModels(): void; onUnsavedImageChange(value: boolean): void }
 export default function ImageGenerationScreen({ isActive, onBack, onManageModels, onUnsavedImageChange }: Props) {
@@ -21,6 +23,8 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
   const [result, setResult] = useState<UserGeneratedImage | null>(null);
   const [settings, setSettings] = useState<Awaited<ReturnType<typeof getImageGenerationModelSettings>> | null>(null);
   const [parameters, setParameters] = useState<ImageGenerationParameters>({});
+  const customParameters = useCustomImageParameters();
+  const { activate: activateCustomConnection, cancel: cancelCustomCheck } = customParameters;
   const [progress, setProgress] = useState<ImageGenerationProgress | null>(null);
   const [reference, setReference] = useState<ImageGenerationReferenceSelection | null>(null);
   const [picking, setPicking] = useState(false);
@@ -44,6 +48,7 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
   }, []);
   const leave = useCallback(() => {
     cancel();
+    cancelCustomCheck();
     pickRevision.current++;
     if (request.current) releaseAfterRun.current = true;
     else clearReference();
@@ -53,7 +58,7 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
       setError('未保存的图片已随页面离开或进入后台而清理。');
     }
     setProgress(null); setViewing(false);
-  }, [cancel, clearReference, updateResult]);
+  }, [cancel, cancelCustomCheck, clearReference, updateResult]);
   useEffect(() => {
     let active = true;
     let revision = 0;
@@ -63,6 +68,7 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
       try {
         const next = await getImageGenerationModelSettings();
         if (!active || id !== revision) return;
+        activateCustomConnection(next.customConnection);
         const nextSignature = JSON.stringify([next.selectedModelId, next.capabilities]);
         if (signature !== nextSignature) {
           signature = nextSignature; setParameters({});
@@ -75,12 +81,12 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
           }
         }
         setSettings(next);
-      } catch (failure) { if (active && id === revision) { setSettings(null); setError(`读取模型配置失败：${failure instanceof Error ? failure.message : String(failure)}`); } }
+      } catch (failure) { if (active && id === revision) { activateCustomConnection(null); setSettings(null); setError(`读取模型配置失败：${failure instanceof Error ? failure.message : String(failure)}`); } }
     };
     void reload();
     const unsubscribe = subscribeImageGenerationModelsChanged(() => { void reload(); });
     return () => { active = false; unsubscribe(); };
-  }, [clearReference]);
+  }, [activateCustomConnection, clearReference]);
   useEffect(() => {
     if (!isActive) leave();
     const subscription = AppState.addEventListener('change', state => {
@@ -108,14 +114,16 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
     } catch (failure) { if (revision === pickRevision.current) setError(`参考图选择失败：${failure instanceof Error ? failure.message : String(failure)}`); }
     finally { pickingRef.current = false; setPicking(false); }
   };
-  const selectedSize = settings?.capabilities?.imageSizes?.[parameters.aspectRatio ?? '1:1'];
+  const customConnection = settings?.customConnection;
+  const customSize = customParameters.getParameters().size;
+  const selectedSize = customSize ?? settings?.capabilities?.imageSizes?.[parameters.aspectRatio ?? '1:1'];
   const selectedRatio = selectedSize ? selectedSize.split('x').map(Number).reduce((width, height) => width / height)
     : settings?.capabilities?.referenceRequired && reference ? reference.width / reference.height
       : parameters.aspectRatio ? parameters.aspectRatio.split(':').map(Number).reduce((width, height) => width / height) : 1;
-  const selectedRatioLabel = selectedSize ? `${parameters.aspectRatio ?? '默认'} · ${selectedSize.replace('x', ' × ')}`
+  const selectedRatioLabel = customSize ? getImageSizeRatio(customSize) : selectedSize ? `${parameters.aspectRatio ?? '默认'} · ${selectedSize.replace('x', ' × ')}`
     : settings?.capabilities?.referenceRequired ? '参考图比例' : parameters.aspectRatio ?? '模型默认';
   const run = async (retrySave: boolean) => {
-    if (request.current !== null) return;
+    if (request.current !== null || customParameters.isChecking()) return;
     const controller = new AbortController();
     request.current = controller;
     setBusy(true); setError(null); setProgress({ stage: retrySave ? 'saving' : 'preparing' });
@@ -130,7 +138,11 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
     try {
       const next = retrySave && previous?.status === 'save_failed'
         ? await saveUserGeneratedImage(previous.image, controller.signal, onProgress)
-        : await generateImageForUser(prompt, controller.signal, { parameters: { ...parameters }, reference: referenceRef.current ?? undefined, onProgress });
+        : await generateImageForUser(prompt, controller.signal, {
+          parameters: customConnection ? { custom: customParameters.getParameters() } : parameters,
+          ...(customConnection ? { customConnection } : {}),
+          reference: referenceRef.current ?? undefined, onProgress,
+        });
       if (controller.signal.aborted) {
         if (next.status === 'save_failed') next.image.cleanup();
         return;
@@ -157,8 +169,11 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
         <ConfiguredModelPicker title="生图模型" unconfiguredLabel="选择一个模型" getSettings={getImageGenerationModelSettings}
           onSelect={selectImageGenerationModel} subscribeChanged={subscribeImageGenerationModelsChanged}
           disabled={busy || picking} onManageModels={onManageModels} />
-        <ImageGenerationParametersForm capabilities={settings?.capabilities ?? null} value={parameters} onChange={setParameters}
-          disabled={busy} reference={reference} picking={picking} onPickReference={() => { void pickReference(); }} onRemoveReference={clearReference} />
+        {customConnection ? <CustomImageParametersForm rows={customParameters.rows} checking={customParameters.activeField}
+          disabled={busy} checkPending={customParameters.checking !== null} onChange={customParameters.change}
+          onCheck={field => { if (!request.current) void customParameters.check(field); }} />
+          : <ImageGenerationParametersForm capabilities={settings?.capabilities ?? null} value={parameters} onChange={setParameters}
+            disabled={busy} reference={reference} picking={picking} onPickReference={() => { void pickReference(); }} onRemoveReference={clearReference} />}
         <InputField label="提示词" value={prompt} onChangeText={setPrompt} placeholder="描述想生成的画面…" autoGrow
           maxLength={settings?.capabilities?.promptMaxLength ?? 2000} editable={!busy} />
         <ImageGenerationCanvas busy={busy} ratio={ratio} ratioLabel={busy ? runRatioLabel : image ? `${image.width} × ${image.height}` : selectedRatioLabel} progress={progress} imageUri={imageUri} onOpenImage={() => setViewing(true)} />
@@ -171,7 +186,7 @@ export default function ImageGenerationScreen({ isActive, onBack, onManageModels
       </ScrollView>
       <View style={styles.actions}>
         <Button title={busy ? '取消' : result?.status === 'save_failed' ? '重试保存' : '生成'} variant={busy ? 'secondary' : 'primary'}
-          disabled={picking || !busy && result?.status !== 'save_failed' && (!prompt.trim() || settings?.status !== 'active' || settings.capabilities?.referenceRequired && !reference)}
+          disabled={picking || customParameters.checking !== null || !busy && result?.status !== 'save_failed' && (!prompt.trim() || settings?.status !== 'active' || settings.capabilities?.referenceRequired && !reference)}
           onPress={busy ? cancel : () => { void run(result?.status === 'save_failed'); }} />
       </View>
     </KeyboardAvoidingContainer>

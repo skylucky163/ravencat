@@ -6,7 +6,7 @@ export * from './domain/AuxiliaryModel';
 export { default as ServiceConnectionPicker } from './presentation/auxiliaryModels/ServiceConnectionPicker';
 export { ApplicationSettingsAccessError } from './domain/ApplicationSettingsAccess';
 export type { AIAssistantSettingsUpdate, AIAssistantSummary, IAIAssistantRepository } from './domain/AssistantRepository';
-export type { IAIHostRepository } from './domain/HostRepository';
+export type { HostAppointmentAvailability, IAIHostRepository } from './domain/HostRepository';
 export { ReleaseHostCooldownTool } from './aiTools/ReleaseHostCooldownTool';
 export { HostRelationshipError } from './domain/HostRepository';
 export { AIAssistantRepository, aiAssistantRepository } from './infrastructure/SQLiteAssistantRepository';
@@ -23,9 +23,16 @@ export {
   appointHostAIAssistant,
   createAIAssistant,
   deleteAIAssistant,
+  listRecycledAIAssistants,
+  restoreAIAssistant,
+  permanentlyDeleteAIAssistant,
+  purgeExpiredAIAssistants,
+  subscribeAssistantLifecycleChanged,
   getAIAssistantById,
   getHostAIAssistant,
   getHostAICooldownStatus,
+  getHostAppointmentAvailability,
+  subscribeHostAppointmentChanged,
   configureAssistantRuntime,
   listAIAssistants,
   listAIAssistantSummaries,
@@ -44,6 +51,9 @@ export {
   assertApplicationSettingsAccessInTransaction,
   subscribeAIAssistantUpdated,
 } from './AIAssistantManagement';
+export type { RecycledAssistant } from './domain/AssistantRecycleBin';
+export type { AssistantRecycleLifecycleChange } from './domain/AssistantRecycleBin';
+export { default as AIRecycleBinScreen } from './presentation/management/AIRecycleBinScreen';
 export { AgentRegistryService, agentRegistryService } from './AgentRegistryService';
 export { fetchModelsWithConfig, runConnectionTestByConfig } from './application/AIModelService';
 export type * from './application/modelTypes';

@@ -147,6 +147,7 @@ export async function runHostAutonomousAgent(
         temperature: assistant.temperature,
         topP: assistant.topP,
         disableThinking: assistant.disableThinking,
+        reasoningEffort: assistant.reasoningEffort,
         maxTokens: assistant.maxTokens ?? undefined,
         systemPrompt: promptPack.systemPrompt,
       });

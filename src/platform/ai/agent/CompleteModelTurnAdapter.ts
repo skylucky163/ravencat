@@ -54,6 +54,7 @@ export class CompleteModelTurnAdapter {
         cachedTokens: response.cachedTokens,
       },
       finishReason,
+      ...(response.reasoningReplay ? { reasoningReplay: response.reasoningReplay } : {}),
     });
     return collector.getResult();
   }

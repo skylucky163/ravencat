@@ -4,6 +4,7 @@ import type {
   AgentRunTerminalResult,
 } from '@platform/agentRuntime';
 import { assertChatReplyNotAborted, ChatReplyRunCancelledError } from '../application/ChatReplyAbort';
+import { isAutonomousSilentReply } from '../application/AutonomousReplyContract';
 import type { AssistantTurnCommitPort } from '../application/AssistantTurnCommit';
 import type { IMessageRepository } from '../../messages/domain/MessageRepository';
 import type {
@@ -260,16 +261,21 @@ export class ChatAgentRunProjector {
     this.assertActive();
     if (result.terminalCode === 'COMPLETED') {
       const finalStep = requireLastStep(result);
+      const turn = this.requireModelTurn(finalStep.stepIndex);
+      if (this.runtimeContext.allowSilentReply && isAutonomousSilentReply(turn.assistantText)) {
+        this.callbacks.onSilentReply?.();
+        return;
+      }
       if (this.streamingReply) {
         await this.streamingReply.finalizeFinalTurn(
           finalStep.stepIndex,
-          this.requireModelTurn(finalStep.stepIndex)
+          turn
         );
         return;
       }
       await this.requireLegacyPersistence().persistCompletedAssistantReply({
         sessionId: this.sessionId,
-        response: toAIResponse(this.requireModelTurn(finalStep.stepIndex)),
+        response: toAIResponse(turn),
         repository: this.repository,
         callbacks: this.callbacks,
         aiConfig: this.aiConfig,

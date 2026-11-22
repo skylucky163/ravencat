@@ -75,6 +75,20 @@ class RavenCatConversationPreviewTest {
     assertFalse(snapshot.isSending)
   }
 
+  @Test fun stableReplyIdentityReplacesOnlyItsRequestPendingAndHandsOverWithoutDuplicate() {
+    val user = RavenCatOverlayMessage(RavenCatOverlayMessageRole.USER, "发送", "request")
+    val pending = RavenCatOverlayMessage(RavenCatOverlayMessageRole.PENDING, "等待", "request")
+    val other = RavenCatOverlayMessage(RavenCatOverlayMessageRole.PENDING, "另一条", "other")
+    val reply = RavenCatOverlayMessage(RavenCatOverlayMessageRole.ASSISTANT, "回复", "client-reply")
+    val snapshot = RavenCatOverlaySnapshot(conversationSessionId = "a", messages = listOf(user, pending, other))
+      .withReplyPreview(reply, "request")
+    assertEquals(listOf(user, other, reply), snapshot.messages)
+    val canonical = committed(2, correlation = "client-reply")
+    val handedOver = snapshot.withConversationPreview("a", listOf(committed(1, RavenCatOverlayMessageRole.USER, "request"), canonical))
+    assertEquals(1, handedOver.messages.count { it.correlationId == "client-reply" })
+    assertEquals(canonical, handedOver.messages.first { it.correlationId == "client-reply" })
+  }
+
   @Test fun laterSourceMutationDoesNotChangeSnapshot() {
     val source = mutableListOf(committed(1), committed(2))
     val snapshot = RavenCatOverlaySnapshot().withMessages(source)

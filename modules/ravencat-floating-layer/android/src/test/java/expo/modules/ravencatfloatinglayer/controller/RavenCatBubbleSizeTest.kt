@@ -1,6 +1,8 @@
 package expo.modules.ravencatfloatinglayer.controller
 
 import android.content.Context
+import android.app.KeyguardManager
+import android.os.PowerManager
 import android.content.ContextWrapper
 import android.os.Looper
 import android.graphics.Rect
@@ -27,6 +29,28 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 @RunWith(RobolectricTestRunner::class)
 class RavenCatBubbleSizeTest {
+  @Test fun `locked or sleeping screen cannot consume message notifications`() {
+    val base: Context = RuntimeEnvironment.getApplication()
+    val recording = RecordingWindowManager(base.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+    val context = object : ContextWrapper(base) {
+      override fun getSystemService(name: String): Any? = if (name == Context.WINDOW_SERVICE) recording else super.getSystemService(name)
+    }
+    val controller = RavenCatOverlayController(context) {}
+    val power = shadowOf(base.getSystemService(PowerManager::class.java))
+    val keyguard = shadowOf(base.getSystemService(KeyguardManager::class.java))
+    power.setIsInteractive(true)
+    keyguard.setKeyguardLocked(false)
+    controller.setAppForeground(false)
+    controller.expand()
+    assertTrue(controller.isReplyPreviewVisible())
+    power.setIsInteractive(false)
+    assertFalse(controller.isReplyPreviewVisible())
+    power.setIsInteractive(true)
+    keyguard.setKeyguardLocked(true)
+    assertFalse(controller.isReplyPreviewVisible())
+    controller.removeAllViews()
+  }
+
   @Test
   fun `resizing updates same bubble window and dragging uses new size at both edges`() {
     val base: Context = RuntimeEnvironment.getApplication()

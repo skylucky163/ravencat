@@ -103,7 +103,7 @@ export const UseLedgerQuickActionTool: Tool<{ quickActionId: string; recordDate?
   name: 'useLedgerQuickAction',
   definition: {
     name: 'useLedgerQuickAction',
-    description: '使用快捷记账模板，按其当前收支类型、分类、金额和备注新增一笔账单，未填写备注时以模板名称作为备注，返回真实账单 ID；每次调用都会新增，不要为同一笔消费重复调用。多条候选无法区分时先询问。',
+    description: '使用快捷记账模板，按其当前收支类型、分类、金额和备注新增一笔账单，未填写备注时以模板名称作为备注，返回真实账单 ID；每笔消费只用一次。多条候选无法区分时先询问。',
     parameters: {
       type: 'object',
       properties: {

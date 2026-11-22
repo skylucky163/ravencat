@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.RenderEffect
 import android.graphics.RenderNode
 import android.graphics.RuntimeShader
@@ -13,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.views.ExpoView
+import kotlin.math.ceil
 
 /** 共享场景背景录制，只为当前表面运行裁剪、折射、色散与模糊。 */
 class LiquidGlassEffectView(context: Context, appContext: AppContext) :
@@ -29,8 +31,8 @@ class LiquidGlassEffectView(context: Context, appContext: AppContext) :
   private var retryAttempt = 0
   private var isAggregatedVisible = true
   private var lastDiagnostic: String? = null
-  private var lastContentWidth = -1
-  private var lastContentHeight = -1
+  private val sampleBounds = Rect()
+  private val recordedBounds = Rect()
   private var lastContentOffsetX = Int.MIN_VALUE
   private var lastContentOffsetY = Int.MIN_VALUE
   private var lastCaptureRevision = Long.MIN_VALUE
@@ -49,7 +51,6 @@ class LiquidGlassEffectView(context: Context, appContext: AppContext) :
   init {
     orientation = VERTICAL
     setWillNotDraw(false)
-    setLayerType(View.LAYER_TYPE_HARDWARE, null)
     isClickable = false
     isFocusable = false
     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -155,7 +156,6 @@ class LiquidGlassEffectView(context: Context, appContext: AppContext) :
   override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
     super.onSizeChanged(width, height, oldWidth, oldHeight)
     resetContentGeometry()
-    applyRenderEffect()
     boundCapture?.let(::onSharedSceneFrame)
     if (boundCapture == null && width > 0 && height > 0 && isAttachedToWindow && isAggregatedVisible) {
       // 尺寸就绪后立即尝试绑定，把 attach 后首帧空窗从 16ms 重试周期压到当帧。
@@ -272,7 +272,6 @@ class LiquidGlassEffectView(context: Context, appContext: AppContext) :
     releaseCapture()
     boundCapture = capture
     capture.attach(this)
-    applyRenderEffect()
     lastDiagnostic = null
   }
 
@@ -291,22 +290,17 @@ class LiquidGlassEffectView(context: Context, appContext: AppContext) :
 
   private fun recordSharedContent(capture: LiquidGlassSceneCapture): Boolean {
     val source = capture.source ?: return false
-    if (
-      !capture.renderNode.hasDisplayList() ||
-      width <= 0 ||
-      height <= 0
-    ) {
+    if (!capture.renderNode.hasDisplayList() || !resolveSampleBounds()) {
       return false
     }
 
     // 背景与 Modal 不在同一窗口，采样偏移必须使用共同的屏幕坐标系。
     source.getLocationOnScreen(sourcePosition)
     getLocationOnScreen(effectPosition)
-    val offsetX = sourcePosition[0] - effectPosition[0]
-    val offsetY = sourcePosition[1] - effectPosition[1]
+    val offsetX = sourcePosition[0] - effectPosition[0] - sampleBounds.left
+    val offsetY = sourcePosition[1] - effectPosition[1] - sampleBounds.top
     if (
-      width == lastContentWidth &&
-      height == lastContentHeight &&
+      sampleBounds == recordedBounds &&
       offsetX == lastContentOffsetX &&
       offsetY == lastContentOffsetY &&
       contentNode.hasDisplayList()
@@ -314,22 +308,37 @@ class LiquidGlassEffectView(context: Context, appContext: AppContext) :
       return false
     }
 
-    contentNode.setPosition(0, 0, width, height)
-    val canvas = contentNode.beginRecording(width, height)
+    contentNode.setPosition(sampleBounds)
+    val canvas = contentNode.beginRecording()
     canvas.translate(offsetX.toFloat(), offsetY.toFloat())
     canvas.drawRenderNode(capture.renderNode)
     contentNode.endRecording()
 
-    lastContentWidth = width
-    lastContentHeight = height
+    recordedBounds.set(sampleBounds)
     lastContentOffsetX = offsetX
     lastContentOffsetY = offsetY
     applyRenderEffect()
     return true
   }
 
+  private fun resolveSampleBounds(): Boolean {
+    if (width <= 0 || height <= 0) return false
+    val window = rootView
+    if (width <= window.width && height <= window.height) {
+      sampleBounds.set(0, 0, width, height)
+      return true
+    }
+
+    // 玻璃的离屏纹理随可见区域滚动，避免展开长消息时申请整条气泡大小的 GPU 图层。
+    if (!getLocalVisibleRect(sampleBounds)) return false
+    // 为折射、色散与模糊留出邻域，避免采样被滚动裁切线截断。
+    val padding = ceil(dp(refractionOffset) * (1f + dispersion) + 3f * blurRadius).toInt()
+    sampleBounds.inset(-padding, -padding)
+    return sampleBounds.intersect(0, 0, width, height)
+  }
+
   private fun applyRenderEffect() {
-    if (width <= 0 || height <= 0 || !contentNode.hasDisplayList()) {
+    if (recordedBounds.isEmpty) {
       return
     }
 
@@ -337,7 +346,7 @@ class LiquidGlassEffectView(context: Context, appContext: AppContext) :
       "size",
       floatArrayOf(width.toFloat(), height.toFloat())
     )
-    liquidShader.setFloatUniform("offset", floatArrayOf(0f, 0f))
+    liquidShader.setFloatUniform("surfaceOffset", recordedBounds.left.toFloat(), recordedBounds.top.toFloat())
     val shape = fluidShape
     liquidShader.setFloatUniform("fluidEnabled", if (shape == null) 0f else 1f)
     liquidShader.setFloatUniform("fluidBar", floatArrayOf(shape?.get(0) ?: 0f, shape?.get(5) ?: 1f))
@@ -416,10 +425,7 @@ class LiquidGlassEffectView(context: Context, appContext: AppContext) :
 
   private fun resetContentGeometry() {
     lastCaptureRevision = Long.MIN_VALUE
-    lastContentWidth = -1
-    lastContentHeight = -1
-    lastContentOffsetX = Int.MIN_VALUE
-    lastContentOffsetY = Int.MIN_VALUE
+    recordedBounds.setEmpty()
   }
 
   private fun cancelRetry() {

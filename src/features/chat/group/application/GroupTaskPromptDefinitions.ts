@@ -9,7 +9,7 @@ import {
 export const GROUP_TASK_PROMPT_DEFINITIONS = [
   {
     id: 'scenario.group_admin_schedule',
-    version: 2,
+    version: 3,
     name: '群聊管理员调度',
     description: '根据群成员、召唤消息与近期上下文选择本轮发言 AI。',
     owner: 'chat',
@@ -18,8 +18,11 @@ export const GROUP_TASK_PROMPT_DEFINITIONS = [
     defaultSlot: 'scenario',
     placement: 'system',
     protection: 'overridable',
+    // 全部群共用一份正文，不按 AI 覆盖。
+    editScope: 'global',
     contentKind: 'template',
     content: DEFAULT_GROUP_ADMIN_PROMPT,
+    defaultContent: DEFAULT_GROUP_ADMIN_PROMPT,
     sourcePath: 'src/features/chat/group/application/GroupTaskPromptBlocks.ts',
   },
   {

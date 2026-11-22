@@ -1,5 +1,7 @@
 /** AI Provider 技术能力公共出口。 */
 export { BaseAIClient } from './BaseAIClient';
+export { REASONING_EFFORTS, REASONING_EFFORT_LABELS, getReasoningEffortOptions, resolveReasoningEffort } from './reasoning';
+export type { ReasoningEffort } from './reasoning';
 export { aiHttpDiagnostics } from './HttpExchangeDiagnostics';
 export type { AIHttpExchange, AIHttpDiagnosticsSnapshot } from './HttpExchangeDiagnostics';
 export { OpenAIClient, createAIClient } from './OpenAIClient';
@@ -30,6 +32,7 @@ export type {
   ParamErrorInfo, QuotaErrorInfo, ServiceBusyErrorInfo, ErrorDisplayInfo,
   ModelInfo, ToolDefinition, ChatOptions, ChatWithToolsOptions,
   ConnectionTestOptions,
+  OpenAIReasoningReplay,
 } from './types';
 export type {
   AgentModelEventSink,

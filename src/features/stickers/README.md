@@ -72,4 +72,4 @@ AI 模型调用在 Agent 工具内等待并共享取消信号。`ai_sticker_task
 
 搜索与分组浏览的结果状态按批整理：整批共用一次模型配置解析，向量和 AI 私有处理状态分别批量读取，空结果不读配置。单张选择与维护复用相同的状态判定，不缓存跨调用的模型或向量状态。
 
-验证：`npm run verify:ai-image-tools`、`node scripts/verify-stickers-v2.mjs`、`node scripts/verify-sticker-processing-ui.mjs`。进度验证覆盖完整收藏库、逐张重试、向量失败持久化与显式恢复、取消及迟到结果；设备上的真实模型请求、前后台切换和新消息打断需另行验收。
+验证：`npm run verify:ai-image-tools`、`node tests/stickers/verify-stickers-v2.mjs`、`node tests/stickers/verify-sticker-processing-ui.mjs`。进度验证覆盖完整收藏库、逐张重试、向量失败持久化与显式恢复、取消及迟到结果；设备上的真实模型请求、前后台切换和新消息打断需另行验收。

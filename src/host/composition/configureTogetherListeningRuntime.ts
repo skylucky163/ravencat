@@ -85,6 +85,7 @@ export function configureTogetherListeningRuntime(): void {
           temperature: assistant.temperature,
           topP: assistant.topP,
           disableThinking: assistant.disableThinking,
+          reasoningEffort: assistant.reasoningEffort,
           maxTokens: assistant.maxTokens ?? undefined,
         };
       },

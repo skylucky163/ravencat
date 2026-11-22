@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { ProtocolView, type Protocol } from '@features/protocol';
-import { subscribeAuxiliaryModelsChanged } from '@features/assistants';
+import { getAssistantDisplayName, subscribeAuxiliaryModelsChanged } from '@features/assistants';
 import { useTheme, type PresentationTheme } from '@shared/theme';
 import { EmptyState, showAppDialog } from '@shared/ui';
 import CreateGroup from '../group/CreateGroup';
@@ -17,6 +17,8 @@ import GroupChatDetail from '../group/GroupChatDetail';
 import GroupOptions from '../group/GroupOptions';
 import { renameGroupChat, subscribeGroupChanged } from '../../group/application/GroupMembership';
 import AIOptions from '../conversation/AIOptions';
+import ConversationImportScreen from '../conversation/ConversationImportScreen';
+import DeepSeekImportScreen from '../conversation/DeepSeekImportScreen';
 import ChatStatisticsScreen from '../conversation/ChatStatisticsScreen';
 import ChatMessageSearchScreen from '../messages/ChatMessageSearchScreen';
 import ChatMessageContextScreen from '../messages/ChatMessageContextScreen';
@@ -415,6 +417,7 @@ export function ChatMenuRouteScreen({ aiId, onOpenAssistantProfile, onOpenModelS
       }}
       onOpenProfile={onOpenAssistantProfile}
       onOpenCodeLibrary={onOpenCodeLibrary}
+      onOpenConversationImport={() => router.openSubScreen('conversationImport')}
       onModelSettings={onOpenModelSettings}
       onChatSettings={onOpenConversationSettings}
       onChatSummary={onOpenSummary}
@@ -429,6 +432,32 @@ export function ChatMenuRouteScreen({ aiId, onOpenAssistantProfile, onOpenModelS
   );
 }
 
+export function ChatImportRouteScreen({ aiId }: { aiId: string }) {
+  const router = usePreparedConversation(aiId);
+  useSubScreenLifecycle(router.state.setCurrentSubScreen, 'conversationImport', 'menu');
+  if (router.unavailableReason) {
+    return <ConversationUnavailable reason={router.unavailableReason} onBack={router.returnToConversations} />;
+  }
+  if (router.preparing || !router.state.currentAI) return <RouteLoading />;
+  return <ConversationImportScreen onBack={router.routeBack}
+    onOpenDeepSeek={() => router.openSubScreen('deepSeekImport')} />;
+}
+
+export function DeepSeekImportRouteScreen({ aiId }: { aiId: string }) {
+  const router = usePreparedConversation(aiId);
+  const { state } = router;
+  useSubScreenLifecycle(state.setCurrentSubScreen, 'deepSeekImport', 'conversationImport');
+  if (router.unavailableReason) {
+    return <ConversationUnavailable reason={router.unavailableReason} onBack={router.returnToConversations} />;
+  }
+  if (router.preparing || !state.currentAI) return <RouteLoading />;
+  return <DeepSeekImportScreen key={aiId} aiId={aiId} assistantName={getAssistantDisplayName(state.currentAI)}
+    onBack={router.routeBack} onImported={clearSessionTimelineCache} onViewConversation={() => {
+      state.handleCloseMenu();
+      router.returnToConversation(aiId);
+    }} />;
+}
+
 export function ChatProtocolRouteScreen({ aiId, onConvertToMemory }: {
   aiId: string; onConvertToMemory: (protocol: Protocol, values: { content: string; summary: string | null }) => Promise<void>;
 }) {
@@ -439,7 +468,7 @@ export function ChatProtocolRouteScreen({ aiId, onConvertToMemory }: {
   }
   return (
     <ProtocolView
-      aiAssistant={router.state.currentAI}
+      aiAssistantId={router.state.currentAI.id}
       onConvertToMemory={onConvertToMemory}
       onBack={() => {
         router.state.handleBackToMenu();
@@ -452,7 +481,7 @@ export function ChatProtocolRouteScreen({ aiId, onConvertToMemory }: {
 type MessageSearchRouteProps = { messageId: number; onOpenMessage?: never }
   | { messageId?: undefined; onOpenMessage(messageId: number): void };
 
-export function ChatSearchRouteScreen({ aiId, messageId, onOpenMessage }: { aiId: string } & MessageSearchRouteProps) {
+export function ChatSearchRouteScreen({ aiId, messageId, onOpenMessage, onOpenCall }: { aiId: string; onOpenCall?(callId: string): void } & MessageSearchRouteProps) {
   const router = usePreparedConversation(aiId);
   useSubScreenLifecycle(router.state.setCurrentSubScreen, 'search', messageId !== undefined ? 'search' : 'menu');
   if (router.unavailableReason) {
@@ -462,7 +491,7 @@ export function ChatSearchRouteScreen({ aiId, messageId, onOpenMessage }: { aiId
   const conversationId = router.state.currentSession.id;
   return messageId !== undefined
     ? <ChatMessageContextScreen key={`${conversationId}:${messageId}`} conversationId={conversationId} messageId={messageId} onBack={router.routeBack} />
-    : <ChatMessageSearchScreen key={conversationId} conversationId={conversationId} onBack={router.routeBack} onOpenMessage={onOpenMessage} />;
+    : <ChatMessageSearchScreen key={conversationId} conversationId={conversationId} sourceName={router.state.currentSession.name} assistantId={aiId} onBack={router.routeBack} onOpenMessage={onOpenMessage} onOpenCall={onOpenCall} />;
 }
 
 export function GroupSearchRouteScreen({ groupId, messageId, onOpenMessage }: { groupId: string } & MessageSearchRouteProps) {
@@ -470,7 +499,7 @@ export function GroupSearchRouteScreen({ groupId, messageId, onOpenMessage }: { 
   if (router.preparing || router.currentGroup?.id !== groupId) return <RouteLoading />;
   return messageId !== undefined
     ? <ChatMessageContextScreen key={`${groupId}:${messageId}`} conversationId={groupId} messageId={messageId} onBack={router.routeBack} />
-    : <ChatMessageSearchScreen key={groupId} conversationId={groupId} onBack={router.routeBack} onOpenMessage={onOpenMessage} />;
+    : <ChatMessageSearchScreen key={groupId} conversationId={groupId} sourceName={router.currentGroup.name} onBack={router.routeBack} onOpenMessage={onOpenMessage} />;
 }
 
 export function ChatStatisticsRouteScreen({ aiId }: { aiId: string }) {

@@ -184,7 +184,7 @@ function StickerGridItem({
       accessibilityState={selectionMode ? { checked: selected, disabled } : { disabled }}
     >
       {localUri ? (
-        <Image source={{ uri: localUri }} style={styles.gridImage} resizeMode="contain" />
+        <Image source={{ uri: localUri }} style={styles.gridImage} resizeMode="contain" resizeMethod="resize" />
       ) : (
         <View style={[styles.gridImage, styles.gridPlaceholder]}>
           <Ionicons name="happy-outline" size={22} color={theme.colors.icon.secondary} />

@@ -4,10 +4,15 @@ import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Pencil, Trash2, Phone, Video } from 'lucide-react-native';
 import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
-import { Button, InputField, ModalSheet, NavigationHeader, showAppDialog, ToggleField } from '@shared/ui';
+import { Button, InputField, ModalSheet, NavigationHeader, showAppDialog, ToggleDetailRow } from '@shared/ui';
 import { deleteCallHistory, listCallHistory, renameCallHistory, getCallHistorySnapshotSaving, setCallHistorySnapshotSaving } from '../application/CallHistory';
 import type { CallHistoryRecord } from '../domain/CallHistory';
 import { createCallHistoryStyles } from './callHistoryStyles';
+
+const HELP_SECTIONS = [
+  { title: '保存截图', body: '开启后才会保留这个 AI 之后获取的截图；关闭不会删除已保存的图片，可在记录详情中单独删除。' },
+  { title: '记录内容', body: '按时间从新到旧排列。新增通话会保存文字与分段语音；此前已清理的音频无法补录。' },
+];
 
 export default function CallHistoryScreen({ assistantId, onBack, onOpenRecord }: {
   assistantId: string; onBack(): void; onOpenRecord(callId: string): void;
@@ -60,13 +65,14 @@ export default function CallHistoryScreen({ assistantId, onBack, onOpenRecord }:
     } }],
   });
   return <SafeAreaView style={styles.screen} edges={['top', 'left', 'right', 'bottom']}>
-    <NavigationHeader title="通话记录" onGoBack={onBack} />
+    <NavigationHeader title="通话记录" onGoBack={onBack} help={{ sections: HELP_SECTIONS }} />
     <FlatList data={records} keyExtractor={record => record.callId} contentContainerStyle={styles.content}
       ListHeaderComponent={<View>
-        <ToggleField label="保存 AI 获取的截图" value={saveSnapshots} disabled={loading || savingPreference || error !== null}
-          onValueChange={enabled => { void changeSnapshotSaving(enabled); }}
-          hint="默认关闭，仅影响这个 AI 之后获取的截图。关闭不会删除已保存的图片，可在记录详情中单独删除。" />
-        <Text style={styles.meta}>按时间从新到旧排列。新增通话会保存文字与分段语音；此前已清理的音频无法补录。</Text>
+        <ThemedSurface variant="card" style={styles.preferenceCard}>
+          <ToggleDetailRow title="保存 AI 获取的截图" description="默认关闭 · 仅影响之后获取的截图"
+            value={saveSnapshots} disabled={loading || savingPreference || error !== null}
+            onValueChange={enabled => { void changeSnapshotSaving(enabled); }} />
+        </ThemedSurface>
         {loading && <ActivityIndicator color={theme.colors.brand.primary} />}
         {error && <Text style={styles.error}>{error}</Text>}
       </View>}

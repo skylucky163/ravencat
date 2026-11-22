@@ -12,7 +12,6 @@ export interface GroupAdminSettingsDraft {
   topPInput: string;
   maxTokens: string;
   contextMessageCount: string;
-  systemPrompt: string;
 }
 
 export function getGroupAdminSettingsDraft(config?: GroupChatAdminConfig | null): GroupAdminSettingsDraft {
@@ -21,8 +20,8 @@ export function getGroupAdminSettingsDraft(config?: GroupChatAdminConfig | null)
     apiBaseUrl: config?.apiBaseUrl ?? '', apiKey: config?.apiKey ?? '', selectedModel: config?.model ?? '',
     tempInput: config?.temperature == null ? '' : String(config.temperature),
     topPInput: config?.topP == null ? '' : String(config.topP),
-    maxTokens: config?.maxTokens === null ? '无限制' : String(config?.maxTokens ?? 2000),
-    contextMessageCount: String(config?.contextMessageCount ?? 20), systemPrompt: config?.systemPrompt ?? '',
+    maxTokens: config?.maxTokens == null ? '' : String(config.maxTokens),
+    contextMessageCount: String(config?.contextMessageCount ?? 20),
   };
 }
 
@@ -37,7 +36,7 @@ export function parseGroupAdminSettingsDraft(draft: GroupAdminSettingsDraft, cha
       if (key === 'tempInput') patch.temperature = result.value;
       else patch.topP = result.value;
     } else if (key === 'maxTokens') {
-      const result = draft.maxTokens === '无限制' ? { value: null, error: null } : readDraftInteger(draft.maxTokens, 'Max Tokens');
+      const result = readDraftInteger(draft.maxTokens, 'Max Tokens', true);
       if (result.error) { errors[key] = result.error; continue; }
       patch.maxTokens = result.value;
     } else if (key === 'contextMessageCount') {

@@ -60,6 +60,7 @@ export type AppNotificationData =
   | TogetherListeningNotificationData;
 
 export interface SendAIMessageNotificationParams {
+  committedMessageId?: number;
   turnRunId?: string;
   aiId: string;
   aiName: string;
@@ -94,8 +95,7 @@ export interface SendAIIncomingCallNotificationParams {
   aiName: string;
   aiAvatar?: string | null;
   sessionId: string;
-  openingLine?: string | null;
-  reason?: string | null;
+  openingLine: string;
 }
 
 function isLikelyNotificationAvatarUri(value?: string | null): boolean {

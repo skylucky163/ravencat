@@ -5,7 +5,9 @@ import type { IConversationTurnRepository } from '../../reply/domain/Conversatio
 import type { ChatAssistantDirectory } from '../../ChatAssistantDirectory';
 import type { ChatMessage } from '../domain/ChatMessage';
 import type { ChatAttachmentType } from '../domain/ChatAttachment';
+import type { CallTranscriptSearch } from '../domain/ChatMessageSearch';
 import type { IMessageRepository } from '../domain/MessageRepository';
+import type { DeepSeekExportArchive } from '../domain/DeepSeekImport';
 import type { DatabaseTransactionExecutor } from '@platform/persistence';
 import type { MediaAsset } from '@features/media';
 import { createRuntimeSlot } from '@shared/runtime/RuntimeSlot';
@@ -17,6 +19,7 @@ export type ConversationTurnExecutionMode =
 
 /** canonical 用户消息已提交的回调负载（T1 commit 后交给 Host）。 */
 export interface CanonicalUserMessageCommittedPayload {
+  requestReply?: boolean;
   sessionId: string;
   message: ChatMessage;
   supersededRunId: string | null;
@@ -64,13 +67,20 @@ export interface ChatAttachmentMediaAssetPort {
 }
 
 export interface ChatMessageRuntimeDependencies {
+  userReplyRequest: { onRequested(sessionId: string): Promise<boolean> };
   messages: IMessageRepository;
+  openDeepSeekArchive(link: string, signal: AbortSignal): Promise<DeepSeekExportArchive>;
+  callTranscriptSearch: CallTranscriptSearch;
   assistantDirectory: Pick<ChatAssistantDirectory, 'getBlockState'>;
   /** T1/T3 事务使用的回合仓储；具体回合生命周期仍由 reply/Host 持有。 */
   turns: IConversationTurnRepository;
   turnPresentation: {
     freeze(sessionId: string): Promise<(committed: boolean) => Promise<void>>;
     interrupt(sessionId: string): Promise<void>;
+  };
+  /** 持久取消提交后由 Host 终止已失去所有权的执行句柄。 */
+  turnCancellation: {
+    onCommitted(sessionId: string): Promise<void>;
   };
   /** M3a legacy Chat attachment migration 的 Media/Host 窄端口。 */
   legacyChatAttachments?: ChatAttachmentMediaAssetPort;

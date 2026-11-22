@@ -10,7 +10,7 @@
 
 | 路径 | 所有权 |
 |---|---|
-| domain/Memory.ts | 正文500字／摘要50字边界、规范化、lexical／vector-only 两组排序、稳定 DTO |
+| domain/Memory.ts | 正文非空／摘要50字边界、规范化、lexical／vector-only 两组排序、稳定 DTO |
 | domain/MemoryRepository.ts | 正文／触发关系／embedding 持久化 port |
 | domain/MemoryPoolRepository.ts、infrastructure/SQLiteMemoryRepository.ts | AI×用户 pool |
 | application/MemoryCommands.ts、MemoryQueries.ts | 用户命令、空间选择、召回设置、管理查询 |
@@ -19,7 +19,7 @@
 | application/MemoryRuntimeDependencies.ts、MemorySignals.ts | 外部模型 port、commit 后信号 |
 | infrastructure/SQLiteMemoryEntryRepository.ts | scoped SQL、收据、原子 claim／revision／模型 CAS |
 | aiTools/MemoryAgentTools.ts | remember／recall／update／forget 的 Agent-native 契约 |
-| presentation/MemoryScreen.tsx、memoryScreenStyles.ts | 新扁平 UI、500 字编辑、trigger 开关、数量及向量详情 |
+| presentation/MemoryScreen.tsx、MemoryEditorScreen.tsx、memoryScreenStyles.ts | 扁平 UI、正文编辑、trigger 开关、数量及向量详情 |
 | presentation/MemorySpacePanel.tsx、MemoryTriggerScreen.tsx | 多词／多记忆关联组创建、词集合与组规则编辑、组内记忆开关 |
 | index.ts、composition.ts | 稳定 facade 与 Host-only 装配出口 |
 
@@ -56,9 +56,9 @@
 
 ## 4. 验证
 
-- scripts/verify-memory-v3.mjs：隔离 SQLite 的正文、权限、关联组多对多／同名词／独立开关、分页、CAS、失败预算、摘要交接与升级／快照行为。
-- scripts/verify-memory-v3-prompt.mjs：真实 Prompt 组装、旧预设、稳定前缀、完整原文／正文、Current Input 与 Calls。
-- scripts/chat-timeline-fixture.mjs：小型 Chat 仓储用例装配真实 canonical anchor schema。
+- tests/memory/verify-memory-v3.mjs：隔离 SQLite 的正文、权限、关联组多对多／同名词／独立开关、分页、CAS、失败预算、摘要交接与升级／快照行为。
+- tests/memory/verify-memory-v3-prompt.mjs：真实 Prompt 组装、旧预设、稳定前缀、完整原文／正文、Current Input 与 Calls。
+- tests/helpers/chat-timeline-fixture.mjs：小型 Chat 仓储用例装配真实 canonical anchor schema。
 - npm run verify:memory：以上两组 V3 行为验证入口。
 
 真实模型、设备 UI 与 Android 原生恢复需独立验收，隔离 SQLite 和 Prompt 验证不能替代这些场景。

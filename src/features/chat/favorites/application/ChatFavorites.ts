@@ -9,8 +9,8 @@ import { getChatMessageRuntimeDependencies } from '../../messages/application/Ch
 import { prepareChatAttachments } from '../../messages/application/PrepareChatAttachments';
 import { getChatMessageActions } from '../../messages/domain/ChatMessageActions';
 import { getMessageAttachments, getMessageSticker, getMessageVoice, parseMessageMetadata } from '../../messages/domain/chatMessageMetadata';
-import type { MediaAssetChatAttachment } from '../../messages/domain/ChatAttachment';
-import type { ChatFavorite, ChatFavoriteCategory, ChatFavoriteCursor, ChatFavoriteSnapshot } from '../domain/ChatFavorite';
+import type { StoredChatAttachment } from '../../messages/domain/ChatAttachment';
+import type { ChatFavorite, ChatFavoriteCategory, ChatFavoriteCursor, ChatFavoriteRef, ChatFavoriteSnapshot } from '../domain/ChatFavorite';
 import { getChatFavoriteCategory } from '../domain/ChatFavorite';
 import { getChatFavoriteRepository } from './ChatFavoriteRuntime';
 
@@ -42,6 +42,11 @@ export function getChatFavoriteByMessage(messageId: number): Promise<ChatFavorit
   return getChatFavoriteRepository().getBySource(messageId);
 }
 
+/** 列表一次取回多行收藏身份；正文快照不参与展示状态。 */
+export function listChatFavoriteRefs(messageIds: readonly number[]): Promise<ChatFavoriteRef[]> {
+  return getChatFavoriteRepository().listRefsBySources(messageIds);
+}
+
 export async function createChatFavorite(input: { messageId: number; sourceName: string; assistantId?: string }): Promise<ChatFavorite> {
   const messages = getChatMessageRuntimeDependencies().messages;
   const original = await messages.getMessageById(input.messageId);
@@ -64,7 +69,7 @@ export async function createChatFavorite(input: { messageId: number; sourceName:
       const voice = getMessageVoice(message);
       // 收藏只修改自己持有的数组，消息查询返回值可能共享空附件列表。
       const attachments = prepared ? await prepared.materializeAttachments(transaction)
-        : [...getMessageAttachments(message)] as MediaAssetChatAttachment[];
+        : [...getMessageAttachments(message)] as StoredChatAttachment[];
       if (sticker) attachments.push({ id: `sticker:${sticker.stickerId}`, type: 'image', source: 'gallery',
         mediaAssetId: sticker.mediaAssetId, fileName: sticker.sourceFileName ?? sticker.name,
         mimeType: sticker.mimeType, width: sticker.width, height: sticker.height });

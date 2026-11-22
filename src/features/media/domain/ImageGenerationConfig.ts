@@ -2,6 +2,7 @@
 export interface ImageGenerationConfig { modelConfigId: string | null }
 export interface ImageGenerationModelConfigRef {
   id: string; capabilityKind: string; name: string; baseUrl: string; apiKey: string | null; model: string; metadataJson?: string | null;
+  serviceConfigId?: string | null;
 }
 export type ImageGenerationModelSelectionStatus = 'unconfigured' | 'active' | 'incomplete' | 'deleted' | 'capability_mismatch';
 export interface ImageGenerationModelSelection {

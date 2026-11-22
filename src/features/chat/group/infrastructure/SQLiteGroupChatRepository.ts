@@ -68,7 +68,6 @@ interface GroupChatAdminConfigRow {
   model: string;
   api_key: string | null;
   api_base_url: string | null;
-  system_prompt: string | null;
   temperature: number | null;
   top_p: number | null;
   max_tokens: number | null;
@@ -206,7 +205,7 @@ export class GroupChatRepository implements IGroupChatRepository {
          a.model
        FROM group_chat_members m
        LEFT JOIN ai_assistants a ON a.id = m.ai_assistant_id
-       WHERE m.group_id = ?
+       WHERE m.group_id = ? AND a.deleted_at IS NULL
        ORDER BY m.display_order ASC, m.created_at ASC`,
       [groupId]
     );
@@ -264,19 +263,18 @@ export class GroupChatRepository implements IGroupChatRepository {
 
     await transaction.runAsync(
       `INSERT INTO group_chat_admin_configs
-       (group_id, name, model, api_key, api_base_url, system_prompt, temperature, top_p,
+       (group_id, name, model, api_key, api_base_url, temperature, top_p,
         max_tokens, context_message_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.group.id,
         input.adminConfig.name,
         input.adminConfig.model,
         input.adminConfig.apiKey || null,
         input.adminConfig.apiBaseUrl || null,
-        input.adminConfig.systemPrompt || null,
         input.adminConfig.temperature ?? null,
         input.adminConfig.topP ?? null,
-        input.adminConfig.maxTokens === undefined ? 2000 : input.adminConfig.maxTokens,
+        input.adminConfig.maxTokens ?? null,
         input.adminConfig.contextMessageCount ?? 20,
         now,
         now,
@@ -310,7 +308,7 @@ export class GroupChatRepository implements IGroupChatRepository {
     input: UpdateGroupChatAdminConfigInput
   ): Promise<GroupChatAdminConfig | null> {
     const columns: Record<keyof UpdateGroupChatAdminConfigInput, string> = {
-      serviceConfigId: 'service_config_id', model: 'model', apiKey: 'api_key', apiBaseUrl: 'api_base_url', systemPrompt: 'system_prompt',
+      serviceConfigId: 'service_config_id', model: 'model', apiKey: 'api_key', apiBaseUrl: 'api_base_url',
       temperature: 'temperature', topP: 'top_p', maxTokens: 'max_tokens', contextMessageCount: 'context_message_count',
     };
     const fields: string[] = [];
@@ -1029,7 +1027,8 @@ export class GroupChatRepository implements IGroupChatRepository {
         await transaction.runAsync(`UPDATE group_speech_tasks SET status = 'skipped', completed_at = ?, updated_at = ?, error_message = '成员当前不可发言'
           WHERE plan_id = ? AND status = 'queued' AND NOT EXISTS (SELECT 1 FROM group_chat_members m
             WHERE m.group_id = group_speech_tasks.group_id AND m.ai_assistant_id = group_speech_tasks.ai_assistant_id
-            AND m.enabled = 1 AND m.muted = 0 AND (m.joined_during_plan_id IS NULL OR m.joined_during_plan_id <> ?))`, [now, now, planId, planId]);
+            AND m.enabled = 1 AND m.muted = 0 AND (m.joined_during_plan_id IS NULL OR m.joined_during_plan_id <> ?)
+            AND EXISTS (SELECT 1 FROM ai_assistants a WHERE a.id = m.ai_assistant_id AND a.deleted_at IS NULL))`, [now, now, planId, planId]);
 
         const next = await transaction.getFirstAsync<GroupSpeechTaskRow>(
           `SELECT *
@@ -1403,7 +1402,6 @@ export class GroupChatRepository implements IGroupChatRepository {
       serviceConfigId: row.service_config_id,
       apiKey: service ? service.apiKey : row.api_key,
       apiBaseUrl: service ? service.baseUrl : row.api_base_url,
-      systemPrompt: row.system_prompt,
       temperature: row.temperature,
       topP: row.top_p,
       maxTokens: row.max_tokens,

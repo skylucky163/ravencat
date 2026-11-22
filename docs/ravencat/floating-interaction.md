@@ -225,9 +225,11 @@ Host 组合 Chat 查询与原生展示 DTO，Floating Layer 不读取 Chat 仓�
 会话投影的原生参数使用显式字段与嵌套消息 Record，按字段类型转换可空 sessionId /
 clientMessageId；不将嵌套 DTO 交给通用 Any 转换或手工强转。
 缓存投影同步不产生已读。原生 CHAT 页完成布局或滚动后，只回报 viewport 中实际可见的
-assistant 消息 ID，Host 经 Chat 精确已读命令提交；收起、隐藏、TOGETHER 页与滚动区外
+assistant 消息 ID 与稳定 clientMessageId，Host 经 Chat 精确已读命令在同一事务提交运行正文与正式消息；收起、隐藏、TOGETHER 页与滚动区外
 消息不产生已读。该入口统一覆盖 App 同步消息与悬浮发送回复，不再维护 correlationId
-到消息 ID 的待确认映射和 TTL。通知交付仍由既有回复投影结果与统一交付协调器承担。
+到消息 ID 的待确认映射和 TTL。普通回复、日程主动消息与悬浮回复均由统一交付协调器投影正文，
+原生按会话及 CHAT 页可见性决定是否接管通知；锁屏、熄屏仍走系统通知。实际可见回执提交已读后，精确撤销对应子通知，
+保留屏外及其他会话的提醒；发布期间发生阅读时，协调器按持久已读事实补撤销。
 
 ### Extract
 

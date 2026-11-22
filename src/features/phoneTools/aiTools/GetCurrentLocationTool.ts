@@ -6,7 +6,7 @@ import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 
 export const definition = {
   name: 'get_current_location',
-  description: '按需获取一次手机位置，返回 WGS84 经纬度、精度（米）、测量时间和位置年龄。支持大致位置，不保证精确定位或后台可用。系统可能返回近期位置，须结合精度、年龄与模拟位置标记解释。',
+  description: '按需获取一次手机位置，返回 WGS84 经纬度、精度（米）、测量时间和位置年龄。支持大致位置；精度和可用性由系统授权决定。系统可能返回近期位置，结合精度、年龄与模拟位置标记解释。',
   parameters: { type: 'object', properties: {}, additionalProperties: false },
 } as const;
 

@@ -1,9 +1,31 @@
 import { databaseCoordinator, type DatabaseTransactionExecutor } from '@platform/persistence';
-import type { CallHistoryEntry, CallHistoryRecord, CallHistoryImage } from '../domain/CallHistory';
+import type { CallHistoryEntry, CallHistoryRecord, CallHistoryImage, CallHistoryPage, CallHistoryPageEntry } from '../domain/CallHistory';
 import { formatCallHistoryTitle } from '../domain/CallHistory';
 
 const RECORD_COLUMNS = `h.call_id AS callId, h.assistant_id AS assistantId, h.title,
   COALESCE(c.started_at, c.created_at) AS startedAt, c.ended_at AS endedAt, c.active_mode AS mediaMode`;
+const COMPLETED_CALL = 'c.accepted_at IS NOT NULL AND c.ended_at IS NOT NULL';
+
+/** 只将通话历史的已归档发言接入聊天搜索，权限和清除边界由 Calls 裁决。 */
+export function buildCallTranscriptSearch(input: { conversationId: string; keywords: string[]; from?: string; to?: string }, assistantId?: string) {
+  const conditions = ['c.chat_session_id = ?', COMPLETED_CALL, 'e.created_at > COALESCE(s.visible_after_at, \'\')',
+    '(' + input.keywords.map(() => 'instr(lower(e.text), lower(?)) > 0').join(' OR ') + ')'];
+  const params = [input.conversationId, ...input.keywords];
+  if (assistantId !== undefined) { conditions.push('h.assistant_id = ?'); params.push(assistantId); }
+  if (input.from !== undefined) { conditions.push('julianday(e.created_at) >= julianday(?)'); params.push(input.from); }
+  if (input.to !== undefined) { conditions.push('julianday(e.created_at) <= julianday(?)'); params.push(input.to); }
+  const assistantName = assistantId === undefined ? 'COALESCE(a.nickname, a.name, \'AI\')' : "COALESCE(a.name, 'AI')";
+  return {
+    sql: `SELECT NULL, h.call_id, e.id, e.created_at, e.text,
+      CASE WHEN e.speaker = 'user' THEN 'user' ELSE 'assistant' END,
+      CASE WHEN e.speaker = 'user' THEN '用户' ELSE ${assistantName} END,
+      CASE WHEN e.speaker = 'user' THEN NULL ELSE h.assistant_id END
+      FROM call_sessions c JOIN call_history h ON h.call_id = c.id
+      JOIN call_history_entries e ON e.call_id = h.call_id JOIN sessions s ON s.id = c.chat_session_id
+      LEFT JOIN ai_assistants a ON a.id = h.assistant_id WHERE ${conditions.join(' AND ')}`,
+    params,
+  };
+}
 
 export class SQLiteCallHistoryRepository {
   protected async createHistoryInTransaction(tx: DatabaseTransactionExecutor, callId: string, assistantId: string, startedAt: string): Promise<void> {
@@ -28,6 +50,35 @@ export class SQLiteCallHistoryRepository {
     return databaseCoordinator.read({ name: 'calls.history-record', feature: 'calls', priority: 'interactive' }, db =>
       db.getFirstAsync<CallHistoryRecord>(`SELECT ${RECORD_COLUMNS} FROM call_history h JOIN call_sessions c ON c.id = h.call_id
         WHERE h.call_id = ? AND h.assistant_id = ? AND c.accepted_at IS NOT NULL AND c.ended_at IS NOT NULL`, [callId, assistantId]));
+  }
+
+  async readHistoryPage(callId: string, assistantId: string, offset: number): Promise<CallHistoryPage | null> {
+    const db = databaseCoordinator.openTaskExecutor({ name: 'calls.readHistoryPage', feature: 'calls', priority: 'runtime' });
+    return db.withExclusiveTransactionAsync(async tx => {
+      const call = await tx.getFirstAsync<CallHistoryRecord & { visibleAfter: string }>(
+        `SELECT ${RECORD_COLUMNS}, COALESCE(s.visible_after_at, '') AS visibleAfter
+          FROM call_history h JOIN call_sessions c ON c.id = h.call_id JOIN sessions s ON s.id = c.chat_session_id
+          WHERE h.call_id = ? AND h.assistant_id = ? AND ${COMPLETED_CALL}
+            AND c.ended_at > COALESCE(s.visible_after_at, '')`, [callId, assistantId]);
+      if (!call) return null;
+      const { visibleAfter, ...record } = call;
+      const rows = await tx.getAllAsync<CallHistoryPageEntry>(
+        `WITH items AS (
+          SELECT 'message' AS kind, id, created_at AS createdAt, speaker, text, NULL AS mediaAssetId, sequence
+            FROM call_history_entries WHERE call_id = ? AND created_at > ?
+          UNION ALL
+          SELECT 'image', id, created_at, NULL, NULL, media_asset_id, NULL
+            FROM call_history_images WHERE call_id = ? AND created_at > ?
+        ) SELECT kind, id, createdAt, speaker, text, mediaAssetId
+          FROM items ORDER BY createdAt, kind, sequence, id LIMIT 21 OFFSET ?`,
+        [callId, visibleAfter, callId, visibleAfter, offset]);
+      const entries = rows.slice(0, 20).map((row): CallHistoryPageEntry => {
+        const { kind, id, createdAt } = row;
+        return kind === 'message' ? { kind, id, createdAt, speaker: row.speaker, text: row.text }
+          : { kind, id, createdAt, mediaAssetId: row.mediaAssetId };
+      });
+      return { call: record, entries, nextOffset: rows.length > 20 ? offset + 20 : null };
+    });
   }
 
   listHistoryEntries(callId: string): Promise<CallHistoryEntry[]> {

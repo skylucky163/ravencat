@@ -12,6 +12,7 @@ export interface CallAIConfig {
   temperature?: number | null;
   topP?: number | null;
   disableThinking?: boolean;
+  reasoningEffort?: import('@platform/ai').ReasoningEffort;
   maxTokens?: number | null;
   /** 单聊上下文作为主场时的可见条数；缺失时由共享默认常量兜底。 */
   privateContextPrimaryLimit?: number;

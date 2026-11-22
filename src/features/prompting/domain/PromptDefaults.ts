@@ -7,6 +7,12 @@ export interface DefaultUserPrompt {
   sortOrder: number;
 }
 
+export interface LegacyGroupAdminPrompt {
+  groupId: string;
+  groupName: string;
+  content: string;
+}
+
 export interface PromptDefaults {
   overrides: Record<string, string>;
   userPrompts: DefaultUserPrompt[];
@@ -19,10 +25,11 @@ export interface PromptDefaults {
 
 export interface PromptDefaultsRepository {
   read(): Promise<PromptDefaults>;
+  listLegacyGroupAdminPrompts(): Promise<LegacyGroupAdminPrompt[]>;
   saveOverride(definitionId: string, content: string): Promise<void>;
   resetOverride(definitionId: string): Promise<void>;
   saveUserPrompt(prompt: DefaultUserPrompt): Promise<void>;
   deleteUserPrompt(id: string): Promise<void>;
-  reorderUserPrompts(first: DefaultUserPrompt, second: DefaultUserPrompt): Promise<void>;
+  reorderUserPrompts(promptIds: readonly string[]): Promise<void>;
   setEnabled(key: string, enabled: boolean): Promise<void>;
 }

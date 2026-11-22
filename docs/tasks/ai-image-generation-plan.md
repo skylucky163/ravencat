@@ -616,9 +616,9 @@ src/features/chat/presentation/group/GroupChatDetail.tsx
 ```text
 docs/architecture/auxiliary-model-selection.md
 docs/tasks/ai-image-generation-plan.md
-scripts/verify-ai-image-tools.mjs        （已存在，扩展，不要新建覆盖）
-scripts/verify-gallery-writer.mjs        （新增，并在 package.json 注册 verify:gallery-writer）
-scripts/verify-media-asset-*.mjs（只改真实涉及项）
+tests/media/verify-ai-image-tools.mjs        （已存在，扩展，不要新建覆盖）
+tests/media/verify-gallery-writer.mjs        （新增，并在 package.json 注册 verify:gallery-writer）
+tests/media/verify-media-asset-*.mjs（只改真实涉及项）
 相关备份恢复验证脚本
 ```
 
@@ -744,7 +744,7 @@ npm run verify:application-data-reset
 npm run verify:database-baseline
 ```
 
-`verify:ai-image-tools` 与 `scripts/verify-ai-image-tools.mjs` 已存在，本次是扩展既有脚本（现有内容覆盖 `download_image` / `view_image` / OCR 与 HTTP 图片降级），不要新建覆盖。`verify:gallery-writer` 尚未注册，需一并新增。§11.1 要求的 166 / 167 旧快照恢复回归在 `scripts/` 中目前没有用例，需新建；`scripts/helpers/sqlite-bootstrap-fixture.mjs` 可用于构造指定 `user_version` 的快照。
+`verify:ai-image-tools` 与 `tests/media/verify-ai-image-tools.mjs` 已存在，本次是扩展既有脚本（现有内容覆盖 `download_image` / `view_image` / OCR 与 HTTP 图片降级），不要新建覆盖。`verify:gallery-writer` 尚未注册，需一并新增。§11.1 要求的 166 / 167 旧快照恢复回归在 `scripts/` 中目前没有用例，需新建；`tests/helpers/sqlite-bootstrap-fixture.mjs` 可用于构造指定 `user_version` 的快照。
 
 真实服务生成质量、费用、签名 URL 下载和 Android 私有文件与相册行为单独验收，不用模拟结果冒充真机通过。
 

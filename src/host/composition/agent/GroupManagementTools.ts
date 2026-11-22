@@ -49,17 +49,17 @@ function tool(name: string, description: string, parameters: ToolDefinition['par
 const memberParameters = { type: 'object', properties: { ...groupProperty, ...memberProperty }, required: ['agent_id'], additionalProperties: false };
 const manageRule = '只有仍参加该群的当前主理 AI 可以操作。无需逐次向用户确认。';
 export const groupManagementTools = [
-  { tool: tool('search_groups', '按群名关键词进行字面包含匹配，返回匹配群的真实名称 name 与群 ID groupId，包括自己尚未加入的群；不返回成员、消息或摘要。英文匹配不区分大小写。',
+  { tool: tool('search_groups', '按群名关键词进行字面包含匹配，返回匹配群的真实名称 name 与 groupId，包括自己尚未加入的群。英文匹配不区分大小写。',
     { type: 'object', properties: { keyword: { type: 'string', minLength: 1, maxLength: 120, description: '群聊名称中的关键词，按字面匹配，不是通配符或正则' } }, required: ['keyword'], additionalProperties: false }, 'search'), hostOnly: false, readOnly: true },
-  { tool: tool('join_group', '申请加入指定现有群聊，执行后直接入群，无需审批。只加入自己；已经在群内则返回“你已在该群聊”，不重复加入、不解除禁言。新加入从下一轮召唤参与。',
+  { tool: tool('join_group', '申请加入指定群聊，执行后直接入群，无需审批。',
     { type: 'object', properties: targetGroupProperty, required: ['group_id'], additionalProperties: false }, 'join'), hostOnly: false, readOnly: false },
-  { tool: tool('add_group_member', '邀请指定 Agent ID 对应的现有 AI 加入指定群聊；所有 AI 都能使用，无需主理身份，也不要求调用者已经在该群。已退出者可重新加入，新成员从下一轮召唤参与。',
+  { tool: tool('add_group_member', '邀请指定 Agent ID 对应的现有 AI 加入指定群聊。',
     { type: 'object', properties: { ...targetGroupProperty, ...memberProperty }, required: ['group_id', 'agent_id'], additionalProperties: false }, 'add'), hostOnly: false, readOnly: false },
-  { tool: tool('remove_group_member', `将 AI 移出群聊，立即停止其剩余发言，保留已发消息和退出前历史。${manageRule}`, memberParameters, 'remove'), hostOnly: true, readOnly: false },
-  { tool: tool('mute_group_member', `禁言 AI，立即停止其剩余发言；仍为群成员，群上下文照常按用户配置读取。${manageRule}`, memberParameters, 'mute'), hostOnly: true, readOnly: false },
-  { tool: tool('unmute_group_member', `解除 AI 的群内禁言，不复活已经撤销的发言任务。${manageRule}`, memberParameters, 'unmute'), hostOnly: true, readOnly: false },
-  { tool: tool('leave_group', '退出自己仍参加的群聊，保留退出前历史并立即结束自己的群内发言。需要告别时先发言再调用；成功后不能继续在该群回复。',
+  { tool: tool('remove_group_member', `将 AI 移出群聊。${manageRule}`, memberParameters, 'remove'), hostOnly: true, readOnly: false },
+  { tool: tool('mute_group_member', `禁言 AI。${manageRule}`, memberParameters, 'mute'), hostOnly: true, readOnly: false },
+  { tool: tool('unmute_group_member', `解除 AI 的群内禁言。${manageRule}`, memberParameters, 'unmute'), hostOnly: true, readOnly: false },
+  { tool: tool('leave_group', '退出群聊，保留退出前历史。需要告别时先发言再退出。',
     { type: 'object', properties: groupProperty, additionalProperties: false }, 'leave'), hostOnly: false, readOnly: false },
-  { tool: tool('rename_group', '修改自己仍参加的群聊的名称，无需逐次向用户确认；名称为 1～30 个字符。',
+  { tool: tool('rename_group', '修改自己仍参加的群聊的名称；名称为 1～30 个字符。',
     { type: 'object', properties: { ...groupProperty, name: { type: 'string', minLength: 1, maxLength: 30 } }, required: ['name'], additionalProperties: false }, 'rename'), hostOnly: false, readOnly: false },
 ] as const;

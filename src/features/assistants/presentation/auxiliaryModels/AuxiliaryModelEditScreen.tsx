@@ -48,6 +48,7 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
   const { draft, errors, commit, flush, restore, change, validateAll } = editor;
   const { name, baseUrl, apiKey, model, tempInput, topPInput, maxTokens } = draft;
   const imageProvider = IMAGE_GENERATION_PROVIDERS.find(provider => provider.id === draft.imageProvider);
+  const isCustomImage = isImageGeneration && imageProvider?.id === 'customOpenAIImages';
   const temperatureInput = readDraftNumber(tempInput, 'Temperature', 0, 2, true);
   const topPNumberInput = readDraftNumber(topPInput, 'Top P', 0, 1, true);
   const temperature = temperatureInput.error ? initialData?.temperature ?? null : temperatureInput.value;
@@ -64,12 +65,13 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
     change({ [key]: value } as Pick<AuxiliaryModelDraft, K>, immediate);
   };
   const setName = (value: string) => setField('name', value);
-  const setBaseUrl = (value: string) => change({ baseUrl: value, serviceConfigId: '' });
+  const setBaseUrl = (value: string) => change({ baseUrl: value, serviceConfigId: '',
+    ...(isCustomImage && isEdit ? { apiKey: '' } : {}) });
   const setApiKey = (value: string) => change({ apiKey: value, serviceConfigId: '' });
   const setModel = (value: string) => setField('model', value);
   const handleTempChange = (value: string, immediate = false) => setField('tempInput', value, immediate);
   const handleTopPChange = (value: string, immediate = false) => setField('topPInput', value, immediate);
-  const handleMaxTokensChange = (value: string, immediate = false) => setField('maxTokens', value, immediate);
+  const handleMaxTokensChange = (value: string) => setField('maxTokens', value);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -109,6 +111,7 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
   const buildFormData = (): AuxiliaryModelFormData | null => {
     const values = validateAll();
     if (!values) return null;
+    if (isCustomImage && !values.apiKey) { setCreationError('请填写 API Key。'); return null; }
     return {
       id: modelId || undefined, serviceConfigId: values.serviceConfigId, name: values.name, baseUrl: values.baseUrl, model: values.model,
       apiKey: values.apiKey ?? '', temperature: hasSamplingParams ? values.temperature ?? null : null,
@@ -173,7 +176,7 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
           {isImageGeneration && <View>
             <DropdownField label="提供方" value={draft.imageProvider} options={IMAGE_GENERATION_PROVIDERS.map(provider => ({ value: provider.id, label: provider.label }))}
               disabled={isEdit} onChange={selectImageProvider} error={errors.imageProvider} />
-            {!imageProvider && isEdit && <Text style={{ color: theme.colors.feedback.error, lineHeight: 22 }}>旧自定义生图接口已停用，请新建供应商明确的配置。</Text>}
+            {!imageProvider && isEdit && <Text style={{ color: theme.colors.feedback.error, lineHeight: 22 }}>旧自定义生图配置已停用，请新建生图配置。</Text>}
           </View>}
           {/* 配置名称 */}
           <View onLayout={feedback.fieldLayout(['name'])}>
@@ -195,7 +198,7 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
               onChangeText={setBaseUrl}
               {...fieldProps('baseUrl')}
               placeholder="https://api.example.com/v1"
-              editable={!isImageGeneration}
+              editable={!isImageGeneration || isCustomImage}
               autoCapitalize="none"
               autoCorrect={false}
               autoGrow
@@ -213,10 +216,10 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
               autoGrow
               autoCapitalize="none"
               autoCorrect={false}
-              rightAccessory={isImageGeneration && imageProvider ? <ServiceConnectionPicker mode="key" baseUrl={baseUrl} apiKey={apiKey} disabled={saving || testing}
+              rightAccessory={isImageGeneration && !isCustomImage && imageProvider ? <ServiceConnectionPicker mode="key" baseUrl={baseUrl} apiKey={apiKey} disabled={saving || testing}
                 onFill={service => { change({ apiKey: service.apiKey, serviceConfigId: '' }, true); setTestInputError(null); }} /> : undefined}
             />
-            {!isImageGeneration && <ServiceConnectionPicker baseUrl={baseUrl} apiKey={apiKey} serviceConfigId={draft.serviceConfigId} disabled={isLoadingModels || testing}
+            {(!isImageGeneration || isCustomImage) && <ServiceConnectionPicker baseUrl={baseUrl} apiKey={apiKey} serviceConfigId={draft.serviceConfigId} disabled={isLoadingModels || testing}
               onFill={service => { change({ serviceConfigId: service.id, baseUrl: service.baseUrl, apiKey: service.apiKey }, true); setAvailableModels([]); setShowModelPicker(false); setTestInputError(null); }} />}
           </View>
           </ModelFormSection>
@@ -225,9 +228,11 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
 
           <ModelFormSection title="模型">
           <View onLayout={feedback.fieldLayout(['model'])}>
-            <ModelPickerField label="模型名称" value={model} disabled={isImageGeneration && !imageProvider}
+            {isCustomImage ? <InputField label="模型 ID" value={model} onChangeText={setModel}
+              {...fieldProps('model')} placeholder="填写站点提供的模型 ID" autoCapitalize="none" autoCorrect={false} autoGrow />
+            : <ModelPickerField label="模型名称" value={model} disabled={isImageGeneration && !imageProvider}
               onPress={openModelPicker} loading={isLoadingModels} error={errors.model}
-              onChangeText={isImageGeneration ? undefined : setModel} onBlur={blur} placeholder="模型 ID" />
+              onChangeText={isImageGeneration ? undefined : setModel} onBlur={blur} placeholder="模型 ID" />}
           </View>
           </ModelFormSection>
 
@@ -259,7 +264,6 @@ export default function AuxiliaryModelEditScreen({ capabilityKind, capabilityLab
 
               <View onLayout={feedback.fieldLayout(['maxTokens'])}><MaxTokensSection
               {...fieldProps('maxTokens')}
-                onSelectPreset={(value) => handleMaxTokensChange(value, true)}
                 value={maxTokens}
                 onChangeText={handleMaxTokensChange}
               /></View>

@@ -3,11 +3,13 @@ import { getChatMessageRuntimeDependencies } from './ChatMessageRuntime';
 import { ChatMessageSearchInputError, type ChatMessageSearchInput } from '../domain/ChatMessageSearch';
 
 export function searchChatMessages(assistantId: string, input: ChatMessageSearchInput) {
-  return getChatMessageRuntimeDependencies().messages.searchMessagesForAssistant(assistantId, normalizeSearchInput(input));
+  const { messages, callTranscriptSearch } = getChatMessageRuntimeDependencies();
+  return messages.searchMessagesForAssistant(assistantId, normalizeSearchInput(input), callTranscriptSearch);
 }
 
 export function searchConversationMessages(input: ChatMessageSearchInput) {
-  return getChatMessageRuntimeDependencies().messages.searchMessagesForUser(normalizeSearchInput(input));
+  const { messages, callTranscriptSearch } = getChatMessageRuntimeDependencies();
+  return messages.searchMessagesForUser(normalizeSearchInput(input), callTranscriptSearch);
 }
 
 function normalizeSearchInput(input: ChatMessageSearchInput): ChatMessageSearchInput {

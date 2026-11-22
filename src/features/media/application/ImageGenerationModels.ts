@@ -2,7 +2,8 @@ import { createRuntimeSlot } from '@shared/runtime/RuntimeSlot';
 import type { ModelSelectionSettings } from '@shared/ui/modelSelectionTypes';
 import { evaluateImageGenerationModelConfig, evaluateImageGenerationModelSelection, type ImageGenerationModelConfigRef } from '../domain/ImageGenerationConfig';
 import type { ImageGenerationSettingsRepository } from '../domain/ImageGenerationSettingsRepository';
-import { readImageGenerationProfile, getImageGenerationCapabilities, getImageGenerationConfigurationError, type ImageGenerationCapabilities, type ImageGenerationProfile } from '@platform/ai/imageGenerationConfig';
+import { readImageGenerationProfile, getImageGenerationCapabilities, getImageGenerationConfigurationError, type ImageGenerationCapabilities } from '@platform/ai/imageGenerationConfig';
+import type { ImageGenerationConnection } from '@platform/ai/ImageGenerationRequest';
 
 interface Dependencies {
   repository: ImageGenerationSettingsRepository;
@@ -17,7 +18,20 @@ export function subscribeImageGenerationModelsChanged(listener: () => void): () 
   listeners.add(listener); return () => { listeners.delete(listener); };
 }
 const reasons = { incomplete: '连接配置不完整', deleted: '模型已删除', capability_mismatch: '模型类型不匹配' };
-export async function getImageGenerationModelSettings(): Promise<ModelSelectionSettings & { capabilities: ImageGenerationCapabilities | null }> {
+/** 页面的检测状态绑定有效连接，展示层通过快照比较判断是否失效。 */
+export class CustomImageConnection {
+  readonly #config: ImageGenerationModelConfigRef;
+  constructor(config: ImageGenerationModelConfigRef) { this.#config = config; }
+  matches(config: ImageGenerationModelConfigRef): boolean {
+    const saved = this.#config;
+    return saved.id === config.id && saved.serviceConfigId === config.serviceConfigId && saved.baseUrl === config.baseUrl
+      && saved.apiKey === config.apiKey && saved.model === config.model;
+  }
+  equals(connection: CustomImageConnection): boolean { return this.matches(connection.#config); }
+}
+export async function getImageGenerationModelSettings(): Promise<ModelSelectionSettings & {
+  capabilities: ImageGenerationCapabilities | null; customConnection: CustomImageConnection | null;
+}> {
   const deps = slot.get();
   const id = await deps.repository.getModelId();
   const [models, config] = await Promise.all([deps.listModels(), id === null ? null : deps.getModel(id)]);
@@ -28,7 +42,8 @@ export async function getImageGenerationModelSettings(): Promise<ModelSelectionS
     selectedModelId: id, selectedModelName: selection.name,
     status: configurationError ? 'unavailable' : selection.status === 'active' || selection.status === 'unconfigured' ? selection.status : 'unavailable',
     unavailableReason: configurationError ?? reasons[selection.status] ?? null,
-    capabilities: selection.status === 'active' && !configurationError ? getImageGenerationCapabilities(profile!, config!.model) : null };
+    capabilities: selection.status === 'active' && !configurationError ? getImageGenerationCapabilities(profile!, config!.model) : null,
+    customConnection: !configurationError && profile?.provider === 'customOpenAIImages' ? new CustomImageConnection(config!) : null };
 }
 export async function selectImageGenerationModel(id: string | null): Promise<void> {
   const deps = slot.get();
@@ -44,7 +59,7 @@ export async function selectImageGenerationModel(id: string | null): Promise<voi
 export class ImageGenerationModelError extends Error {
   constructor(public readonly code: 'IMAGE_GENERATION_UNCONFIGURED' | 'IMAGE_GENERATION_MODEL_UNAVAILABLE', message: string) { super(message); }
 }
-export async function resolveImageGenerationModel(): Promise<{ baseURL: string; apiKey: string; model: string; profile: ImageGenerationProfile }> {
+export async function resolveImageGenerationModel(expectedConnection?: CustomImageConnection): Promise<ImageGenerationConnection> {
   const deps = slot.get();
   const id = await deps.repository.getModelId();
   if (id === null) throw new ImageGenerationModelError('IMAGE_GENERATION_UNCONFIGURED', '请先在「AI 生图」页面选择生图模型');
@@ -53,5 +68,9 @@ export async function resolveImageGenerationModel(): Promise<{ baseURL: string; 
   const profile = readImageGenerationProfile(config.metadataJson);
   const issue = getImageGenerationConfigurationError(profile, config.baseUrl, config.model);
   if (issue) throw new ImageGenerationModelError('IMAGE_GENERATION_MODEL_UNAVAILABLE', issue);
+  // 检测和用户选定的参数只对看到的那条连接有效，凭据留在应用层。
+  if (expectedConnection && (profile!.provider !== 'customOpenAIImages' || !expectedConnection.matches(config))) {
+    throw new ImageGenerationModelError('IMAGE_GENERATION_MODEL_UNAVAILABLE', '生图模型或连接已更换，请重新选择参数');
+  }
   return { baseURL: config.baseUrl.trim(), apiKey: config.apiKey!.trim(), model: config.model.trim(), profile: profile! };
 }

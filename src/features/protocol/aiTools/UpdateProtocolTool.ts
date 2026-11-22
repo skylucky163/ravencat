@@ -31,7 +31,7 @@ interface UpdateProtocolResult {
  */
 export const definition = {
   name: 'updateProtocol',
-  description: '修改当前 AI 协议空间的一条提示词或信息。使用查询或添加工具返回的真实 ID，不要猜测 ID。',
+  description: '修改当前 AI 协议空间的一条协议。',
   parameters: {
     type: 'object',
     properties: {

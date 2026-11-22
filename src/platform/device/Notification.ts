@@ -10,6 +10,7 @@ import {
   finishMessageArrival,
   addNotificationResponseListener as addNativeNotificationResponseListener,
   cancelConversationNotifications,
+  cancelReadMessageNotifications,
   cancelIncomingCallNotification,
   cancelTogetherListeningPresentation as cancelNativeTogetherListeningPresentation,
   clearNativeNotificationDataForFactoryReset as clearNativeNotificationData,
@@ -95,6 +96,7 @@ export async function sendAIMessageNotification(
   const displayId = `kimiphone-msg-${conversationKey}-${eventId}`;
   try {
     const result = await postConversationNotification({
+      committedMessageId: params.committedMessageId,
       turnRunId: params.turnRunId,
       displayId,
       eventId,
@@ -137,7 +139,7 @@ export async function sendAIIncomingCallNotification(
       aiName: params.aiName,
       aiAvatar: normalizeNotificationAvatarUri(params.aiAvatar) || null,
       sessionId: params.sessionId,
-      body: truncateNotificationBody(params.openingLine || params.reason || '邀请你接听视频电话'),
+      body: truncateNotificationBody(params.openingLine),
       ringtoneUri: params.ringtoneUri,
       ringDurationMs: params.ringDurationMs,
     });
@@ -154,6 +156,14 @@ export async function sendAIIncomingCallNotification(
 /** 按会话聚合 key 撤销通知：direct = `ai:<aiId>`，group = `group:<groupId>`；缺省撤销全部。 */
 export async function dismissConversationNotifications(conversationKey?: string | null): Promise<void> {
   await cancelConversationNotifications(conversationKey || null);
+}
+
+export async function dismissReadMessageNotifications(params: {
+  sessionId: string;
+  messageIds: readonly string[];
+  clientMessageIds: readonly string[];
+}): Promise<void> {
+  await cancelReadMessageNotifications(params.sessionId, [...params.messageIds], [...params.clientMessageIds]);
 }
 
 export async function dismissAIIncomingCallNotification(callId: string): Promise<void> {

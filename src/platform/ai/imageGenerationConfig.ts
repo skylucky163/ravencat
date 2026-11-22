@@ -6,11 +6,13 @@ export const IMAGE_GENERATION_PROVIDERS = [
   { id: 'seedream', label: '火山引擎 · 豆包 Seedream', baseURL: 'https://ark.cn-beijing.volces.com/api/v3', models: ['doubao-seedream-5-0-flash-260915', 'doubao-seedream-4-5-251128'] },
   { id: 'qwen', label: '阿里百炼 · 千问图像', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['qwen-image-2.1-pro', 'qwen-image-2.1-turbo'] },
   { id: 'openai', label: 'OpenAI · GPT Image', baseURL: 'https://api.openai.com/v1', models: ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-2'] },
+  { id: 'kling', label: '可灵 AI · Kling Image', baseURL: 'https://api-beijing.klingai.com', models: ['kling-4.0'] },
+  { id: 'customOpenAIImages', label: '自定义 · OpenAI Images 兼容', baseURL: '', models: [] },
 ] as const;
 export type ImageGenerationProvider = typeof IMAGE_GENERATION_PROVIDERS[number]['id'];
 export interface ImageGenerationProfile { provider: ImageGenerationProvider }
 export function readImageGenerationProfile(metadataJson: string | null | undefined): ImageGenerationProfile | null {
-  // 旧自定义配置保留供用户修改，不能继续猜测协议或自动转成某个供应商。
+  // 新协议需要用户显式创建资产，历史兼容标记不能作为接入凭据。
   if (metadataJson == null) return null;
   const value: unknown = JSON.parse(metadataJson);
   if (typeof value === 'object' && value !== null && 'provider' in value && value.provider === 'openaiCompatible') return null;
@@ -18,9 +20,25 @@ export function readImageGenerationProfile(metadataJson: string | null | undefin
     || !IMAGE_GENERATION_PROVIDERS.some(provider => provider.id === value.provider)) throw new Error('生图供应商配置无效，请新建生图配置');
   return { provider: value.provider as ImageGenerationProvider };
 }
-/** 固定供应商的连接和模型在进入计费请求前校验，旧配置只保留修复入口。 */
+export function getCustomImageBaseURLError(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    if ((url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password && !/[?#]/.test(value)) {
+      const siliconflow = new URL(IMAGE_GENERATION_PROVIDERS[0].baseURL);
+      const address = url.href.replace(/\/+$/, '');
+      // 官方图片接口的参数与响应走专用契约，保存的自定义协议不会自动改换。
+      if (address === siliconflow.href || address === siliconflow.origin) {
+        return '这是硅基流动官方地址，请新建生图配置并选择「硅基流动」提供方。';
+      }
+      return null;
+    }
+  } catch { /* 用户输入可能尚未填写完整。 */ }
+  return '请填写 HTTP 或 HTTPS API 基础地址，地址中不能包含账号、查询参数或片段';
+}
+/** 旧资产保留在模型中心，用户需显式创建新协议的资产。 */
 export function getImageGenerationConfigurationError(profile: ImageGenerationProfile | null, baseURL: string, model: string): string | null {
-  if (profile === null) return '自定义生图接口已停用，请新建并选择生图配置';
+  if (profile === null) return '旧自定义生图配置已停用，请新建并选择生图配置';
+  if (profile.provider === 'customOpenAIImages') return getCustomImageBaseURLError(baseURL);
   const provider = IMAGE_GENERATION_PROVIDERS.find(item => item.id === profile.provider)!;
   if (baseURL.trim().replace(/\/+$/, '') !== provider.baseURL) return `API 地址与${provider.label}不匹配，请检查服务地址或新建配置`;
   if (!(provider.models as readonly string[]).includes(model.trim())) return '当前供应商尚未适配此模型，请选择列表中的模型';
@@ -29,17 +47,40 @@ export function getImageGenerationConfigurationError(profile: ImageGenerationPro
 export const IMAGE_ASPECT_RATIOS = ['1:1', '3:2', '2:3', '4:3', '3:4', '16:9', '9:16', '21:9'] as const;
 export type ImageAspectRatio = typeof IMAGE_ASPECT_RATIOS[number];
 export type ImageResolution = '1K' | '1.5K' | '2K' | '4K';
+export const CUSTOM_IMAGE_PARAMETER_OPTIONS = {
+  size: ['1024x1024', '1536x1024', '1024x1536', '1152x864', '864x1152', '1536x864', '864x1536', '1680x720'],
+  quality: ['low', 'medium', 'high', 'xhigh', 'max', 'standard', 'hd'],
+  outputFormat: ['png', 'jpeg', 'webp'],
+} as const;
+export type CustomImageParameterField = keyof typeof CUSTOM_IMAGE_PARAMETER_OPTIONS;
+export type CustomImageParameters = Partial<Record<CustomImageParameterField, string>>;
+export function isCustomImageParameterValue(field: CustomImageParameterField, value: string): boolean {
+  return field === 'size' ? /^[1-9]\d{0,4}x[1-9]\d{0,4}$/.test(value)
+    : (CUSTOM_IMAGE_PARAMETER_OPTIONS[field] as readonly string[]).includes(value);
+}
+
+/** 已校验的像素尺寸仍用于请求，选择和验收统一按约分后的宽高比。 */
+export function getImageSizeRatio(size: string): string {
+  const [width, height] = size.split('x').map(Number);
+  let divisor = width;
+  let remainder = height;
+  while (remainder) [divisor, remainder] = [remainder, divisor % remainder];
+  const ratio = `${width / divisor}:${height / divisor}`;
+  return ratio === '7:3' ? '21:9' : ratio;
+}
 export interface ImageGenerationParameters {
   aspectRatio?: ImageAspectRatio;
   resolution?: ImageResolution;
   quality?: 'low' | 'medium' | 'high';
   outputFormat?: 'png' | 'jpeg' | 'webp';
   outputCompression?: number;
+  custom?: CustomImageParameters;
 }
 export interface ImageGenerationCapabilities {
   aspectRatios: readonly ImageAspectRatio[]; resolutions: readonly ImageResolution[];
   references: boolean; referenceRequired: boolean; preview: boolean; quality: boolean; outputFormat: boolean; promptMaxLength: number;
   imageSizes?: Partial<Record<ImageAspectRatio, string>>;
+  customParameters?: true;
 }
 export interface ImageGenerationReferenceInfo { mimeType: string; width: number; height: number; byteSize: number }
 
@@ -47,7 +88,7 @@ export interface ImageGenerationReferenceInfo { mimeType: string; width: number;
 export function validateImageGenerationReference(profile: ImageGenerationProfile, reference: ImageGenerationReferenceInfo): string | null {
   const { mimeType, width, height, byteSize } = reference;
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)
-    || profile.provider === 'minimax' && mimeType === 'image/webp') return '当前参考图请使用 JPEG 或 PNG 格式';
+    || (profile.provider === 'minimax' || profile.provider === 'kling') && mimeType === 'image/webp') return '当前参考图请使用 JPEG 或 PNG 格式';
   if (profile.provider === 'minimax' && byteSize >= 10_000_000) return 'MiniMax 参考图必须小于 10 MB';
   if (profile.provider === 'qwen') {
     if (byteSize > 10_000_000) return '千问参考图不能超过 10 MB';
@@ -59,15 +100,28 @@ export function validateImageGenerationReference(profile: ImageGenerationProfile
     if (width <= 14 || height <= 14 || width * height > 36_000_000) return 'Seedream 参考图每边须大于 14 像素，总像素不能超过 3600 万';
     if (Math.max(width, height) / Math.min(width, height) > 16) return 'Seedream 参考图的长短边比例不能超过 16:1';
   }
+  if (profile.provider === 'kling') {
+    if (byteSize > 30_000_000) return '可灵参考图不能超过 30 MB';
+    if (width < 300 || height < 300) return '可灵参考图的每边至少为 300 像素';
+    if (Math.max(width, height) / Math.min(width, height) > 2.5) return '可灵参考图的长短边比例不能超过 5:2';
+  }
   if (profile.provider === 'openai' && byteSize >= 50_000_000) return 'GPT Image 参考图必须小于 50 MB';
   return null;
 }
 
 export function getImageGenerationCapabilities(profile: ImageGenerationProfile, model: string): ImageGenerationCapabilities {
+  if (profile.provider === 'customOpenAIImages') {
+    return { aspectRatios: [], resolutions: [], references: false, referenceRequired: false,
+      preview: false, quality: false, outputFormat: false, promptMaxLength: 2000, customParameters: true };
+  }
   if (profile.provider === 'siliconflow') {
     const config = SILICONFLOW_IMAGE_MODELS[model as SiliconflowImageModel];
     return { aspectRatios: Object.keys(config.sizes) as ImageAspectRatio[], imageSizes: config.sizes, resolutions: [],
       references: config.reference !== 'none', referenceRequired: config.reference === 'required', preview: false, quality: false, outputFormat: false, promptMaxLength: 2000 };
+  }
+  if (profile.provider === 'kling') {
+    return { aspectRatios: IMAGE_ASPECT_RATIOS, resolutions: ['2K', '4K'],
+      references: true, referenceRequired: false, preview: false, quality: false, outputFormat: false, promptMaxLength: 2000 };
   }
   const gpt = profile.provider === 'openai';
   return {
@@ -108,6 +162,8 @@ export function getSiliconflowImageSize(model: string, ratio: ImageAspectRatio):
 }
 /** 用户参数只在进入协议前按已选择的能力校验；不静默丢字段或改用别的模型。 */
 export function validateImageGenerationParameters(capabilities: ImageGenerationCapabilities, parameters: ImageGenerationParameters, hasReference: boolean): string | null {
+  if (parameters.custom && (!capabilities.customParameters || Object.entries(parameters.custom).some(([field, value]) =>
+    !Object.hasOwn(CUSTOM_IMAGE_PARAMETER_OPTIONS, field) || !isCustomImageParameterValue(field as CustomImageParameterField, value)))) return '当前配置不支持所选的自定义生图参数';
   if (parameters.aspectRatio && !capabilities.aspectRatios.includes(parameters.aspectRatio)) return '当前配置不支持这个图片比例';
   if (parameters.resolution && !capabilities.resolutions.includes(parameters.resolution)) return '当前配置不支持这个清晰度';
   if (hasReference && !capabilities.references) return '当前配置未启用参考图能力';

@@ -8,10 +8,10 @@ export const SearchChatMessagesTool = {
   name: 'search_chat_messages',
   definition: {
     name: 'search_chat_messages',
-    description: '按关键词查找自己与用户的单聊或仍参加群聊中保存的聊天原文，包括已被摘要的消息。默认当前会话，可指定有权访问的来源会话ID。匹配正文中任一关键词，英文不区分大小写，按消息时间从新到旧每页20条，继续查询传回nextOffset。返回消息ID、说话者、时间与完整正文；需要当时语境时，用返回的messageId调用read_chat_message_context。不搜索摘要、思维链、工具过程或通话记录。未命中只说明这些关键词没有匹配，不能据此断言某句话从未说过。',
+    description: '按关键词回查自己的单聊或仍参加的群聊。匹配聊天正文、附件文件名及已归档通话发言，默认当前会话，英文不区分大小写，从新到旧每页20条。传回 nextOffset 继续查。聊天用 messageId 读附近上下文，文件用 messageId 和 attachmentId 读正文。source=call 是通话发言，用 callId 分页读该通话。未命中只说明关键词没有匹配。',
     parameters: { type: 'object', properties: {
       conversationId: { type: 'string', minLength: 1, description: '省略使用当前会话；只能访问自己的单聊与仍参加的群' },
-      keywords: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1 }, description: '正文关键词，任一词命中即可；可换用更短的词继续搜索' },
+      keywords: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1 }, description: '任一词命中即可，可换用更短的词继续搜索' },
       from: { type: 'string', description: '消息时间下界，ISO 8601，建议携带时区' },
       to: { type: 'string', description: '消息时间上界，ISO 8601，建议携带时区' },
       offset: { type: 'integer', minimum: 0 },

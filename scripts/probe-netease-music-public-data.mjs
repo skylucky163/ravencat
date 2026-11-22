@@ -9,6 +9,7 @@
  */
 
 import crypto from 'node:crypto';
+import { Buffer } from 'node:buffer';
 
 const API_ORIGIN = 'https://interfacepc.music.163.com';
 const EAPI_KEY = Buffer.from('e82ckenh8dichen8', 'utf8');

@@ -28,9 +28,10 @@ import { shouldShowTimeSeparatorBefore } from '../domain/MessageTimeSeparator';
 import { cancelRegenerationInTransaction } from './ChatMessageMutationSql';
 import { deleteReplyVersionsForMessages, editSelectedReplyVersion } from '../../reply/infrastructure/ChatReplyVersionSql';
 import type { ChatRecordStatistics } from '../domain/ChatRecordStatistics';
-import type { ChatMessageRecord, ChatMessageSearchInput, ChatMessageSearchPage } from '../domain/ChatMessageSearch';
+import type { CallTranscriptSearch, ChatMessageRecord, ChatMessageSearchInput, ChatMessageSearchPage } from '../domain/ChatMessageSearch';
 import type { ChatMessageContext, ChatMessageContextInput } from '../domain/ChatMessageContext';
-import { buildGroupMentionModelText, parseMessageMetadata } from '../domain/chatMessageMetadata';
+import { buildGroupMentionModelText, getMessageAttachments, isCallStatusMessageMetadata, parseMessageMetadata } from '../domain/chatMessageMetadata';
+import { getChatMessageActions } from '../domain/ChatMessageActions';
 import { readChatCodeBlock, canRenderChatCode, chatCodePreviewId, chatCodeTitle } from '../domain/ChatCodeBlock';
 import { chatCodePreviewRepository } from './SQLiteChatCodePreviewRepository';
 
@@ -179,37 +180,71 @@ function normalizeMessageIds(messageIds: readonly number[]): number[] {
 }
 
 export class MessageRepository implements IMessageRepository {
-  searchMessagesForUser(input: ChatMessageSearchInput): Promise<ChatMessageSearchPage> {
-    return this.searchMessages(input);
+  searchMessagesForUser(input: ChatMessageSearchInput, calls?: CallTranscriptSearch): Promise<ChatMessageSearchPage> {
+    return this.searchMessages(input, calls);
   }
 
-  async searchMessagesForAssistant(assistantId: string, input: ChatMessageSearchInput): Promise<ChatMessageSearchPage> {
-    return this.searchMessages(input, assistantId);
+  async searchMessagesForAssistant(assistantId: string, input: ChatMessageSearchInput, calls?: CallTranscriptSearch): Promise<ChatMessageSearchPage> {
+    return this.searchMessages(input, calls, assistantId);
   }
 
-  private async searchMessages(input: ChatMessageSearchInput, assistantId?: string): Promise<ChatMessageSearchPage> {
+  private async searchMessages(input: ChatMessageSearchInput, calls?: CallTranscriptSearch, assistantId?: string): Promise<ChatMessageSearchPage> {
     const db = databaseCoordinator.openTaskExecutor({ name: 'chat.searchMessages', feature: 'chat', priority: assistantId === undefined ? 'interactive' : 'runtime' });
     return db.withExclusiveTransactionAsync(async tx => {
       const conditions = [
         'm.session_id = ?', MESSAGE_LOOKUP_VISIBILITY,
-        '(' + input.keywords.map(() => 'instr(lower(m.text), lower(?)) > 0').join(' OR ') + ')',
+        '(' + input.keywords.map(() => 'instr(lower(m.text), lower(?)) > 0').join(' OR ') + `
+          OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(m.metadata_json)
+            THEN json_extract(m.metadata_json, '$.attachments') END) attachment
+            WHERE ${input.keywords.map(() => "instr(lower(json_extract(attachment.value, '$.fileName')), lower(?)) > 0").join(' OR ')})
+        )`,
       ];
-      const params: (string | number)[] = [input.conversationId, ...input.keywords];
+      const params: (string | number)[] = [input.conversationId, ...input.keywords, ...input.keywords];
       if (assistantId !== undefined) { conditions.push(MESSAGE_LOOKUP_ACCESS); params.push(assistantId, assistantId); }
       if (input.from !== undefined) { conditions.push('julianday(m.created_at) >= julianday(?)'); params.push(input.from); }
       if (input.to !== undefined) { conditions.push('julianday(m.created_at) <= julianday(?)'); params.push(input.to); }
       const offset = input.offset ?? 0;
+      const callMatches = calls?.(input, assistantId);
+      const page = await tx.getAllAsync<{
+        messageId: number | null; callId: string; entryId: string; createdAt: string; text: string;
+        role: 'user' | 'assistant'; name: string; assistantId: string | null;
+      }>(
+        `WITH matches AS (
+          SELECT m.id AS messageId, NULL AS callId, NULL AS entryId, m.created_at AS createdAt,
+            NULL AS text, NULL AS role, NULL AS name, NULL AS assistantId
+          FROM chat_visible_messages m ${MESSAGE_LOOKUP_JOINS} WHERE ${conditions.join(' AND ')}
+          ${callMatches ? 'UNION ALL ' + callMatches.sql : ''}
+        ) SELECT * FROM matches ORDER BY julianday(createdAt) DESC, messageId DESC, entryId DESC LIMIT 21 OFFSET ?`,
+        [...params, ...(callMatches?.params ?? []), offset],
+      );
+      const selected = page.slice(0, 20);
       const rows = await tx.getAllAsync<MessageLookupRow>(
         `SELECT m.*, s.ai_assistant_id AS owner_assistant_id, a.name AS owner_name, a.nickname AS owner_nickname
-         FROM chat_visible_messages m ${MESSAGE_LOOKUP_JOINS}
-         WHERE ${conditions.join(' AND ')} ORDER BY julianday(m.created_at) DESC, m.id DESC LIMIT 21 OFFSET ?`,
-        [...params, offset],
+          FROM messages m ${MESSAGE_LOOKUP_JOINS}
+          WHERE m.id IN (SELECT value FROM json_each(?))`,
+        [JSON.stringify(selected.flatMap(row => row.messageId === null ? [] : [row.messageId]))],
       );
+      const messages = new Map((await this.projectMessageLookupRows(tx, input.conversationId, rows, assistantId !== undefined))
+        .map(record => [record.messageId, record]));
       return {
-        entries: await this.projectMessageLookupRows(tx, input.conversationId, rows.slice(0, 20), assistantId !== undefined),
-        nextOffset: rows.length > 20 ? offset + 20 : null,
+        entries: selected.map(row => row.messageId !== null ? messages.get(row.messageId)! : {
+          source: 'call', conversationId: input.conversationId, callId: row.callId, entryId: row.entryId,
+          text: row.text, createdAt: row.createdAt,
+          author: { role: row.role, name: row.name, assistantId: row.assistantId },
+        }),
+        nextOffset: page.length > 20 ? offset + 20 : null,
       };
     });
+  }
+
+  async readAttachmentForAssistant(assistantId: string, messageId: number, attachmentId: string) {
+    const db = databaseCoordinator.openTaskExecutor({ name: 'chat.readAttachment', feature: 'chat', priority: 'runtime' });
+    const row = await db.getFirstAsync<{ metadata_json: string | null }>(
+      `SELECT m.metadata_json FROM chat_visible_messages m ${MESSAGE_LOOKUP_JOINS}
+        WHERE m.id = ? AND ${MESSAGE_LOOKUP_VISIBILITY} AND ${MESSAGE_LOOKUP_ACCESS}`,
+      [messageId, assistantId, assistantId],
+    );
+    return row ? getMessageAttachments({ metadataJson: row.metadata_json }).find(attachment => attachment.id === attachmentId) ?? null : null;
   }
 
   async readMessageContextForAssistant(assistantId: string, input: Required<ChatMessageContextInput>): Promise<ChatMessageContext | null> {
@@ -268,7 +303,7 @@ export class MessageRepository implements IMessageRepository {
       const member = members.find(candidate => candidate.agentId === row.agent_id);
       const publicName = member?.name ?? row.owner_name ?? 'AI';
       const displayName = (member ? member.nickname : row.owner_nickname) ?? publicName;
-      return {
+      const record: ChatMessageRecord = {
         messageId: row.id, conversationId: row.session_id,
         author: {
           role: row.sender_type as 'user' | 'assistant',
@@ -278,6 +313,19 @@ export class MessageRepository implements IMessageRepository {
         text: forAssistant ? buildGroupMentionModelText(row.text, { metadataJson: row.metadata_json }, members) : row.text,
         createdAt: row.created_at,
       };
+      const message = { metadataJson: row.metadata_json };
+      const attachments = getMessageAttachments(message);
+      if (attachments.length) {
+        record.attachments = attachments.map(({ id, type, fileName, mediaAssetId }) => ({
+          attachmentId: id, type, fileName, ...(type === 'image' && mediaAssetId ? { mediaAssetId } : {}),
+        }));
+        if (!forAssistant) record.userAttachments = attachments;
+      }
+      const metadata = parseMessageMetadata(message);
+      if (isCallStatusMessageMetadata(metadata)) record.callId = metadata.callId;
+      // 收藏资格与长按菜单共用同一消息操作契约；只有用户结果需要界面直接给出入口。
+      if (!forAssistant) record.canFavorite = getChatMessageActions(this.mapRowToEntity(row)).favorite;
+      return record;
     });
   }
 
@@ -919,6 +967,7 @@ export class MessageRepository implements IMessageRepository {
          INNER JOIN sessions s ON s.id = m.session_id
          LEFT JOIN chat_turn_display_items i ON i.message_id = m.id
          WHERE s.ai_assistant_id = ?
+           AND EXISTS (SELECT 1 FROM ai_assistants a WHERE a.id = s.ai_assistant_id AND a.deleted_at IS NULL)
            AND m.is_me = 0
            AND m.sender_type = 'assistant'
            AND COALESCE(m.is_read, 0) = 0
@@ -933,6 +982,7 @@ export class MessageRepository implements IMessageRepository {
          LEFT JOIN messages origin ON origin.session_id = r.session_id AND r.kind = 'autonomous'
            AND origin.client_message_id = 'agent_activity:' || r.run_id || ':started'
          WHERE s.ai_assistant_id = ? AND i.message_id IS NULL AND i.is_read = 0
+           AND EXISTS (SELECT 1 FROM ai_assistants a WHERE a.id = s.ai_assistant_id AND a.deleted_at IS NULL)
            AND json_extract(i.shown_json, '$.kind') = 'assistant' AND json_extract(i.shown_json, '$.status') = 'sent'
            AND (r.kind <> 'regenerate' OR r.status = 'committed')
            AND CASE WHEN r.kind = 'autonomous' THEN origin.id ELSE r.input_high_watermark END > COALESCE(s.visible_after_message_id, 0)
@@ -1173,6 +1223,9 @@ export class MessageRepository implements IMessageRepository {
     }
     let previousMessage: { createdAt: string } | null =
       await this.readLatestMessageInTransaction(transaction, sessionId);
+    if (input.requireEmptyConversation && previousMessage) {
+      throw new Error('这个 AI 已有聊天记录，请在空白聊天里导入。');
+    }
     const insertedMessages: ChatMessage[] = [];
 
     for (const message of input.messages) {
@@ -1262,6 +1315,7 @@ export class MessageRepository implements IMessageRepository {
       );
 
       if (existingRow) {
+        if (input.insertOnly) return { message: this.mapRowToEntity(existingRow), inserted: false };
         await this.assertMetadataMediaAssetReferencesExistInTransaction(
           transaction,
           input.message.metadataJson,
@@ -1566,24 +1620,29 @@ export class MessageRepository implements IMessageRepository {
     }
   }
 
-  async markMessagesAsReadByIds(messageIds: string[]): Promise<number> {
-    if (messageIds.length === 0) {
+  async markMessagesAsReadByIds(messageIds: string[], clientMessageIds: string[] = []): Promise<number> {
+    if (messageIds.length === 0 && clientMessageIds.length === 0) {
       return 0;
     }
 
     try {
-      const db = databaseCoordinator.openTaskExecutor({ name: 'chat.markMessagesAsReadByIds', feature: 'chat', priority: 'interactive' });
-      const placeholders = messageIds.map(() => '?').join(',');
-      // 幂等写：只触碰仍未读的行，重复调用 changes 收敛为 0。
-      const result = await db.runAsync(
-        `UPDATE messages
-         SET is_read = 1
-         WHERE id IN (${placeholders})
-           AND COALESCE(is_read, 0) = 0`,
-        [...messageIds]
-      );
-
-      return result?.changes || 0;
+      return await databaseCoordinator.transaction({ name: 'chat.markMessagesAsReadByIds', feature: 'chat', priority: 'interactive' }, async db => {
+        const ids = messageIds.map(() => '?').join(',');
+        const clients = clientMessageIds.map(() => '?').join(',');
+        // 同一事务接住 T3 前后的身份，避免正式消息绑定期间丢失阅读事实。
+        const result = await db.runAsync(
+          `UPDATE messages
+           SET is_read = 1
+           WHERE (id IN (${ids}) OR client_message_id IN (${clients}))
+             AND COALESCE(is_read, 0) = 0`,
+          [...messageIds, ...clientMessageIds]
+        );
+        const display = await db.runAsync(`UPDATE chat_turn_display_items SET is_read = 1
+          WHERE (message_id IN (${ids}) OR identity IN (${clients}))
+            AND is_read = 0 AND shown_json IS NOT NULL
+            AND json_extract(shown_json, '$.kind') = 'assistant'`, [...messageIds, ...clientMessageIds]);
+        return result.changes + display.changes;
+      });
     } catch (error) {
       console.error('[MessageRepository] Failed to mark messages as read by ids:', error);
       throw error;
@@ -1603,6 +1662,17 @@ export class MessageRepository implements IMessageRepository {
       [playedAt, playedAt, messageId],
     );
     return result.changes === 1;
+  }
+
+  async isAssistantMessageRead(identity: { messageId?: number; clientMessageId?: string }): Promise<boolean> {
+    const db = databaseCoordinator.openTaskExecutor({ name: 'chat.isAssistantMessageRead', feature: 'chat', priority: 'interactive' });
+    const row = await db.getFirstAsync<{ is_read: number }>(`SELECT EXISTS(
+      SELECT 1 FROM messages WHERE (id = ? OR client_message_id = ?) AND is_read = 1
+      UNION ALL
+      SELECT 1 FROM chat_turn_display_items WHERE (message_id = ? OR identity = ?) AND is_read = 1
+    ) AS is_read`, [identity.messageId ?? null, identity.clientMessageId ?? null,
+      identity.messageId ?? null, identity.clientMessageId ?? null]);
+    return row!.is_read === 1;
   }
 
   async deleteMessage(messageId: number): Promise<boolean> {
@@ -1651,8 +1721,11 @@ export class MessageRepository implements IMessageRepository {
       `SELECT id, session_id FROM messages WHERE id IN (${placeholders}) ORDER BY id ASC`, targetIds,
     );
     if (rows.length === 0) return { deletedMessageIds: [], mediaAssetCandidates: [] };
-    for (const sessionId of new Set(rows.map((row) => row.session_id))) {
-      await cancelRegenerationInTransaction(transaction, sessionId);
+    // 版本交接已经由回复事务裁决，删除源版本的正式行不能撤销交接自己的 owner。
+    if (!options?.preserveReplyVersions) {
+      for (const sessionId of new Set(rows.map((row) => row.session_id))) {
+        await cancelRegenerationInTransaction(transaction, sessionId);
+      }
     }
     const candidates = await transaction.getAllAsync<{ asset_id: string }>(
       MESSAGE_MEDIA_ASSET_CANDIDATES_QUERY.replace('{{MESSAGE_IDS}}', placeholders), targetIds,

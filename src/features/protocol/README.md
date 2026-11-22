@@ -2,7 +2,11 @@
 
 协议空间保存当前 AI 的固定提示词和信息。用户可通过单聊或提示词中心进入编辑，AI 可通过协议工具新增、修改或删除。全部条目持续注入，直到修改或删除；没有优先级、生效时间或过期时间。
 
+单条协议正文不设字数上限，用户与 AI 的新增、编辑均保存完整正文；空白正文仍不能保存。
+
 写入链路为界面用例或 AI 工具 → Protocol Repository → databaseCoordinator → SQLite commit。后续请求由 Host 的 `protocol.prompt` Provider 读取全部正文，生成 `context.protocol_space`，作为前置 system 中的 `user_rules` 注入。工具续轮沿用本次请求的提示词，修改从下一次请求生效。
+
+`@features/protocol` 提供页面入口、条目快照类型和 AI 工具。页面的草稿保存由 `application/ProtocolEditor.ts` 负责，AI 工具支持按字段更新。Host 从 `@features/protocol/composition` 取得同一个 Repository，用于组装提示词读取、工具上下文和协议转记忆。
 
 AI 工具的模型可见结果由 `message` 提供，`data` 不会自动回灌模型。查询、搜索、添加与更新结果必须在 `message` 中包含条目的真实 `id` 和完整内容；更新与删除以该 `id` 作为 `protocolId`。仓储在 SQL 中限定所属 AI，并依据实际命中行数返回结果；未命中的更新或删除必须报告失败，不能伪装成成功。更新的完整结果在同一事务内读取。
 

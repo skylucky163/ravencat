@@ -10,6 +10,7 @@ export type RavenCatReplyPreview = {
   text: string;
   status?: RavenCatReplyPreviewStatus;
   correlationId?: string;
+  requestCorrelationId?: string;
   sessionId?: string;
   messageId?: number;
 };
@@ -50,6 +51,7 @@ export type RavenCatCaptureScreenRequestEvent = {
 export type RavenCatConversationDisplayedEvent = {
   sessionId: string;
   messageIds: string[];
+  clientMessageIds: string[];
 };
 
 export type RavenCatCompanionWakeReason =

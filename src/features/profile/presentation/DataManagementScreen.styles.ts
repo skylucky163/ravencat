@@ -23,9 +23,7 @@ export function createDataManagementStyles(theme: PresentationTheme) {
     backupHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.spacing.lg, minHeight: 64 },
     backupTitle: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md, paddingVertical: theme.spacing.lg },
     title: { fontSize: 16, color: theme.colors.text.primary },
-    placeholderTitle: { fontSize: 16, color: theme.colors.text.tertiary },
     description: { fontSize: 13, lineHeight: 20, marginTop: theme.spacing.xs, color: theme.colors.text.secondary },
-    placeholder: { fontSize: 12, color: theme.colors.text.tertiary },
     dangerHeading: { fontSize: 13, color: theme.colors.text.secondary, marginLeft: theme.spacing.lg, marginBottom: theme.spacing.sm },
     dangerTitle: { fontSize: 16, color: theme.colors.feedback.error },
   });

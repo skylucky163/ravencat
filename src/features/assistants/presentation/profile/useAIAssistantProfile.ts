@@ -1,6 +1,6 @@
 /** 按助手 ID 读取资料；提交事实优先于读取开始时的快照。 */
 import { useCallback, useEffect, useState } from 'react';
-import { getAIAssistantById, subscribeAIAssistantUpdated } from '../../AIAssistantManagement';
+import { getAIAssistantById, subscribeAIAssistantUpdated, subscribeAssistantLifecycleChanged } from '../../AIAssistantManagement';
 import type { AIProfile } from '../../domain/AIProfile';
 
 export function useAIAssistantProfile(aiId: string) {
@@ -20,12 +20,17 @@ export function useAIAssistantProfile(aiId: string) {
       setAssistant(updated);
       setError(false);
     });
+    const unsubscribeLifecycle = subscribeAssistantLifecycleChanged(event => {
+      if (event.assistantId !== aiId) return;
+      if (event.change === 'restored') reload();
+      else { receivedUpdate = true; setAssistant(null); }
+    });
     void getAIAssistantById(aiId).then(value => {
       if (active && !receivedUpdate) setAssistant(value);
     }).catch(() => { if (active && !receivedUpdate) setError(true); })
       .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; unsubscribe(); };
-  }, [aiId, reloadRevision]);
+    return () => { active = false; unsubscribe(); unsubscribeLifecycle(); };
+  }, [aiId, reload, reloadRevision]);
 
   return { assistant, loading, error, reload };
 }

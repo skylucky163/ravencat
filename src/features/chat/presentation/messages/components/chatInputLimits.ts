@@ -1,3 +1,7 @@
-/** 聊天输入框字数上限：用户输入是系统边界，防误粘贴超长文本直接挤爆模型上下文。
- *  正常长消息的展示由用户气泡折叠承担，不依赖该上限保持小巧。 */
-export const CHAT_INPUT_MAX_LENGTH = 10_000;
+import { CHAT_TEXT_ATTACHMENT_MAX_LENGTH } from '../../../messages/domain/ChatAttachment';
+
+export const DEFAULT_CHAT_LONG_PASTE_THRESHOLD = 5_000;
+
+export function isChatLongPasteThreshold(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= CHAT_TEXT_ATTACHMENT_MAX_LENGTH;
+}

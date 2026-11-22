@@ -14,7 +14,7 @@ export interface NetEaseResolveShareLinkArgs {
 
 export const netEaseResolveShareLinkDefinition = {
   name: 'netease_resolve_share_link',
-  description: '解析单个网易云分享 URL，只返回 song 或 playlist 的稳定数字 ID。',
+  description: '解析网易云分享链接，返回 song 或 playlist 的稳定数字 ID。',
   parameters: {
     type: 'object',
     properties: {

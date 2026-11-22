@@ -23,12 +23,13 @@ import ChatRegenerationConfirm, { shouldConfirmChatRegeneration } from '../compo
 import ChatReplyVersionSheet from '../components/ChatReplyVersionSheet';
 import { getChatSelectionKey } from '../../../messages/domain/ChatMessageSelection';
 import { canEditChatMessage } from '../../../messages/domain/ChatMessageEditing';
-import { copyTextToClipboard } from '@platform/device';
+import { copyChatMessageText } from '../components/copyChatMessageText';
 import { readChatCodeBlock } from '../../../messages/domain/ChatCodeBlock';
 import ChatBackground from '../components/ChatBackground';
 import { useChatDetail } from './useChatDetail';
 import { useChatTurnExecutionStatus } from './useChatTurnExecutionStatus';
 import { useChatRegeneration } from './useChatRegeneration';
+import { cancelChatReply } from '../../../reply/application/CancelChatReply';
 import { useAttachmentDraft } from './useAttachmentDraft';
 import { translateMessageText } from '@features/integrations';
 import { deleteChatMessage } from '../../../messages/application/DeleteChatMessage';
@@ -39,6 +40,7 @@ import {
 } from '../../../messages/domain/chatMessageMetadata';
 import type { ChatMessage } from '../../../messages/domain/ChatMessage';
 import type { StickerMessageSnapshot } from '../../../messages/domain/ChatSticker';
+import { requestUserReply } from '../../../reply/application/RequestUserReply';
 import type { ChatCallSession } from '../../../conversation/application/ChatCallGateway';
 import { shouldShowTogetherListeningChatEntry } from '../../../conversation/application/ChatTogetherListeningGateway';
 import type { ChatSession } from '../../../conversation/domain/SessionRepository';
@@ -184,6 +186,7 @@ export default function ChatDetailModule({
     selectImageAttachment,
     capturePhotoAttachment,
     selectDocumentAttachment,
+    attachPastedText,
     clearAttachment,
     removeAttachment,
   } = useAttachmentDraft();
@@ -247,7 +250,20 @@ export default function ChatDetailModule({
     retrySend,
   } = useChatDetail(sessionId, aiAssistant, onCallCreated);
   const regeneration = useChatRegeneration(sessionId, refresh);
-  const executionStatus = useChatTurnExecutionStatus(sessionId ?? null);
+  const { statusText: executionStatus, canStop } = useChatTurnExecutionStatus(sessionId ?? null);
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
+  const isStoppingReply = stoppingSessionId !== null && stoppingSessionId === sessionId;
+  const handleStopReply = useCallback(async () => {
+    if (!sessionId || stoppingSessionId === sessionId) return;
+    setStoppingSessionId(sessionId);
+    try {
+      await cancelChatReply(sessionId);
+    } catch (error) {
+      showAppDialog({ title: '终止失败', message: error instanceof Error ? error.message : '终止回复失败', tone: 'error' });
+    } finally {
+      setStoppingSessionId(current => current === sessionId ? null : current);
+    }
+  }, [sessionId, stoppingSessionId]);
 
   const handleSelectionDeleted = useCallback((ids: readonly number[]) => {
     const deleted = new Set(ids);
@@ -259,17 +275,18 @@ export default function ChatDetailModule({
     onDeleted: handleSelectionDeleted,
   });
   const share = useChatMessageShare({ sessionId, sourceName: headerTitle, assistantId: aiAssistant?.id, isActive, onShared: selection.exit });
+  const { open: openShare } = share;
   // 仍在生成的投影可复制和选字；回合结束后正文已由消息 owner 封存，沿用全部消息操作。
   const selectedCanonicalMessage = selectedMessage && selectedMessage.id > 0 ? selectedMessage : null;
   const favoriteMessage = useChatFavoriteAction(selectedCanonicalMessage, headerTitle, aiAssistant?.id);
   const stickerAction = useChatStickerAction(selectedMessage);
   const saveImages = useChatSaveImagesAction(selectedMessage, isActive);
   const messageActions = selectedMessage ? getChatMessageActions(selectedMessage) : null;
-  const handleShareMessage = useCallback(() => {
+  const handleShareMessage = useCallback((messageId: number) => {
     dismissInputSurface();
     void voiceMessagePlaybackCoordinator.stop();
-    void share.open([selectedMessage!.id]);
-  }, [dismissInputSurface, share, selectedMessage]);
+    void openShare([messageId]);
+  }, [dismissInputSurface, openShare]);
   const handleEnterSelection = useCallback(() => {
     dismissInputSurface();
     void voiceMessagePlaybackCoordinator.stop();
@@ -294,12 +311,13 @@ export default function ChatDetailModule({
     }
   }, [inviteTogetherListening]);
 
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(async (requestReply?: boolean) => {
     if (inputText.trim().length === 0 && readyAttachments.length === 0) return;
     const draft = textDrafts.read(sessionId!);
 
     await withAttachmentSubmission(
       (attachments, consumeDraft) => sendMessage(inputText.trim(), replyTo, attachments, {
+        requestReply,
         onQueued: () => {
           consumeDraft();
           textDrafts.replaceIfUnchanged(sessionId!, draft, '');
@@ -309,10 +327,18 @@ export default function ChatDetailModule({
     );
   }, [inputText, replyTo, readyAttachments, sendMessage, withAttachmentSubmission, sessionId, textDrafts]);
 
-  const handleStickerPress = useCallback(async (sticker: StickerMessageSnapshot) => {
-    const wasQueued = await sendSticker(sticker);
-    if (wasQueued) {
+  const handleInvoke = useCallback(async () => {
+    if (inputText.trim() || readyAttachments.length > 0) {
+      await handleSend(true);
+      return;
     }
+    if (!await requestUserReply(sessionId!)) {
+      showAppDialog({ title: '暂未召唤', message: '当前暂时无法召唤，请稍后再试。' });
+    }
+  }, [inputText, readyAttachments.length, handleSend, sessionId]);
+
+  const handleStickerPress = useCallback(async (sticker: StickerMessageSnapshot) => {
+    await sendSticker(sticker);
   }, [sendSticker]);
 
   // 语音校对通过后发送。这里只负责“提交成功后通知外层有新消息”，
@@ -337,16 +363,6 @@ export default function ChatDetailModule({
     setSelectedMessage(null);
     setMenuPosition(null);
   }, []);
-
-  const handleCopyMessage = useCallback(() => {
-    if (!selectedMessage) return;
-    try {
-      copyTextToClipboard(readChatCodeBlock(selectedMessage.text)?.source ?? selectedMessage.text);
-      ToastAndroid.show('复制成功', ToastAndroid.SHORT);
-    } catch (error) {
-      showAppDialog({ title: '复制失败', message: error instanceof Error ? error.message : '无法写入剪贴板', tone: 'error' });
-    }
-  }, [selectedMessage]);
 
   const handleSelectMessageText = useCallback(() => {
     dismissInputSurface();
@@ -520,7 +536,7 @@ export default function ChatDetailModule({
           <ChatMessageList
             sessionId={sessionId}
             messages={messages}
-            hiddenRunId={regeneration.sourceRunId}
+            regeneration={regeneration}
             pauseAutoScroll={share.visible || textSelectionText !== null}
             anchorMessageId={anchorMessageId}
             aiAssistant={aiAssistant}
@@ -529,6 +545,8 @@ export default function ChatDetailModule({
             userName={currentUser.name}
             onOpenAssistantProfile={onOpenAssistantProfile}
             onMessageLongPress={handleMessageLongPress}
+            onShareMessage={voiceRecordingState === 'idle' ? handleShareMessage : undefined}
+            shareableMessageKeys={selection.availableKeys}
             onLoadMore={loadMore}
             hasMore={hasMore}
             isLoadingMore={isLoadingMore}
@@ -558,6 +576,9 @@ export default function ChatDetailModule({
                 value={inputText}
                 onChangeText={setInputText}
                 onSend={handleSend}
+                onInvoke={aiAssistant?.manualReply ? handleInvoke : undefined}
+                onStopReply={canStop || isStoppingReply ? handleStopReply : undefined}
+                isStoppingReply={isStoppingReply}
                 voiceRecordingState={voiceRecordingState}
                 voiceRecordingProgress={voiceRecordingProgress}
                 voiceRecordingError={voiceRecordingError}
@@ -577,6 +598,7 @@ export default function ChatDetailModule({
                 onImagePress={selectImageAttachment}
                 onCameraPress={capturePhotoAttachment}
                 onFilePress={selectDocumentAttachment}
+                onAttachPastedText={attachPastedText}
                 onStickerPress={handleStickerPress}
                 onVideoCallPress={startVideoCall}
                 onTogetherListeningPress={shouldShowTogetherListeningChatEntry(aiAssistant)
@@ -631,7 +653,7 @@ export default function ChatDetailModule({
         onClose={handleCloseActionMenu}
         position={menuPosition}
         onSaveImages={saveImages}
-        onCopy={selectedMessage?.text.trim() ? handleCopyMessage : undefined}
+        onCopy={selectedMessage?.text.trim() ? () => copyChatMessageText(selectedMessage.text) : undefined}
         onSelectText={selectedMessage?.text.trim() ? handleSelectMessageText : undefined}
         onRewrite={selectedMessage && canEditChatMessage(selectedMessage) ? handleRewriteMessage : undefined}
         onRegenerate={selectedCanonicalMessage?.senderType === 'assistant'
@@ -646,7 +668,8 @@ export default function ChatDetailModule({
           [selectedCanonicalMessage.createdAt, selectedCanonicalMessage.id, 0, selectedCanonicalMessage.id])?.kind === 'dialogue' ? handleFixedStart : undefined}
         isFixedStart={selectedMessage?.id === summarySettings?.fixedMessageId}
         onMultiSelect={selectedCanonicalMessage && selection.availableKeys.has(getChatSelectionKey(selectedCanonicalMessage)) && voiceRecordingState === 'idle' ? handleEnterSelection : undefined}
-        onForward={selectedCanonicalMessage && selection.availableKeys.has(getChatSelectionKey(selectedCanonicalMessage)) && voiceRecordingState === 'idle' ? handleShareMessage : undefined}
+        onForward={selectedCanonicalMessage && selection.availableKeys.has(getChatSelectionKey(selectedCanonicalMessage)) && voiceRecordingState === 'idle'
+          ? () => handleShareMessage(selectedCanonicalMessage.id) : undefined}
         onQuote={messageActions?.quote ? handleQuoteMessage : undefined}
         onTranslate={messageActions?.translate ? handleTranslateMessage : undefined}
         onFavorite={messageActions?.favorite ? favoriteMessage.toggle : undefined}

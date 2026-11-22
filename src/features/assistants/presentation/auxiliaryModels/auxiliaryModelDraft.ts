@@ -2,7 +2,7 @@
 import type { AuxiliaryModelConfig, CapabilityKind, UpdateAuxiliaryModelConfigInput } from '../../domain/AuxiliaryModel';
 import type { DraftCommit, DraftErrors } from '@shared/ui/AutoSaveDraftEditor';
 import { readDraftNumber, readDraftInteger } from '@shared/ui/draftValidation';
-import { IMAGE_GENERATION_PROVIDERS, readImageGenerationProfile } from '@platform/ai/imageGenerationConfig';
+import { getCustomImageBaseURLError, IMAGE_GENERATION_PROVIDERS, readImageGenerationProfile } from '@platform/ai/imageGenerationConfig';
 export interface AuxiliaryModelDraft {
   serviceConfigId: string;
   name: string; baseUrl: string; apiKey: string; model: string;
@@ -26,6 +26,8 @@ export function parseAuxiliaryModelDraft(kind: CapabilityKind, draft: AuxiliaryM
   const errors: DraftErrors<AuxiliaryModelDraft> = {};
   const accepted: (keyof AuxiliaryModelDraft)[] = [];
   const labels = { name: '配置名称', baseUrl: 'API 地址', model: '模型名称' };
+  const customBaseIssue = kind === 'image_generation' && draft.imageProvider === 'customOpenAIImages'
+    ? getCustomImageBaseURLError(draft.baseUrl) : null;
   for (const key of changed) {
     if (key === 'imageProvider') {
       if (kind !== 'image_generation') continue;
@@ -33,12 +35,14 @@ export function parseAuxiliaryModelDraft(kind: CapabilityKind, draft: AuxiliaryM
       patch.metadataJson = JSON.stringify({ provider: draft.imageProvider });
     } else if (key === 'name' || key === 'baseUrl' || key === 'model') {
       if (!draft[key].trim()) { errors[key] = `${labels[key]}不能为空；这次修改尚未保存。`; continue; }
+      if (key === 'baseUrl' && customBaseIssue) { errors.baseUrl = customBaseIssue; continue; }
       patch[key] = draft[key].trim();
     } else if (key === 'serviceConfigId') {
+      if (customBaseIssue) continue;
       patch.serviceConfigId = draft.serviceConfigId || null;
     } else if (key === 'apiKey') {
+      if (customBaseIssue) { errors.apiKey = '请先填写有效的 API 地址；Key 尚未保存。'; continue; }
       patch.apiKey = draft.apiKey.trim() || null;
-
     } else if (key === 'tempInput' || key === 'topPInput') {
       if (kind === 'embedding') continue;
       if (kind === 'image_generation') { patch[key === 'tempInput' ? 'temperature' : 'topP'] = null; accepted.push(key); continue; }
@@ -48,8 +52,7 @@ export function parseAuxiliaryModelDraft(kind: CapabilityKind, draft: AuxiliaryM
     } else if (key === 'maxTokens') {
       if (kind === 'embedding') continue;
       if (kind === 'image_generation') { patch.maxTokens = null; accepted.push(key); continue; }
-      const parsed = draft.maxTokens === '无限制'
-        ? { value: null, error: null } : readDraftInteger(draft.maxTokens, 'Max Tokens', true);
+      const parsed = readDraftInteger(draft.maxTokens, 'Max Tokens', true);
       if (parsed.error) { errors[key] = parsed.error; continue; }
       patch.maxTokens = parsed.value;
     }

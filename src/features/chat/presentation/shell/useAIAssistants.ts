@@ -6,6 +6,7 @@ import {
   deleteAIAssistant,
   listAIAssistants,
   subscribeAIAssistantUpdated,
+  subscribeAssistantLifecycleChanged,
 } from '@features/assistants';
 import { withArrivedConversationPreview } from './arrivedConversationPreview';
 import { getAssistantMessageArrivalSnapshot } from '../../reply/delivery/AssistantMessageArrival';
@@ -51,11 +52,16 @@ export default function useAIAssistants() {
     return loadFlight;
   }, []);
 
-  useEffect(() => subscribeAIAssistantUpdated(() => {
-    // 已提交的资料让旧列表读取失效，新读取继续复用消息到达快照的既有投影。
-    profilesRevisionRef.current++;
-    void loadAIAssistants().catch(error => console.error('[Chat] 助手资料更新后列表刷新失败：', error));
-  }), [loadAIAssistants]);
+  useEffect(() => {
+    const refresh = () => {
+      // 已提交的资料让旧列表读取失效，新读取继续复用消息到达快照的既有投影。
+      profilesRevisionRef.current++;
+      void loadAIAssistants().catch(error => console.error('[Chat] 助手资料更新后列表刷新失败：', error));
+    };
+    const unsubscribeUpdated = subscribeAIAssistantUpdated(refresh);
+    const unsubscribeLifecycle = subscribeAssistantLifecycleChanged(refresh);
+    return () => { unsubscribeUpdated(); unsubscribeLifecycle(); };
+  }, [loadAIAssistants]);
 
   const removeAIAssistant = useCallback(async (aiId: string) => {
     await deleteAIAssistant(aiId);

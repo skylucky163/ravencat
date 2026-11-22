@@ -23,6 +23,7 @@ import { emitChatTurnExecutionChanged } from '../events/ChatEvents';
 import { isSubstantiveUserMessage } from '../domain/SubstantiveUserMessage';
 
 export interface CommitCanonicalUserMessageParams {
+  requestReply?: boolean;
   message: CreateMessageInput;
   /** 同次发送的前置消息；与尾消息在同一个 T1 内提交，只换代一次。 */
   precedingMessages?: readonly CommitMessageInput[];
@@ -84,6 +85,7 @@ export async function commitCanonicalUserMessage(
           transaction,
           sessionId,
         );
+        await turns.setReplyRequestedInTransaction(transaction, sessionId, params.requestReply !== false);
         return { message, messages, supersededRunId };
       },
     );

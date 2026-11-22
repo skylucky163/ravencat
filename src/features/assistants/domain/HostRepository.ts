@@ -7,6 +7,10 @@ export interface HostCooldownStatus {
   endAt: string | null;
 }
 
+export type HostAppointmentAvailability =
+  | { status: 'occupied' | 'vacant' }
+  | { status: 'cooldown'; endAt: string };
+
 export const HOST_AI_APPOINTMENT_COOLDOWN_MS = 168 * 60 * 60 * 1000;
 export const HOST_AI_RELATIONSHIP_STATE_ID = 'default';
 

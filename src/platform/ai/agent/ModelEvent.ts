@@ -1,4 +1,5 @@
 /** 定义 Provider 无关的单轮模型事件、工具调用和历史片段。 */
+import type { OpenAIReasoningReplay } from '../types';
 
 export type ModelFinishReason =
   | 'stop'
@@ -27,6 +28,7 @@ export interface ModelAssistantHistoryItem {
   role: 'assistant';
   content: string;
   reasoningText: string;
+  reasoningReplay?: OpenAIReasoningReplay;
   toolCalls: ModelToolCall[];
 }
 
@@ -66,6 +68,7 @@ export type ModelEvent =
       type: 'turn_completed';
       usage: ModelUsage;
       finishReason: ModelFinishReason;
+      reasoningReplay?: OpenAIReasoningReplay;
     };
 
 export type ModelEventSink = (event: ModelEvent) => void | Promise<void>;
@@ -74,6 +77,7 @@ export interface ModelTurnResult {
   historyItems: ModelHistoryItem[];
   assistantText: string;
   reasoningText: string;
+  reasoningReplay?: OpenAIReasoningReplay;
   toolCalls: ModelToolCall[];
   usage: ModelUsage;
   finishReason: ModelFinishReason;

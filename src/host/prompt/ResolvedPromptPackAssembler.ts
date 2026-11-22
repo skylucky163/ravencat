@@ -125,6 +125,8 @@ async function resolveParams(
     && PARAGRAPH_BREAK_SCENARIOS.some((scenario) => scenario === scenarioId);
   const actionDescriptionEnabled = includeDynamicContext && assistantConfiguration.actionDescriptionEnabled
     && PARAGRAPH_BREAK_SCENARIOS.some((scenario) => scenario === scenarioId);
+  const formatGuidelinesEnabled = includeDynamicContext && assistantConfiguration.formatGuidelinesEnabled
+    && PARAGRAPH_BREAK_SCENARIOS.some((scenario) => scenario === scenarioId);
   return {
     ...params,
     aiConfig: {
@@ -151,12 +153,16 @@ async function resolveParams(
           : item
       )).filter((item) => item.definitionId !== BATTERY_PRESET_ITEM.definitionId).concat({
         ...BATTERY_PRESET_ITEM, enabled: assistantConfiguration.batteryEnabled,
-      }).filter((item) => item.definitionId !== 'output.paragraph_breaks' && item.definitionId !== 'output.action_description').concat({
+      }).filter((item) => item.definitionId !== 'output.paragraph_breaks' && item.definitionId !== 'output.action_description'
+        && item.definitionId !== 'output.format_guidelines').concat({
         definitionId: 'output.paragraph_breaks', slot: 'foundation', sortOrder: 25,
         enabled: paragraphBreaksEnabled, required: false, protection: 'overridable',
       }).concat({
         definitionId: 'output.action_description', slot: 'foundation', sortOrder: 26,
         enabled: actionDescriptionEnabled, required: false, protection: 'overridable',
+      }).concat({
+        definitionId: 'output.format_guidelines', slot: 'foundation', sortOrder: 27,
+        enabled: formatGuidelinesEnabled, required: false, protection: 'overridable',
       }),
     },
     additionalBlocks: [
@@ -166,6 +172,9 @@ async function resolveParams(
         ...params.aiConfig, promptDefinitionOverrides: assistantConfiguration.overrides,
       })] : []),
       ...(actionDescriptionEnabled ? [promptPackBlockFactory.createActionDescriptionBlock({
+        ...params.aiConfig, promptDefinitionOverrides: assistantConfiguration.overrides,
+      })] : []),
+      ...(formatGuidelinesEnabled ? [promptPackBlockFactory.createFormatGuidelinesBlock({
         ...params.aiConfig, promptDefinitionOverrides: assistantConfiguration.overrides,
       })] : []),
       ...customBlocks,

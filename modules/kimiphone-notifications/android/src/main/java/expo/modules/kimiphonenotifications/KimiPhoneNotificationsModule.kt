@@ -158,6 +158,11 @@ class KimiPhoneNotificationsModule : Module() {
       null
     }
 
+    AsyncFunction("cancelReadMessageNotifications") { sessionId: String, messageIds: List<String>, clientMessageIds: List<String> ->
+      NotificationPublisher.dismissReadMessages(context, sessionId, messageIds, clientMessageIds)
+      null
+    }
+
     AsyncFunction("leaveCallScreen") { callId: String ->
       CallPresentationReturn.leave(callId, appContext.currentActivity)
     }.runOnQueue(expo.modules.kotlin.functions.Queues.MAIN)

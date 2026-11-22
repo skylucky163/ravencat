@@ -9,8 +9,6 @@ import type {
   UpdateProtocolInput,
 } from '../domain/ProtocolRepository';
 
-export const PROTOCOL_MAX_LENGTH = 500;
-
 interface ProtocolRow {
   id: string;
   ai_assistant_id: string;
@@ -34,13 +32,10 @@ function mapRow(row: ProtocolRow): Protocol {
 function normalizeContent(content: string): string {
   const trimmedContent = content.trim();
   if (!trimmedContent) throw new Error('协议内容不能为空');
-  if (trimmedContent.length > PROTOCOL_MAX_LENGTH) {
-    throw new Error(`协议内容不能超过${PROTOCOL_MAX_LENGTH}字`);
-  }
   return trimmedContent;
 }
 
-export class SQLiteProtocolRepository implements IProtocolRepository {
+class SQLiteProtocolRepository implements IProtocolRepository {
   /** 转存的读取与删除共用 Host 传入的事务，不能在内部重新排队。 */
   async getForTransfer(tx: DatabaseTransactionExecutor, aiAssistantId: string, id: string): Promise<Protocol | null> {
     const row = await tx.getFirstAsync<ProtocolRow>('SELECT * FROM protocols WHERE ai_assistant_id = ? AND id = ?', [aiAssistantId, id]);

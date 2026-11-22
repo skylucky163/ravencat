@@ -34,6 +34,7 @@ export {
   resolveAssistantPromptConfiguration,
   resolveImageGroundingPrompt,
   resolveVisionOCRPrompt,
+  resolveGroupAdminPrompt,
   resolveChatSummaryPromptOverride,
   saveAssistantDefinitionOverride,
   saveAssistantDefinitionState,

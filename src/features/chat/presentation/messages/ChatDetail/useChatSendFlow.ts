@@ -230,12 +230,11 @@ export function useChatSendFlow({
       text: string,
       replyTo: ReplyTarget | null = null,
       attachments: ChatAttachment[] = [],
-      { sticker = null, onQueued }: { sticker?: StickerMessageSnapshot; onQueued?: () => void } = {},
+      { sticker = null, onQueued, requestReply }: { sticker?: StickerMessageSnapshot; onQueued?: () => void; requestReply?: boolean } = {},
     ) => {
       const normalizedText = text.trim();
       if (
         (!normalizedText && attachments.length === 0 && !sticker)
-        || (sticker && attachments.length > 0)
         || !sessionId
         || !aiAssistant
         || !aiRequestConfig
@@ -282,6 +281,7 @@ export function useChatSendFlow({
           {
             sessionId,
             text: normalizedText,
+            requestReply,
             replyToId: replyTo?.id || null,
             replyToText: replyTo?.text || null,
             replyQuote: replyTo?.quote,

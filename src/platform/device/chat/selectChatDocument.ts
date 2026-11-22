@@ -1,8 +1,9 @@
 import * as DocumentPicker from 'expo-document-picker';
-
-const MAX_CHAT_FILE_SIZE = 15 * 1024 * 1024;
+import { File } from 'expo-file-system';
+import { assertChatAttachmentSize, isChatImageFile } from './chatAttachmentSelection';
 
 export interface SelectedChatDocument {
+  type: 'image' | 'file';
   uri: string;
   fileName: string;
   mimeType?: string | null;
@@ -22,15 +23,17 @@ export async function selectChatDocument(): Promise<SelectedChatDocument | null>
   }
 
   const asset = result.assets[0];
-  if (asset.size && asset.size > MAX_CHAT_FILE_SIZE) {
-    throw new Error('文件不能超过 15MB');
-  }
+  const fileName = asset.name || `document_${Date.now()}`;
+  const type = isChatImageFile(fileName, asset.mimeType) ? 'image' : 'file';
+  const fileSize = new File(asset.uri).size;
+  assertChatAttachmentSize(fileSize, type);
 
   return {
+    type,
     uri: asset.uri,
-    fileName: asset.name || `document_${Date.now()}`,
+    fileName,
     mimeType: asset.mimeType || null,
-    fileSize: asset.size ?? null,
+    fileSize,
     source: 'document',
   };
 }

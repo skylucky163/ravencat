@@ -41,6 +41,13 @@ export function createPaperNoteMessageStyles(theme: PresentationTheme) {
       minHeight: 30,
       width: '100%',
     },
+    paperNoteCard: {
+      position: 'relative',
+      width: '100%',
+      marginVertical: 4,
+      alignItems: 'flex-start',
+      alignSelf: 'stretch',
+    },
     paperNoteContent: {
       width: '100%',
       minHeight: 30,

@@ -11,7 +11,7 @@ export interface ReleaseSoftLockArgs {
 
 export const definition = {
   name: 'release_soft_lock',
-  description: '释放自己通过 soft_lock_app 为精确 Android package 创建的有效锁',
+  description: '释放自己通过 soft_lock_app 创建的有效锁',
   parameters: {
     type: 'object',
     properties: {

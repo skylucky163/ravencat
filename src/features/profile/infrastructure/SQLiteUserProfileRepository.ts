@@ -22,6 +22,12 @@ import type {
 } from '../domain/UserProfileRepository';
 
 export class SQLiteUserProfileRepository {
+  /** 操作历史只取提交时的称呼，不在业务事务中解析头像或封面。 */
+  async getNameInTransaction(transaction: DatabaseTransactionExecutor): Promise<string> {
+    const row = await transaction.getFirstAsync<{ name: string }>('SELECT name FROM user_profile WHERE id = ?', [SELF_USER_PROFILE_ID]);
+    return row!.name;
+  }
+
   /** 恢复只重定位尚未迁移的头像；封面已进入稳定资产，不再重写运行时 URI。 */
   async rebaseRestoredMediaInTransaction(transaction: DatabaseTransactionExecutor, rebase: (uri: string | null) => string | null): Promise<void> {
     const rows = await transaction.getAllAsync<{ id: string; avatar: string }>('SELECT id, avatar FROM user_profile WHERE avatar_media_asset_id IS NULL AND avatar IS NOT NULL');

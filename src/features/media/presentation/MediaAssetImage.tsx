@@ -54,6 +54,7 @@ function ResolvedMediaAssetImage({ mediaAssetId, style, resizeMode, color, uriCa
           source={{ uri }}
           style={StyleSheet.absoluteFillObject}
           resizeMode={resizeMode}
+          resizeMethod="resize"
           onLoad={() => setStatus('ready')}
           onError={() => {
             uriCache?.delete(mediaAssetId);

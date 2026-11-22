@@ -3,12 +3,18 @@
 import { resolveMediaAsset } from '@features/media';
 import { getPersistentMediaInfo } from '@platform/device/DeviceMediaService';
 
-import type { LegacyChatAttachment, MediaAssetChatAttachment } from '../domain/ChatAttachment';
+import type { LegacyChatAttachment, MediaAssetChatAttachment, UnavailableChatAttachment } from '../domain/ChatAttachment';
 
-type MediaReferenceFields = 'mediaAssetId' | 'thumbnailMediaAssetId' | 'localUri' | 'thumbnailUri';
+type MediaReferenceFields = 'mediaAssetId' | 'thumbnailMediaAssetId' | 'localUri' | 'thumbnailUri' | 'unavailable';
 export type ChatAttachmentMediaReference =
   | Pick<LegacyChatAttachment, MediaReferenceFields>
-  | Pick<MediaAssetChatAttachment, MediaReferenceFields>;
+  | Pick<MediaAssetChatAttachment, MediaReferenceFields>
+  | Pick<UnavailableChatAttachment, MediaReferenceFields>;
+type AvailableChatAttachmentMediaReference = Exclude<ChatAttachmentMediaReference, { unavailable: true }>;
+
+function isUnavailable(attachment: ChatAttachmentMediaReference): attachment is Pick<UnavailableChatAttachment, MediaReferenceFields> {
+  return attachment.unavailable === true;
+}
 
 export interface ResolvedChatImageAttachmentUris {
   previewUri: string;
@@ -16,8 +22,7 @@ export interface ResolvedChatImageAttachmentUris {
 }
 
 /**
- * M3a/M4a 过渡期只允许两种明确输入：历史 URI 或 MediaAsset ID。
- * legacy 分支在 M4a 停止旧写入且迁移扫描稳定为零后删除。
+ * 缺失记录保留在消息里，由现有文件和图片卡片展示不可用状态。
  */
 export async function resolveChatAttachmentPrimaryUri(
   attachment: ChatAttachmentMediaReference,
@@ -25,13 +30,13 @@ export async function resolveChatAttachmentPrimaryUri(
   if (typeof attachment.mediaAssetId === 'string') {
     return (await resolveMediaAsset(attachment.mediaAssetId)).localUri;
   }
-
+  if (isUnavailable(attachment)) throw new Error('聊天附件不可用');
   return attachment.localUri;
 }
 
 /** 缩略图没有独立资产时，与既有行为一致地使用主文件。 */
 async function resolveChatAttachmentThumbnailUri(
-  attachment: ChatAttachmentMediaReference,
+  attachment: AvailableChatAttachmentMediaReference,
 ): Promise<string> {
   if (typeof attachment.mediaAssetId === 'string') {
     const assetId = attachment.thumbnailMediaAssetId || attachment.mediaAssetId;
@@ -42,7 +47,7 @@ async function resolveChatAttachmentThumbnailUri(
 }
 
 async function resolveAvailableImageUri(
-  attachment: ChatAttachmentMediaReference,
+  attachment: AvailableChatAttachmentMediaReference,
   thumbnail: boolean,
 ): Promise<string | null> {
   const uri = await (thumbnail
@@ -63,6 +68,7 @@ async function resolveAvailableImageUri(
 export async function resolveChatImageAttachmentUris(
   attachment: ChatAttachmentMediaReference,
 ): Promise<ResolvedChatImageAttachmentUris | null> {
+  if (isUnavailable(attachment)) return null;
   const hasSeparateThumbnail = typeof attachment.mediaAssetId === 'string'
     ? Boolean(attachment.thumbnailMediaAssetId
       && attachment.thumbnailMediaAssetId !== attachment.mediaAssetId)

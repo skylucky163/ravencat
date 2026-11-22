@@ -35,7 +35,7 @@
 
 uniform shader content;
 uniform float2 size;
-uniform float2 offset;
+uniform float2 surfaceOffset;
 uniform float4 cornerRadii;
 uniform float refractionHeight;
 uniform float refractionAmount;
@@ -125,10 +125,12 @@ half4 finishGlass(half4 color, float2 coord, float sd) {
 
 half4 main(float2 coord) {
     float2 halfSize = size * 0.5;
-    float2 centeredCoord = (coord + offset) - halfSize;
+    // 形状使用完整表面坐标，背景采样仍使用当前纹理的局部坐标。
+    float2 surfaceCoord = coord + surfaceOffset;
+    float2 centeredCoord = surfaceCoord - halfSize;
     float radius = radiusAt(centeredCoord, cornerRadii);
 
-    float sd = fluidEnabled > 0.5 ? fluidDistance(coord) : sdRoundedRect(centeredCoord, halfSize, radius);
+    float sd = fluidEnabled > 0.5 ? fluidDistance(surfaceCoord) : sdRoundedRect(centeredCoord, halfSize, radius);
     if (fluidEnabled > 0.5 && sd > 0.75) return half4(0.0);
     float edgeDistance = sd;
     if (-sd >= refractionHeight) {
@@ -140,7 +142,7 @@ half4 main(float2 coord) {
         baseColor.rgb = (baseColor.rgb - 0.5) * (1.0 + contrast) + 0.5;
 
         half3 tintedRGB = mix(baseColor.rgb, tintColor, tintAlpha);
-        return finishGlass(half4(tintedRGB, baseColor.a), coord, edgeDistance);
+        return finishGlass(half4(tintedRGB, baseColor.a), surfaceCoord, edgeDistance);
     }
 
     sd = min(sd, 0.0);
@@ -148,7 +150,7 @@ half4 main(float2 coord) {
     float smoothRadius = max(radius * 1.5, 30.0);
     float gradRadius = min(smoothRadius, min(halfSize.x, halfSize.y));
 
-    float2 grad = fluidEnabled > 0.5 ? fluidNormal(coord)
+    float2 grad = fluidEnabled > 0.5 ? fluidNormal(surfaceCoord)
         : normalize(gradSdRoundedRect(centeredCoord, halfSize, gradRadius) + depthEffect * normalize(centeredCoord));
 
     float2 refractedCoord = coord + d * grad;
@@ -195,5 +197,5 @@ half4 main(float2 coord) {
     color.rgb = (color.rgb - 0.5) * (1.0 + contrast) + 0.5;
 
     half3 tintedRGB = mix(color.rgb, tintColor, tintAlpha);
-    return finishGlass(half4(tintedRGB, color.a), coord, edgeDistance);
+    return finishGlass(half4(tintedRGB, color.a), surfaceCoord, edgeDistance);
 }

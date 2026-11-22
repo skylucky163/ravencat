@@ -21,7 +21,7 @@ npm ci
 
 原生自绘界面的 `TextView`、`EditText` 使用 `setTextSize(TypedValue.COMPLEX_UNIT_DIP, 字号)`，保持与布局相同的密度单位。系统通知栏、权限弹窗等系统绘制的界面仍由 Android 管理。本策略只固定文字大小，不替换系统字体样式。
 
-升级 React Native 后需检查上述文本入口。补丁发现入口变化时会直接失败，不静默跳过。验证命令为 `node scripts/verify-fixed-font-size.cjs`。
+升级 React Native 后需检查上述文本入口。补丁发现入口变化时会直接失败，不静默跳过。验证命令为 `node tests/ui/verify-fixed-font-size.cjs`。
 
 ## 开发安装包
 
@@ -131,7 +131,7 @@ APK 位于 `android/app/build/outputs/apk/release/app-release.apk`。上述命�
 
 Expo SDK 54 的 prebuild 更新 `package.json` scripts 时不区分目标平台，即使指定 `--platform android`，缺失 `ios` script 也会被补为 `expo run:ios`，并触发整个 JSON 的重新排版。`--no-install` 仅跳过依赖安装，`--skip-dependency-update` 也不控制 scripts。项目保留一个明确报错退出的 `ios` script，声明不支持 iOS，同时避免每次 prebuild 都补回构建入口；Android 平台范围仍由 `app.config.js` 的 `platforms: ["android"]` 和 prebuild 参数负责。参见 [Expo SDK 54 的 scripts 更新实现](https://github.com/expo/expo/blob/sdk-54/packages/%40expo/cli/src/prebuild/updatePackageJson.ts)。
 
-Android 自适应图标在 development 使用透明的 `assets/adaptive-icon.png` 作为前景并配白底，preview／发布版使用 `assets/icon.png` 作为前景并配黑底；通用图标仍为 `assets/icon.png`。`plugins/withAndroidDevelopmentIcon.js` 在每次 prebuild 时生成 `src/debug/res` 中的开发版前景和白色背景，确保 preview 原生工程直接构建 debug 时也使用开发版图标；不能只覆盖底色，因为 `icon.png` 的不透明黑底会盖住它。启动屏由 `expo-splash-screen` 插件配置为黑底，居中显示 `assets/icon.png`，图像宽度为 200；实际效果以 release 构建为准。修改图标、Expo 原生配置或切换构建 profile 后，先设置对应的 `EAS_BUILD_PROFILE`，再运行不带 `--clean` 的 prebuild，将配置同步到 `android/`；仅修改业务 TypeScript / JavaScript 时，可以直接执行 Gradle 构建。保留 `android/` 和 Gradle 缓存时，未变化的任务可以复用上次输出，通常显示 `UP-TO-DATE`；不需要每次重新生成原生工程或执行 `clean`。详见 [Gradle 增量构建说明](https://docs.gradle.org/current/userguide/incremental_build.html)。
+Android 自适应图标在 development 使用透明的 `assets/adaptive-icon.png` 作为前景并配白底，preview／发布版使用 `assets/icon.png` 作为前景并配黑底；通用图标仍为 `assets/icon.png`。`plugins/withAndroidDevelopmentIcon.js` 在每次 prebuild 时生成 `src/debug/res` 中的开发版前景和白色背景，确保 preview 原生工程直接构建 debug 时也使用开发版图标；不能只覆盖底色，因为 `icon.png` 的不透明黑底会盖住它。`plugins/withAndroidReleaseIcon.js` 生成 `src/release/res` 中的自适应图标，前景四边各内缩六分之一，将完整图片缩到中央 72dp 区域，保留 logo 原有边距；该覆盖仅用于 preview／发布构建，不改变 debug 图标。启动屏由 `expo-splash-screen` 插件配置为黑底，居中显示 `assets/icon.png`，图像宽度为 200；实际效果以 release 构建为准。修改图标、Expo 原生配置或切换构建 profile 后，先设置对应的 `EAS_BUILD_PROFILE`，再运行不带 `--clean` 的 prebuild，将配置同步到 `android/`；仅修改业务 TypeScript / JavaScript 时，可以直接执行 Gradle 构建。保留 `android/` 和 Gradle 缓存时，未变化的任务可以复用上次输出，通常显示 `UP-TO-DATE`；不需要每次重新生成原生工程或执行 `clean`。详见 [Gradle 增量构建说明](https://docs.gradle.org/current/userguide/incremental_build.html)。
 
 确认新包与手机上已安装应用的签名相同后，可以直接覆盖安装并保留应用数据。若当前安装的是旧的本地 debug 签名版，则需要先导出备份，再手动卸载旧版、安装统一签名的新包并导入备份；Android 权限需重新授权。切换完成后，本地与云端 preview 就可继续覆盖更新。Android 更新规则见 [官方说明](https://developer.android.com/google/play/app-updates)。
 
@@ -160,6 +160,15 @@ npx eslint <修改的文件>
 
 业务验证和架构检查入口在 `package.json`，选择涉及的模块运行即可。核心契约验证依赖 Node.js 内置 `node:sqlite`，需要上述 Node.js 版本。
 
+测试代码在 `tests/`，目录与 `src/` 同构。新增、移动测试或调整入口后：
+
+```
+npm run verify:registration   # 未注册的测试文件、指向不存在文件的入口
+npm run verify:all            # 全部叶子入口，默认跳过 Gradle 与外网条目
+```
+
+目录规范、共享夹具用法和验收流程见 [tests/README.md](../tests/README.md)；约束条文见 [AGENTS.md](../AGENTS.md) §12。
+
 ## 代码导航
 
 | 目录 | 用途 |
@@ -169,6 +178,8 @@ npx eslint <修改的文件>
 | `src/features/` | 聊天、记忆、通话、陪伴等业务功能 |
 | `src/platform/` | 模型调用、SQLite、Android 等技术能力 |
 | `src/shared/` | 主题、通用组件和公共工具 |
+| `tests/` | 验证脚本，目录与 `src/` 同构 |
+| `scripts/` | 构建补丁、版本生成、文档生成器与外网探针 |
 | `modules/` | 本地 Android 原生模块 |
 | `plugins/` | Expo 原生配置插件 |
 

@@ -15,6 +15,7 @@ import { buildChatTurnAIInput } from './BuildChatTurnAIInput';
 import { processAIReply } from './ProcessAIReply';
 import { createSingleTransactionTurnCommit } from './SingleTransactionTurnCommit';
 import { ChatTurnPresentation } from './ChatTurnPresentationRuntime';
+import { USER_SUMMON_INTENT } from '../domain/UserSummonIntent';
 import type {
   AIReplyConfig,
   AIReplyRuntimeContext,
@@ -70,16 +71,17 @@ export async function executeUserReplyTurn(
     });
 
     const lastUserMessage = input.userMessages[input.userMessages.length - 1];
-    if (!lastUserMessage) {
+    const isCompanionshipSummon = run.kind === 'summon' && !lastUserMessage;
+    if (!lastUserMessage && !isCompanionshipSummon) {
       // 区间内没有用户消息（例如已被其它路径消费）：没有可回复输入，安静结束。
       return 'empty_reply';
     }
 
     await processAIReply(
       run.sessionId,
-      input.displayText,
+      isCompanionshipSummon ? USER_SUMMON_INTENT : input.displayText,
       aiConfig,
-      lastUserMessage.id,
+      lastUserMessage?.id ?? 0,
       repository,
       {
         ...params.callbacks,
@@ -91,16 +93,17 @@ export async function executeUserReplyTurn(
       {
         correlationId,
         triggerSource: 'chat',
-        triggerReason: 'user_message',
-        relatedEntityType: 'message',
-        relatedEntityId: String(lastUserMessage.id),
+        triggerReason: run.kind === 'summon' ? 'user_summon' : 'user_message',
+        relatedEntityType: isCompanionshipSummon ? 'conversation' : 'message',
+        relatedEntityId: isCompanionshipSummon ? run.sessionId : String(lastUserMessage!.id),
+        ...(isCompanionshipSummon ? { forceAppendUserText: true, memoryParticipation: 'read_write' as const } : {}),
         batchedUserMessageIds: input.userMessages.map((message) => message.id),
         batchedUserMessageCount: input.userMessages.length,
         ...(run.kind === 'regenerate' ? {
-          historyUpperBound: { messageId: run.inputHighWatermark, createdAt: lastUserMessage.createdAt },
+          historyUpperBound: { messageId: run.inputHighWatermark, createdAt: lastUserMessage!.createdAt },
           isRegeneration: true,
         } : {}),
-        turnInputMessages: input.turnInputMessages,
+        turnInputMessages: isCompanionshipSummon ? undefined : input.turnInputMessages,
         replyRunId: run.runId,
         abortSignal: params.signal,
         executionDeadlineAt: params.executionDeadlineAt,

@@ -1,5 +1,6 @@
 /** 摘要是用户记录，只有 conversation 删除级联；消息删除与可见边界不影响它。 */
 import type { DatabaseWriteExecutor } from '../runtime';
+import { addColumnIfMissing } from './schemaColumnGuard';
 export const CHAT_SUMMARY_SCHEMA = `
 CREATE TABLE IF NOT EXISTS chat_summary_request_settings (
   conversation_id TEXT PRIMARY KEY REFERENCES chat_conversations(id) ON DELETE CASCADE,
@@ -149,23 +150,28 @@ export async function migrateChatSummaryWorkQueue(db: DatabaseWriteExecutor): Pr
 export async function migrateChatSummaryModels(db: DatabaseWriteExecutor): Promise<void> {
   await db.execAsync(`CREATE TABLE IF NOT EXISTS chat_summary_request_settings (
     conversation_id TEXT PRIMARY KEY REFERENCES chat_conversations(id) ON DELETE CASCADE,
-    timeout_seconds INTEGER NOT NULL DEFAULT 300, max_output_tokens INTEGER);
-    ALTER TABLE chat_summary_request_settings ADD COLUMN model_config_id TEXT;
-    ALTER TABLE chat_summary_request_settings ADD COLUMN group_trigger_count INTEGER NOT NULL DEFAULT 40;`);
+    timeout_seconds INTEGER NOT NULL DEFAULT 300, max_output_tokens INTEGER);`);
+  await addColumnIfMissing(db, 'chat_summary_request_settings', 'model_config_id', 'TEXT');
+  await addColumnIfMissing(db, 'chat_summary_request_settings', 'group_trigger_count', 'INTEGER NOT NULL DEFAULT 40');
 }
 /** 归纳标记是处理进度，不是外键：用户删除二级正文后，不能自动补回或重新注入其原摘要。 */
 export async function migrateSecondaryChatSummary(db: DatabaseWriteExecutor): Promise<void> {
-  await db.execAsync("ALTER TABLE chat_summary_segments ADD COLUMN level TEXT NOT NULL DEFAULT 'primary' CHECK(level IN ('primary', 'secondary')); ALTER TABLE chat_summary_segments ADD COLUMN compaction_id TEXT; ALTER TABLE chat_summary_segments ADD COLUMN context_sequence INTEGER;");
+  await addColumnIfMissing(db, 'chat_summary_segments', 'level', "TEXT NOT NULL DEFAULT 'primary' CHECK(level IN ('primary', 'secondary'))");
+  await addColumnIfMissing(db, 'chat_summary_segments', 'compaction_id', 'TEXT');
+  await addColumnIfMissing(db, 'chat_summary_segments', 'context_sequence', 'INTEGER');
 }
 /** 单聊摘要条数默认跟随主视角上限；留空即跟随，手动填写后固定。 */
 export async function migrateChatSummaryPrimaryLimit(db: DatabaseWriteExecutor): Promise<void> {
-  await db.execAsync('ALTER TABLE chat_summary_request_settings ADD COLUMN primary_limit INTEGER;');
+  await addColumnIfMissing(db, 'chat_summary_request_settings', 'primary_limit', 'INTEGER');
 }
 /** 旧总开关映射到生成与注入两个独立开关；起点删除仅清引用，不恢复生成。 */
 export async function migrateFixedChatContext(db: DatabaseWriteExecutor): Promise<void> {
-  await db.execAsync(`ALTER TABLE chat_summary_settings ADD COLUMN inject_enabled INTEGER NOT NULL DEFAULT 1;
-    ALTER TABLE chat_summary_settings ADD COLUMN fixed_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL;
-    UPDATE chat_summary_settings SET inject_enabled = enabled;`);
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info('chat_summary_settings')");
+  const hadInjectEnabled = columns.some((column) => column.name === 'inject_enabled');
+  await addColumnIfMissing(db, 'chat_summary_settings', 'inject_enabled', 'INTEGER NOT NULL DEFAULT 1');
+  await addColumnIfMissing(db, 'chat_summary_settings', 'fixed_message_id', 'INTEGER REFERENCES messages(id) ON DELETE SET NULL');
+  // 只在本次真的新增列时迁移旧开关，避免重复执行覆盖用户已保存的选择。
+  if (!hadInjectEnabled) await db.execAsync('UPDATE chat_summary_settings SET inject_enabled = enabled;');
 }
 /** 消息插入时固化回合锚点，后续清除历史边界不影响摘要顺序。 */
 export const CHAT_TIMELINE_RUN_ANCHOR_SCHEMA = `

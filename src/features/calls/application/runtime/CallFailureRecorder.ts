@@ -93,7 +93,6 @@ export class CallFailureRecorder {
       source: params.payload.source || 'aiTool',
       sourceToolCallId: params.payload.sourceToolCallId || null,
       openingLine: params.payload.openingLine,
-      reason: params.payload.reason,
       startedAt: now,
       endedAt: now,
       endReason: params.endReason,

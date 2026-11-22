@@ -47,6 +47,7 @@ export interface AIProfile {
   enableTools: boolean;
   /** 默认沿用服务商行为；开启时请求模型关闭思考。 */
   disableThinking: boolean;
+  reasoningEffort: import('@platform/ai').ReasoningEffort;
   allowMultipleBubbles: boolean;
   /** 单聊回复传输偏好；null 跟随主题默认，从下一轮执行生效。 */
   streamingReply: boolean | null;
@@ -54,6 +55,8 @@ export interface AIProfile {
   showTokenUsage: boolean;
   /** 当前 AI 的单聊行动步骤（思考与工具过程）是否可见。 */
   showActionSteps: boolean;
+  /** 开启后只在用户显式召唤时请求回复，默认开启。 */
+  manualReply: boolean;
   /** 历史持久化字段，仅为兼容旧 SQLite 列保留，不参与运行时视觉判断。 */
   supportsVision: boolean;
   isLedgerAI: boolean;
@@ -97,6 +100,7 @@ export interface AIConfig {
   maxTokens?: number | null;
   enableTools?: boolean;
   disableThinking?: boolean;
+  reasoningEffort?: import('@platform/ai').ReasoningEffort;
   allowMultipleBubbles?: boolean;
   isHostAI?: boolean;
   isBlocked?: boolean;
@@ -130,7 +134,7 @@ export function createAIProfile(
     systemPrompt: data.systemPrompt || null,
     temperature: data.temperature ?? null,
     topP: data.topP ?? null,
-    maxTokens: data.maxTokens === undefined ? 2000 : data.maxTokens,
+    maxTokens: data.maxTokens ?? null,
     privateContextPrimaryLimit:
       data.privateContextPrimaryLimit ?? DEFAULT_PRIVATE_CONTEXT_PRIMARY_LIMIT,
     privateContextSecondaryLimit:
@@ -141,10 +145,12 @@ export function createAIProfile(
       data.groupContextSecondaryLimit ?? DEFAULT_GROUP_CONTEXT_SECONDARY_LIMIT,
     enableTools: data.enableTools ?? false,
     disableThinking: data.disableThinking ?? false,
+    reasoningEffort: data.reasoningEffort ?? 'auto',
     allowMultipleBubbles: data.allowMultipleBubbles ?? true,
     streamingReply: data.streamingReply ?? null,
     showTokenUsage: data.showTokenUsage ?? true,
     showActionSteps: data.showActionSteps ?? true,
+    manualReply: data.manualReply ?? true,
     supportsVision: false,
     isLedgerAI: data.isLedgerAI ?? false,
     isHostAI: data.isHostAI ?? false,

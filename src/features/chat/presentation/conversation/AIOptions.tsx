@@ -2,7 +2,7 @@
 import { getAssistantDisplayName } from '@features/assistants';
 
 import React from 'react';
-import { Library, Search } from 'lucide-react-native';
+import { Download, Library, Search } from 'lucide-react-native';
 import { Pressable, StyleSheet, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ThemedSurface, useTheme, useThemedStyles } from '@shared/theme';
@@ -35,6 +35,7 @@ interface AIOptionsProps {
   onCallHistory?: () => void;
   onChatStatistics?: () => void;
   onOpenCodeLibrary?: () => void;
+  onOpenConversationImport: () => void;
   onDeleteAI?: () => void | Promise<void>;
 }
 
@@ -109,6 +110,7 @@ export default function AIOptions({
   onCallHistory,
   onChatStatistics,
   onOpenCodeLibrary,
+  onOpenConversationImport,
   onDeleteAI,
 }: AIOptionsProps) {
   const theme = useTheme();
@@ -118,12 +120,12 @@ export default function AIOptions({
     if (!aiAssistant?.name || !onDeleteAI) return;
 
     showAppDialog({
-      title: '删除 AI 助手',
-      message: `删除「${getAssistantDisplayName(aiAssistant)}」会永久清空它的会话、消息、通话记录、聊天摘要和专属记忆空间。若要保留数据，请先到设置中备份应用。确定继续吗？`,
+      title: '移入 AI 回收站',
+      message: `「${getAssistantDisplayName(aiAssistant)}」及其单聊、记忆、通话记录和自己的朋友圈将隐藏，并停止参与活动。7 天内可到「设置 → 数据管理 → AI 回收站」恢复，到期自动彻底删除。\n群聊历史、分享快照和它在别人朋友圈里的互动会保留。`,
       buttons: [
         { text: '取消', style: 'cancel' },
         {
-          text: '删除',
+          text: '移入回收站',
           style: 'destructive',
           onPress: onDeleteAI,
         },
@@ -170,6 +172,10 @@ export default function AIOptions({
     {
       key: 'code-library', icon: <View style={styles.iconBox}><Library size={22} color={theme.colors.brand.primary} /></View>,
       title: '作品库', onPress: onOpenCodeLibrary,
+    },
+    {
+      key: 'conversation-import', icon: <View style={styles.iconBox}><Download size={22} color={theme.colors.brand.primary} /></View>,
+      title: '对话导入', onPress: onOpenConversationImport,
     },
     {
       key: 'protocol-space',

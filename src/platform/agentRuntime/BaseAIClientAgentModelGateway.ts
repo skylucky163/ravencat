@@ -219,6 +219,7 @@ export function buildAgentModelMessages(
     } else {
       flushImages();
       historyMessages.push({ role: 'assistant', content: item.content, reasoning_content: item.reasoningText,
+        ...(item.reasoningReplay ? { reasoningReplay: item.reasoningReplay } : {}),
         tool_calls: item.toolCalls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } })) });
     }
   }

@@ -99,7 +99,8 @@ export async function runPostUserDeclineFollowUp(
       temperature: aiConfig.temperature,
       topP: aiConfig.topP,
       disableThinking: aiConfig.disableThinking,
-      maxTokens: Math.max(aiConfig.maxTokens || 0, 300),
+      reasoningEffort: aiConfig.reasoningEffort,
+      maxTokens: aiConfig.maxTokens == null ? aiConfig.maxTokens : Math.max(aiConfig.maxTokens, 300),
       systemPrompt: promptPack.systemPrompt,
     });
     const response = await client.chat(promptPack.modelMessages, {

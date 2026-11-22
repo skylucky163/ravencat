@@ -188,7 +188,7 @@ const WalletScreen: React.FC<WalletScreenProps> = ({ onOpenHistory }) => {
   const handleSetLedgerAI = async (aiId: string | null): Promise<void> => {
     console.log('[Wallet] Setting ledger AI:', aiId);
     try {
-      await setLedgerAIAssistant(aiId);
+      if (!await setLedgerAIAssistant(aiId)) throw new Error('要指派的 AI 已不可用');
       await loadData();
     } catch (error) {
       console.error('[Wallet] Failed to set ledger AI:', error);

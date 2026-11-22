@@ -21,6 +21,7 @@ import {
   buildAttachmentMessageMetadata,
   buildStickerMessageMetadata,
   buildUserMessagePreviewText,
+  getReplyQuoteAttachments,
 } from '@features/chat/messages/domain';
 import {
   getChatMessageRuntimeDependencies,
@@ -39,6 +40,7 @@ function formatMessageTime(date: Date | string): string {
 }
 
 export interface SendUserMessageParams {
+  requestReply?: boolean;
   sessionId: string;
   text: string;
   replyToId?: number | null;
@@ -48,7 +50,7 @@ export interface SendUserMessageParams {
   attachments?: ChatAttachment[];
   sharedRecord?: SharedChatRecord;
   sharedMoment?: SharedMoment;
-  /** 独立 Sticker 消息语义；不能与普通附件同时出现。 */
+  /** 拆为独立 Sticker 消息，与同次图文共享提交边界。 */
   sticker?: StickerMessageSnapshot | null;
 }
 
@@ -116,16 +118,12 @@ export async function sendUserMessageInternal(
       };
     }
 
-    if (sticker && attachments.length > 0) {
-      throw new Error('Sticker 消息不能同时携带普通附件');
-    }
-
-    const parts = splitUserMessageSubmission({ text, attachments, clientMessageId, sharedRecord, sharedMoment });
+    const parts = splitUserMessageSubmission({ text, attachments, clientMessageId, sharedRecord, sharedMoment, sticker });
     // 同次发送可有多个气泡，摘要仍按一次用户提交计数。
     const logicalMessageId = parts.length > 1 ? 'user_submission:' + (clientMessageId ?? randomUUID()) : null;
     const inputs: CommitMessageInput[] = parts.map((part, index) => {
-      const messageMetadata = part.sharedRecord ? { kind: 'shared_record', sharedRecord: part.sharedRecord } : part.sharedMoment ? { kind: 'shared_moment', sharedMoment: part.sharedMoment } : sticker
-        ? buildStickerMessageMetadata(sticker)
+      const messageMetadata = part.sharedRecord ? { kind: 'shared_record', sharedRecord: part.sharedRecord } : part.sharedMoment ? { kind: 'shared_moment', sharedMoment: part.sharedMoment } : part.sticker
+        ? buildStickerMessageMetadata(part.sticker)
         : buildAttachmentMessageMetadata(part);
       const isLast = index === parts.length - 1;
       return {
@@ -159,8 +157,12 @@ export async function sendUserMessageInternal(
       };
     });
     const tail = inputs[inputs.length - 1];
-    prepared = await prepareChatAttachments([...(sharedRecord ? sharedRecord.entries.flatMap((entry) => entry.attachments) : attachments), ...(params.replyQuote?.attachments ?? [])]);
+    prepared = await prepareChatAttachments([
+      ...(sharedRecord ? sharedRecord.entries.flatMap((entry) => entry.attachments) : attachments),
+      ...getReplyQuoteAttachments(params.replyQuote),
+    ]);
     const result = await commitAndDispatchCanonicalUserMessage({
+      requestReply: params.requestReply,
       ...tail,
       precedingMessages: inputs.slice(0, -1),
       aiConfig,

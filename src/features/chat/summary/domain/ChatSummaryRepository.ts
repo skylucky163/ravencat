@@ -112,12 +112,16 @@ export interface ChatBackgroundContext {
   summaryInjectionEnabled?: boolean;
   membership?: { status: 'left'; exitedAt: string };
 }
+export interface ChatSummaryContextOptions {
+  importedHistoryLimit?: number;
+}
+
 export interface ChatSummaryRepository {
   captureGroupHistoryInTransaction(transaction: import('@platform/persistence').DatabaseTransactionExecutor, groupId: string, groupName: string): Promise<ChatBackgroundContext>;
   invalidateModelReferencesInTransaction(transaction: import('@platform/persistence').DatabaseTransactionExecutor, modelConfigId: string): Promise<void>;
   invalidateServiceReferencesInTransaction(transaction: import('@platform/persistence').DatabaseTransactionExecutor, serviceConfigId: string): Promise<void>;
   readBackgroundContexts(assistantId: string, currentConversationId: string, options: ChatBackgroundContextOptions): Promise<ChatBackgroundContext[]>;
-  readContext(conversationId: string, protectedMessageIds: readonly number[]): Promise<ChatSummarySnapshot>;
+  readContext(conversationId: string, protectedMessageIds: readonly number[], options?: ChatSummaryContextOptions): Promise<ChatSummarySnapshot>;
   prepareConversations(now: string, conversationIds?: readonly string[]): Promise<{ conversationIds: string[]; pausedConversationIds: string[] }>;
   readQueuedRevision(conversationId: string): Promise<number | null>;
   acknowledgeQueuedRevision(conversationId: string, revision: number): Promise<void>;

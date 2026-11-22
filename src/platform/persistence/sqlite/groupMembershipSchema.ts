@@ -1,5 +1,6 @@
 /** 退出历史只依赖 AI 身份，不随原群删除；群成员的禁言不改变 enabled 成员资格。 */
 import type { DatabaseWriteExecutor } from '../runtime';
+import { addColumnIfMissing } from './schemaColumnGuard';
 
 export const GROUP_HISTORY_SCHEMA = `CREATE TABLE IF NOT EXISTS group_chat_history (
   id TEXT PRIMARY KEY,
@@ -14,6 +15,6 @@ export const GROUP_HISTORY_SCHEMA = `CREATE TABLE IF NOT EXISTS group_chat_histo
 );`;
 
 export async function migrateGroupMembership(db: DatabaseWriteExecutor): Promise<void> {
-  await db.execAsync(`ALTER TABLE group_chat_members ADD COLUMN muted INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1));
-    ALTER TABLE group_chat_members ADD COLUMN joined_during_plan_id TEXT;`);
+  await addColumnIfMissing(db, 'group_chat_members', 'muted', 'INTEGER NOT NULL DEFAULT 0 CHECK (muted IN (0, 1))');
+  await addColumnIfMissing(db, 'group_chat_members', 'joined_during_plan_id', 'TEXT');
 }

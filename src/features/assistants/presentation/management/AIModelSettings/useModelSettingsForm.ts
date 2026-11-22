@@ -3,9 +3,8 @@ import { useCallback, useMemo } from 'react';
 import type { AIProfile } from '../../../domain/AIProfile';
 import { updateAIModelSettings } from '../../../AIAssistantManagement';
 import { useAutoSaveDraft } from '@shared/ui/useAutoSaveDraft';
-import { readDraftNumber } from '@shared/ui/draftValidation';
+import { readDraftInteger, readDraftNumber } from '@shared/ui/draftValidation';
 import {
-  DEFAULT_MAX_TOKENS,
   getModelSettingsDraft, parseModelSettingsDraft,
   type ModelSettingsDraft,
 } from './modelSettingsHelpers';
@@ -30,12 +29,14 @@ export default function useModelSettingsForm({ aiAssistant, onUpdated }: {
   }, [change]);
   const temperatureInput = readDraftNumber(draft.tempInput, 'Temperature', 0, 2, true);
   const topPInput = readDraftNumber(draft.topPInput, 'Top P', 0, 1, true);
+  const maxTokensInput = readDraftInteger(draft.maxTokens, 'Max Tokens', true);
   const getConnectionParams = useCallback(() => ({
     temperature: temperatureInput.value,
     topP: topPInput.value,
-    maxTokens: draft.maxTokens === '无限制' ? null : Number(draft.maxTokens),
+    maxTokens: maxTokensInput.value,
     disableThinking: draft.disableThinking,
-  }), [temperatureInput.value, topPInput.value, draft.maxTokens, draft.disableThinking]);
+    reasoningEffort: draft.reasoningEffort,
+  }), [temperatureInput.value, topPInput.value, maxTokensInput.value, draft.disableThinking, draft.reasoningEffort]);
   return {
     ...editor, ...draft,
     // 无效草稿保留原输入，滑杆只接受已保存的合法投影。
@@ -46,11 +47,12 @@ export default function useModelSettingsForm({ aiAssistant, onUpdated }: {
     setSelectedModel: (value: string) => setField('selectedModel', value, true),
     setEnableTools: (value: boolean) => setField('enableTools', value, true),
     setDisableThinking: (value: boolean) => setField('disableThinking', value, true),
+    setReasoningEffort: (value: ModelSettingsDraft['reasoningEffort']) => setField('reasoningEffort', value, true),
     handleTempChange: (value: string, immediate = false) => setField('tempInput', value, immediate),
     handleTopPChange: (value: string, immediate = false) => setField('topPInput', value, immediate),
-    handleMaxTokensChange: (value: string, immediate = false) => setField('maxTokens', value, immediate),
+    handleMaxTokensChange: (value: string) => setField('maxTokens', value),
     getConnectionParams,
     fillServiceConnection: (service: { id: string; baseUrl: string; apiKey: string }) => change({ serviceConfigId: service.id, apiBaseUrl: service.baseUrl, apiKey: service.apiKey }, true),
-    handleReset: () => change({ tempInput: '', topPInput: '', maxTokens: String(DEFAULT_MAX_TOKENS) }, true),
+    handleReset: () => change({ tempInput: '', topPInput: '', maxTokens: '', reasoningEffort: 'auto' }, true),
   };
 }

@@ -11,7 +11,7 @@ export interface OpenAppArgs {
 
 export const definition = {
   name: 'open_app',
-  description: '打开由精确 Android package name 指定的本机应用；只派发普通前台启动请求，不执行应用内操作。',
+  description: '打开本机应用；只派发普通前台启动请求，不执行应用内操作。',
   parameters: {
     type: 'object',
     properties: {

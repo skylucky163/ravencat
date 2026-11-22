@@ -1,18 +1,15 @@
-// Max Tokens 输入 + 预设区块
+// 可留空的 Max Tokens 输入区块
 
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity } from 'react-native';
+import { View, Text } from 'react-native';
 import { useTheme, useThemedStyles } from '@shared/theme';
+import { AppTextInput } from '@shared/ui';
 import { createModelSettingsStyles } from './styles';
-
-const TOKEN_PRESETS = ['2000', '4000', '8000', '无限制'];
 
 interface MaxTokensSectionProps {
   value: string;
   onChangeText: (text: string) => void;
-  description?: string;
   onBlur?: () => void;
-  onSelectPreset?: (text: string) => void;
   error?: string;
 }
 
@@ -21,7 +18,7 @@ interface MaxTokensSectionProps {
  * @param value - 当前值
  * @param onChangeText - 变化回调
  */
-export default function MaxTokensSection({ value, onChangeText, description, onBlur, onSelectPreset, error }: MaxTokensSectionProps) {
+export default function MaxTokensSection({ value, onChangeText, onBlur, error }: MaxTokensSectionProps) {
   const styles = useThemedStyles(createModelSettingsStyles);
   const theme = useTheme();
 
@@ -29,7 +26,8 @@ export default function MaxTokensSection({ value, onChangeText, description, onB
     <View style={[styles.section, styles.sectionLightBorder]}>
       <View style={styles.modelSectionHeader}>
         <Text style={styles.sectionLabel}>Max Tokens</Text>
-        <TextInput
+        <AppTextInput
+          accessibilityLabel="Max Tokens"
           style={[styles.paramInput, error && { borderColor: theme.colors.feedback.error }]}
           value={value}
           onChangeText={onChangeText}
@@ -41,19 +39,7 @@ export default function MaxTokensSection({ value, onChangeText, description, onB
         />
       </View>
       {error ? <Text accessibilityRole="alert" style={{ color: theme.colors.feedback.error, fontSize: 13, marginBottom: theme.spacing.sm }}>{error}</Text> : null}
-      {description ? <Text style={styles.paramDescription}>{description}</Text> : null}
-      <View style={styles.presetContainer}>
-        {TOKEN_PRESETS.map((tokens) => (
-          <TouchableOpacity
-            key={tokens}
-            style={styles.presetBtn}
-            onPress={() => (onSelectPreset || onChangeText)(tokens)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.presetText}>{tokens}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <Text style={styles.paramDescription}>留空使用服务商默认值。</Text>
     </View>
   );
 }

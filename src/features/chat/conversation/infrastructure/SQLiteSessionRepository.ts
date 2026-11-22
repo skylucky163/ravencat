@@ -93,6 +93,7 @@ export class SessionRepository implements ISessionRepository {
         WHERE session_id = ? AND status = 'active'`, [clearedAt, sessionId]);
       await transaction.runAsync(`UPDATE conversation_turn_state
         SET active_run_id = NULL, active_run_kind = NULL, revision = revision + 1,
+            reply_requested = 0, summon_requested = 0,
             host_request_revision = host_request_revision + 1, host_request_input_id = NULL,
             host_request_status = NULL, host_request_at = NULL, updated_at = ?
         WHERE session_id = ?`, [clearedAt, sessionId]);

@@ -8,6 +8,7 @@
  */
 
 import type { AIProfile } from '@features/assistants';
+import { USER_SUMMON_INTENT } from '../../reply/domain/UserSummonIntent';
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
 import { getMessageAttachments } from '../../messages/domain/chatMessageMetadata';
 import { getChatMessageRuntimeDependencies } from '../../messages/application/ChatMessageRuntime';
@@ -45,12 +46,14 @@ function toAIReplyConfig(ai: AIProfile): AIReplyConfig {
     temperature: ai.temperature,
     topP: ai.topP,
     disableThinking: ai.disableThinking,
+    reasoningEffort: ai.reasoningEffort,
     maxTokens: ai.maxTokens,
     privateContextPrimaryLimit: ai.privateContextPrimaryLimit,
     privateContextSecondaryLimit: ai.privateContextSecondaryLimit,
     groupContextPrimaryLimit: ai.groupContextPrimaryLimit,
     groupContextSecondaryLimit: ai.groupContextSecondaryLimit,
     enableTools: ai.enableTools,
+    manualReply: ai.manualReply,
     allowMultipleBubbles: ai.allowMultipleBubbles,
     isHostAI: ai.isHostAI,
     isBlocked: ai.isBlocked,
@@ -188,9 +191,9 @@ async function executeGroupSpeechTask(
     if (!await runtime.groups.isSpeechTaskCommitEligible(context.planId, task.id)) return;
     await processAIReply(
       groupId,
-      GROUP_MEMBER_TURN_REQUEST,
+      context.currentUserMessages.length === 0 ? USER_SUMMON_INTENT : GROUP_MEMBER_TURN_REQUEST,
       toAIReplyConfig(ai),
-      context.currentUserMessages[context.currentUserMessages.length - 1].id,
+      context.currentUserMessages.at(-1)?.id ?? 0,
       getChatMessageRuntimeDependencies().messages,
       {
         notifyUI: emitChatMessagesUpdated,
@@ -209,8 +212,10 @@ async function executeGroupSpeechTask(
         relatedEntityType: 'group_speech_plan',
         relatedEntityId: context.planId,
         batchedUserMessageIds: context.currentUserMessages.map((message) => message.id),
-        historyUpperBound: { messageId: context.inputUpperBoundMessageId,
-          createdAt: context.currentUserMessages[context.currentUserMessages.length - 1].createdAt },
+        ...(context.currentUserMessages.length > 0 ? {
+          historyUpperBound: { messageId: context.inputUpperBoundMessageId,
+            createdAt: context.currentUserMessages.at(-1)!.createdAt },
+        } : { forceAppendUserText: true, memoryParticipation: 'read_write' as const }),
         batchedUserMessageCount: context.currentUserMessages.length,
         capabilities: context.currentUserMessages.some((message) => (
           getMessageAttachments(message).some((attachment) => attachment.type === 'image')

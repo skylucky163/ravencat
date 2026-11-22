@@ -8,6 +8,7 @@ import type {
 } from './domain/AssistantRepository';
 
 export { aiAssistantRepository } from './infrastructure/SQLiteAssistantRepository';
+export { aiHostRepository } from './infrastructure/SQLiteHostRepository';
 
 /** Host-only M3b maintenance：列出 AI owner 的 legacy 头像候选。 */
 export function listAIAvatarMediaAssetMigrationCandidates(): Promise<
@@ -32,3 +33,4 @@ export type {
 export { configureAssistantVoiceModels, getAssistantVoiceModelId, notifyAssistantVoiceModelsChanged } from './application/AssistantVoiceModels';
 export { assistantVoiceSettingsRepository } from './infrastructure/SQLiteAssistantVoiceSettingsRepository';
 export { configureAuxiliaryModelInitialization } from './application/AuxiliaryModelInitialization';
+export { appointHostAIAssistantInTransaction, getNextAIRecycleBinExpiry } from './AIAssistantManagement';

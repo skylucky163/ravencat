@@ -66,10 +66,23 @@ export interface RequestProactiveChatReplyResult {
 export async function requestProactiveChatReply(
   params: RequestProactiveChatReplyParams,
 ): Promise<RequestProactiveChatReplyResult> {
+  return (await executeProactiveChatReply(params, false))!;
+}
+
+/** 应用通知给 AI 一次发言机会，静默时不产生用户可见回复。 */
+export function requestOptionalProactiveChatReply(params: RequestProactiveChatReplyParams) {
+  return executeProactiveChatReply(params, true);
+}
+
+async function executeProactiveChatReply(
+  params: RequestProactiveChatReplyParams,
+  allowSilentReply: boolean,
+): Promise<RequestProactiveChatReplyResult | null> {
   const repository = getChatMessageRuntimeDependencies().messages;
   const correlationId = params.correlationId || undefined;
   const runtimeContext: AIReplyRuntimeContext = {
     inputSource: 'application',
+    allowSilentReply,
     abortSignal: params.abortSignal,
     executionDeadlineAt: params.executionDeadlineAt,
     correlationId,
@@ -90,8 +103,10 @@ export async function requestProactiveChatReply(
   const committedSegments = new Map<number, ProactiveChatReplySegment>();
   const deliveries: ProactiveChatReplyDelivery[] = [];
   let finalReply: AIReplyFinalPayload | null = null;
+  let silent = false;
 
   const callbacks: ProcessAIReplyCallbacks = {
+    onSilentReply: () => { silent = true; },
     notifyUI: emitChatMessagesUpdated,
     onReplySegment: ({
       text,
@@ -132,6 +147,7 @@ export async function requestProactiveChatReply(
     emitChatTypingStatusChanged(params.sessionId, false, correlationId);
   }
 
+  if (silent) return null;
   const segments = [...committedSegments.values()].sort(
     (left, right) => left.segmentIndex - right.segmentIndex,
   );

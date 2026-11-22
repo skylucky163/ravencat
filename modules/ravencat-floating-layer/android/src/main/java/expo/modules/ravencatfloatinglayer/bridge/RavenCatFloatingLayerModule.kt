@@ -87,10 +87,11 @@ class RavenCatFloatingLayerModule : Module() {
           mapOf("deliveryEventId" to deliveryEventId),
         )
       }
-      RavenCatOverlayRuntime.conversationDisplayedListener = { sessionId, messageIds ->
+      RavenCatOverlayRuntime.conversationDisplayedListener = { sessionId, messageIds, clientMessageIds ->
         sendEvent("onConversationDisplayed", mapOf(
           "sessionId" to sessionId,
           "messageIds" to messageIds.map { it.toString() },
+          "clientMessageIds" to clientMessageIds,
         ))
       }
       RavenCatOverlayRuntime.conversationRefreshListener = {
@@ -461,6 +462,7 @@ class RavenCatFloatingLayerModule : Module() {
       val correlationId = payload["correlationId"] as? String
       RavenCatOverlayRuntime.updateReplyPreview(
         text, status, correlationId, payload["sessionId"] as? String, (payload["messageId"] as? Number)?.toLong(),
+        payload["requestCorrelationId"] as? String,
       )
     }.runOnQueue(Queues.MAIN)
 

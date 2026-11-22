@@ -33,6 +33,7 @@ export interface AIReplyConfig {
   temperature?: number | null;
   topP?: number | null;
   disableThinking?: boolean;
+  reasoningEffort?: import('@platform/ai').ReasoningEffort;
   maxTokens?: number | null;
   /** 单聊上下文作为主场时的可见条数；缺失时由共享默认常量兜底。 */
   privateContextPrimaryLimit?: number;
@@ -43,6 +44,7 @@ export interface AIReplyConfig {
   /** 群聊上下文作为客体注入时的可见条数；缺失时由共享默认常量兜底。 */
   groupContextSecondaryLimit?: number;
   enableTools?: boolean;
+  manualReply?: boolean;
   allowMultipleBubbles?: boolean;
   enableStreamingReply?: boolean;
   isHostAI?: boolean;
@@ -51,6 +53,8 @@ export interface AIReplyConfig {
 
 export interface AIReplyRuntimeContext {
   inputSource?: 'application';
+  /** 应用触发的完整模型回复可以选择静默，不投影控制标记。 */
+  allowSilentReply?: boolean;
   /** 已在调用方参与者目录中固定的当前用户显示名；群聊 Prompt 不应再次读取当前资料。 */
   userDisplayName?: string;
   correlationId?: string;
@@ -158,15 +162,12 @@ export interface ToolExecutionResult {
 }
 
 export interface ProcessAIReplyCallbacks {
+  onSilentReply?: () => void;
   notifyUI?: (sessionId: string) => void;
   onReplyCommitted?: () => void;
-  /** 已持久交付的完整运行正文，可由悬浮预览消费；此时尚无正式数据库消息 ID。 */
-  onReplyDisplaySegment?: (
-    payload: AIReplyDisplaySegmentPayload
-  ) => void | AIReplyProjectionReceipt | Promise<void | AIReplyProjectionReceipt>;
   onReplySegment?: (
     payload: AIReplySegmentPayload
-  ) => void | AIReplyProjectionReceipt | Promise<void | AIReplyProjectionReceipt>;
+  ) => void | Promise<void>;
   onFinalReply?: (payload: AIReplyFinalPayload) => void;
   onReplyFailed?: (payload: AIReplyFailedPayload) => void;
   /**
@@ -177,11 +178,6 @@ export interface ProcessAIReplyCallbacks {
     message: AIMessageReceivedPayload;
     receipt: AIMessageDeliveryReceipt;
   }) => void | Promise<void>;
-}
-
-/** 回复投影完成后的消费回执；仅表达展示，不参与 execution host 所有权判定。 */
-export interface AIReplyProjectionReceipt {
-  userNotificationHandled: boolean;
 }
 
 export interface AIReplySegmentPayload {
@@ -195,13 +191,6 @@ export interface AIReplySegmentPayload {
   clientMessageId?: string;
   segmentIndex: number;
   segmentTotal: number;
-}
-
-export interface AIReplyDisplaySegmentPayload {
-  sessionId: string;
-  clientMessageId: string;
-  text: string;
-  previewText: string;
 }
 
 export interface AIReplyFinalSegment {

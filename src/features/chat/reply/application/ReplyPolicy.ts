@@ -49,6 +49,7 @@ export function shouldUseStreamingReply(
 
   return Boolean(
     requestedStreaming &&
+    !runtimeContext.allowSilentReply &&
     triggerSource === 'chat' &&
     !runtimeContext.groupChat
   );

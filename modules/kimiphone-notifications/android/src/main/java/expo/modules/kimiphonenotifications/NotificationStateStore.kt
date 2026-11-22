@@ -10,6 +10,8 @@ internal data class ConversationChildNotification(
   val text: String,
   val senderName: String?,
   val postedAtEpochMs: Long,
+  val sessionId: String? = null,
+  val committedMessageId: Long? = null,
 )
 
 /**
@@ -74,6 +76,7 @@ internal object NotificationStateStore {
     childId: String,
     message: String,
     lastMessageAt: Long,
+    committedMessageId: Long? = null,
   ): ConversationUpsertResult {
     val states = readConversations(context).associateBy { it.conversationKey }.toMutableMap()
     val previous = states[conversationKey]
@@ -82,7 +85,8 @@ internal object NotificationStateStore {
       // 同 eventId 重发：原位更新文本，不重复计数。
       previousChildren.map { child ->
         if (child.childId == childId) {
-          child.copy(text = message, senderName = senderName, postedAtEpochMs = lastMessageAt)
+          child.copy(text = message, senderName = senderName, postedAtEpochMs = lastMessageAt,
+            sessionId = sessionId, committedMessageId = committedMessageId)
         } else {
           child
         }
@@ -93,6 +97,8 @@ internal object NotificationStateStore {
         text = message,
         senderName = senderName,
         postedAtEpochMs = lastMessageAt,
+        sessionId = sessionId,
+        committedMessageId = committedMessageId,
       )
     }
     val evicted = nextChildren.dropLast(MAX_CHILDREN).map { it.childId }
@@ -128,7 +134,8 @@ internal object NotificationStateStore {
       states.filterNot { it.conversationKey == conversationKey }
     } else {
       states.map { state ->
-        if (state.conversationKey == conversationKey) state.copy(children = remaining) else state
+        if (state.conversationKey == conversationKey) state.copy(children = remaining,
+          sessionId = remaining.last().sessionId, lastMessageAt = remaining.last().postedAtEpochMs) else state
       }
     }
     writeConversations(context, next)
@@ -164,6 +171,8 @@ internal object NotificationStateStore {
                   text = text,
                   senderName = child.optNullableString("senderName"),
                   postedAtEpochMs = child.optLong("postedAtEpochMs", 0L),
+                  sessionId = child.optNullableString("sessionId"),
+                  committedMessageId = (child.opt("committedMessageId") as? Number)?.toLong(),
                 ),
               )
             }
@@ -320,6 +329,8 @@ internal object NotificationStateStore {
                     put("text", child.text)
                     putNullable("senderName", child.senderName)
                     put("postedAtEpochMs", child.postedAtEpochMs)
+                    putNullable("sessionId", child.sessionId)
+                    putNullable("committedMessageId", child.committedMessageId)
                   },
                 )
               }

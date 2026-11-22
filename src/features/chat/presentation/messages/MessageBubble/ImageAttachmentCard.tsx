@@ -47,18 +47,20 @@ export default function ImageAttachmentCard({
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
   const mediaCache = useContext(ChatMediaResolutionCacheContext)?.images;
-  const { mediaAssetId, thumbnailMediaAssetId, localUri, thumbnailUri } = attachment;
+  const { mediaAssetId, thumbnailMediaAssetId, localUri, thumbnailUri, unavailable } = attachment;
   // 只在媒体引用变化时重新解析，正文、识别结果与 metadata 对象换代不影响图片展示。
   const mediaReference = useMemo((): ChatAttachmentMediaReference => {
     if (typeof mediaAssetId === 'string') {
       return { mediaAssetId, thumbnailMediaAssetId };
     }
+    if (unavailable) return { unavailable };
     return { localUri, thumbnailUri };
-  }, [mediaAssetId, thumbnailMediaAssetId, localUri, thumbnailUri]);
+  }, [mediaAssetId, thumbnailMediaAssetId, localUri, thumbnailUri, unavailable]);
   const mediaKey = JSON.stringify(mediaReference);
   const [previewVisible, setPreviewVisible] = useRecyclingState(false, [attachment.id, mediaKey]);
   const [resolution, setResolution] = useRecyclingState<ImageResolutionState>(
     () => {
+      if (unavailable) return { status: 'unavailable' };
       const uris = mediaCache?.get(mediaKey);
       return uris ? { status: 'ready', uris } : { status: 'loading' };
     },
@@ -114,6 +116,7 @@ export default function ImageAttachmentCard({
           source={resolvedUris ? { uri: resolvedUris.previewUri } : undefined}
           style={imageStyle}
           resizeMode="cover"
+          resizeMethod="resize"
         />
         {resolution.status !== 'ready' ? (
           <View style={[StyleSheet.absoluteFill, styles.placeholder]} pointerEvents="none">
@@ -121,8 +124,8 @@ export default function ImageAttachmentCard({
               <ActivityIndicator color={theme.colors.icon.secondary} accessibilityLabel="图片加载中" />
             ) : (
               <>
-                <Ionicons name="image-outline" size={28} color={theme.colors.icon.secondary} />
-                <Text style={styles.placeholderText}>图片不可用</Text>
+                <Ionicons name="image-outline" size={thumbnail ? 20 : 28} color={theme.colors.icon.secondary} />
+                {!thumbnail ? <Text style={styles.placeholderText}>图片不可用</Text> : null}
               </>
             )}
           </View>
@@ -149,11 +152,11 @@ const createStyles = (theme: PresentationTheme) => StyleSheet.create({
     backgroundColor: theme.colors.border.light,
   },
   thumbnailContainer: {
-    width: 72,
+    width: 44,
   },
   imageThumbnail: {
-    width: 72,
-    height: 72,
+    width: 44,
+    height: 44,
   },
   placeholder: {
     justifyContent: 'center',

@@ -1,23 +1,8 @@
-/** 协议空间功能公共出口，包含界面、仓储契约、应用入口和 AI 工具。 */
-export { ProtocolView } from './presentation';
-export {
-  deleteProtocol,
-  listProtocolsByAI,
-  PROTOCOL_MAX_LENGTH,
-  saveProtocol,
-} from './composition';
-export {
-  SQLiteProtocolRepository,
-  protocolRepository,
-} from './infrastructure/SQLiteProtocolRepository';
+/** 协议空间的页面入口、条目快照和 AI 工具。 */
+export { default as ProtocolView } from './ProtocolScreen';
 export { AddProtocolTool } from './aiTools/AddProtocolTool';
 export { DeleteProtocolTool } from './aiTools/DeleteProtocolTool';
 export { GetProtocolsTool } from './aiTools/GetProtocolsTool';
 export { SearchProtocolsTool } from './aiTools/SearchProtocolsTool';
 export { UpdateProtocolTool } from './aiTools/UpdateProtocolTool';
-export type {
-  CreateProtocolInput,
-  IProtocolRepository,
-  Protocol,
-  UpdateProtocolInput,
-} from './domain/ProtocolRepository';
+export type { Protocol } from './domain/ProtocolRepository';

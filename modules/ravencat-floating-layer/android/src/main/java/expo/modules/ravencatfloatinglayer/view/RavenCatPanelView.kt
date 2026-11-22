@@ -26,7 +26,7 @@ internal class RavenCatPanelView(
   context: Context,
   onIntent: (RavenCatOverlayIntent) -> Unit,
   onPageChanged: (RavenCatPanelPage) -> Unit,
-  onMessagesDisplayed: (String, List<Long>) -> Unit,
+  onMessagesDisplayed: (String, List<Long>, List<String>) -> Unit,
 ) : FrameLayout(context) {
   private val conversationView = RavenCatConversationView(context, onMessagesDisplayed)
   private val composerView = RavenCatComposerView(context, onIntent)

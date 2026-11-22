@@ -15,6 +15,7 @@ import type { GroupSpeechPlanRotation } from '../domain/GroupChat';
 import {
   buildAttachmentMessageMetadata,
   buildUserMessagePreviewText,
+  getReplyQuoteAttachments,
   type GroupMessageMention,
   type ChatReplyQuote,
 } from '../../messages/domain/chatMessageMetadata';
@@ -152,7 +153,10 @@ export async function commitGroupUserMessage(params: {
     };
   });
   const previewText = inputs[inputs.length - 1].previewText;
-  const prepared = await prepareChatAttachments([...(params.sharedRecord ? params.sharedRecord.entries.flatMap((entry) => entry.attachments) : attachments), ...(params.replyQuote?.attachments ?? [])]);
+  const prepared = await prepareChatAttachments([
+    ...(params.sharedRecord ? params.sharedRecord.entries.flatMap((entry) => entry.attachments) : attachments),
+    ...getReplyQuoteAttachments(params.replyQuote),
+  ]);
   let result: CommitGroupUserMessageResult;
   try {
     result = await databaseCoordinator.transaction(

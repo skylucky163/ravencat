@@ -1,7 +1,8 @@
 export interface ConnectionTestOptions {
   disableThinking?: boolean;
+  reasoningEffort?: import('@platform/ai').ReasoningEffort;
   temperature?: number | null;
-  maxTokens?: number;
+  maxTokens?: number | null;
   topP?: number | null;
   skipParams?: boolean;
 }

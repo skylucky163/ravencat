@@ -16,7 +16,7 @@ export const SendImageTool = {
   name: 'send_image',
   definition: {
     name: 'send_image',
-    description: '将一张图片作为真实图片消息发送到当前单聊或群聊，用户可点击查看原图。网络图片先用 download_image 下载，再传入返回的 mediaAssetId；也可复用消息或 query_downloaded_images 中的图片 ID。一次调用发送一张，可连续调用发送多张。图片可以单独构成完整回复。',
+    description: '将一张图片作为真实图片消息发送到当前单聊或群聊。一次调用发送一张，可连续调用发送多张。',
     parameters: {
       type: 'object',
       properties: {

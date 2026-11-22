@@ -65,6 +65,7 @@ export async function requestOutgoingCallDecision(params: {
     temperature: aiConfig.temperature,
     topP: aiConfig.topP,
     disableThinking: aiConfig.disableThinking,
+    reasoningEffort: aiConfig.reasoningEffort,
     maxTokens: aiConfig.maxTokens,
     systemPrompt: promptPack.systemPrompt,
   });

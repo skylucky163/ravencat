@@ -1,5 +1,5 @@
 /** Host 组合 Chat 真值与悬浮展示；每次替换最近消息窗口，不累计历史或轮询数据库。 */
-import { getAssistantDisplayName, aiAssistantRepository, subscribeAIAssistantUpdated } from '@features/assistants';
+import { getAssistantDisplayName, aiAssistantRepository, subscribeAIAssistantUpdated, subscribeAssistantLifecycleChanged } from '@features/assistants';
 import {
   getCanonicalChatConversation,
   listRecentChatPreviewMessages,
@@ -9,6 +9,7 @@ import {
   subscribeToPublicChatSessionDeleted,
 } from '@features/chat';
 import { setChatEventBus } from '@features/chat/composition';
+import { dismissReadMessageNotifications } from '@platform/device';
 import {
   addConversationRefreshListener,
   addConversationDisplayedListener,
@@ -78,11 +79,12 @@ export function configureFloatingConversationProjection(): void {
   subscribeAIMessageReceived(() => { databaseReady = true; requestSync(); });
   subscribeAssistantMessageArrival(() => { if (databaseReady) requestSync(); });
   subscribeAIAssistantUpdated(() => { if (databaseReady) requestSync(); });
+  subscribeAssistantLifecycleChanged(() => { if (databaseReady) requestSync(); });
   subscribeToPublicChatSessionDeleted(() => { if (databaseReady) requestSync(); });
   addConversationRefreshListener(requestSync);
   addConversationDisplayedListener((event) => {
     // 原生 View 拥有可见性事实；Host 只把精确身份交给 Chat，不按整个会话批量已读。
-    void markChatMessagesReadByIds(event).catch((error) => {
+    void markChatMessagesReadByIds(event).then(() => dismissReadMessageNotifications(event)).catch((error) => {
       console.error('[FloatingConversationProjection] 同步悬浮消息已读失败：', error);
     });
   });

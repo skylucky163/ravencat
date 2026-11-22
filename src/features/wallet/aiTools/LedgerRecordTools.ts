@@ -45,7 +45,7 @@ export const AddLedgerRecordTool: Tool<AddLedgerRecordArgs, ToolContext> = {
   name: 'addLedgerRecord',
   definition: {
     name: 'addLedgerRecord',
-    description: '把用户告知/要求的消费或收入记入羽库；已有账单不要重复新增。记账前用 getLedgerContext 的 categories 模式查询已有分类，尽量复用，避免另创同义标签。成功后返回账单 ID。',
+    description: '把用户告知/要求的消费或收入记入羽库。记账前用 getLedgerContext 的 categories 模式查询已有分类，尽量复用。',
     parameters: {
       type: 'object', properties: recordFields,
       required: ['type', 'category', 'amount'], additionalProperties: false,

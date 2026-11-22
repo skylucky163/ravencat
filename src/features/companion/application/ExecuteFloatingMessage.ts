@@ -193,7 +193,6 @@ async function deliverFloatingMessage(params: {
   target: CompanionConversationTarget;
 }, execution: { signal: AbortSignal; executionDeadlineAt: number }): Promise<void> {
   const dependencies = getCompanionRuntimeDependencies();
-  let deliveredSegmentCount = 0;
   let replySettled = false;
   let settleReply!: () => void;
   const replyCompletion = new Promise<void>((resolve) => {
@@ -205,10 +204,9 @@ async function deliverFloatingMessage(params: {
     };
   });
   let previewUpdates: Promise<void> = Promise.resolve();
-  const displayedSegments = new Map<string, { correlationId: string; displayed: boolean }>();
   const queuePreviewUpdate = <T>(update: () => Promise<T>): Promise<T> => {
     const result = previewUpdates.then(update);
-    // 后续更新必须继续排队，即使某个原生预览调用失败；失败段会回退到系统通知。
+    // 等待状态与失败提示沿同一队列收口；正文展示由 Host 统一交付协调器负责。
     previewUpdates = result.then(() => undefined, () => undefined);
     return result;
   };
@@ -239,60 +237,7 @@ async function deliverFloatingMessage(params: {
       aiConfig: buildCompanionAIRequestConfig(params.target.ai),
       correlationId: params.correlationId,
       replyCallbacks: {
-        onReplyDisplaySegment: async (payload) => {
-          const correlationId = deliveredSegmentCount === 0
-            ? params.correlationId
-            : `${params.correlationId}:reply-segment:${payload.clientMessageId}`;
-          deliveredSegmentCount++;
-          const segment = { correlationId, displayed: false };
-          displayedSegments.set(payload.clientMessageId, segment);
-          const displayed = await queuePreviewUpdate(() => updateReplyPreview({
-            correlationId, sessionId: payload.sessionId, status: 'reply', text: payload.previewText,
-          }));
-          segment.displayed = displayed;
-          return { userNotificationHandled: displayed };
-        },
-        onReplySegment: async (payload) => {
-          if (payload.clientMessageId && displayedSegments.has(payload.clientMessageId)) {
-            const segment = displayedSegments.get(payload.clientMessageId)!;
-            // 沿同一预览身份绑定正式 ID，让实际可见回执和会话投影接管；不新增气泡。
-            await queuePreviewUpdate(() => updateReplyPreview({
-              correlationId: segment.correlationId, sessionId: payload.sessionId, messageId: payload.messageId,
-              status: 'reply', text: payload.previewText,
-            }));
-            return { userNotificationHandled: segment.displayed };
-          }
-          // 工具输出可各自独立提交，分段序号不再是整轮唯一身份；媒体沿正式消息的稳定身份展示。
-          const segmentCorrelationId = payload.clientMessageId
-            ? `${params.correlationId}:reply-segment:${payload.clientMessageId}`
-            : payload.segmentIndex === 0 ? params.correlationId : `${params.correlationId}:reply-segment:${payload.segmentIndex}`;
-          deliveredSegmentCount = Math.max(deliveredSegmentCount, payload.segmentIndex + 1);
-          try {
-            const displayed = await queuePreviewUpdate(() => updateReplyPreview({
-              correlationId: segmentCorrelationId,
-              sessionId: payload.sessionId,
-              messageId: payload.messageId,
-              status: 'reply',
-              text: payload.previewText.trim() || payload.text.trim(),
-            }));
-            return { userNotificationHandled: displayed };
-          } catch (error) {
-            console.warn('[RavenCatFloatingMessageTask] 回复预览更新失败，将保留系统通知：', error);
-            return undefined;
-          }
-        },
-        onFinalReply: (payload) => {
-          if (deliveredSegmentCount === 0) {
-            queuePreviewUpdate(() => updateReplyPreview({
-              correlationId: params.correlationId,
-              sessionId: payload.sessionId,
-              messageId: payload.segments[0]?.messageId,
-              status: 'reply',
-              text: payload.previewText.trim() || payload.joinedText.trim() || payload.text.trim(),
-            }));
-          }
-          settleAfterPreview();
-        },
+        onFinalReply: settleAfterPreview,
         onReplyCommitted: settleAfterPreview,
         onReplyFailed: (payload) => {
           queuePreviewUpdate(() => updateReplyPreview({

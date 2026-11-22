@@ -112,6 +112,9 @@ export function createMessageListStyles(theme: PresentationTheme) {
 
 export function createMessageListPartsStyles(theme: PresentationTheme) {
   return StyleSheet.create({
+    moonKimiSpeakerSpacing: {
+      paddingTop: theme.spacing.sm,
+    },
     paperNoteSpeakerSeparator: {
       paddingHorizontal: theme.spacing.lg,
       paddingVertical: theme.spacing.xl,

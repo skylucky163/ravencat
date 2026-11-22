@@ -14,6 +14,7 @@ export {
   sendAIMessageNotification,
   sendAIIncomingCallNotification,
   dismissConversationNotifications,
+  dismissReadMessageNotifications,
   dismissAIIncomingCallNotification,
   cancelTogetherListeningSystemPresentation,
   addNotificationResponseListener,
@@ -75,6 +76,7 @@ export {
   type ConversationTurnExecutionStartOptions,
 } from './ConversationTurnExecutionHost';
 export { createRandomUUID } from './randomUUID';
+export { getCachedZipReader } from '../../../modules/zip-reader';
 export { copyTextToClipboard, readDeviceClipboardText, type DeviceClipboardSnapshot } from './Clipboard';
 export { TextSelectionScrollView, releaseTextSelectionFocus } from './TextSelection';
 export { CallPresentationSurface } from './CallPresentationSurface';
@@ -185,3 +187,4 @@ export {
   type ApplicationExecutionRequest,
 } from './BackgroundRuntime';
 export { saveImageToGallery } from './SaveImageToGallery';
+export { setSystemAlarm, showSystemAlarms, dismissSystemAlarm, snoozeSystemAlarm, getNextSystemAlarm, type SystemAlarmRequest, type SystemAlarmTarget } from './SystemAlarm';

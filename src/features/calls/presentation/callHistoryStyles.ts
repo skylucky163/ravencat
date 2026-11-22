@@ -5,6 +5,7 @@ export const createCallHistoryStyles = (theme: PresentationTheme) => StyleSheet.
   screen: { flex: 1, backgroundColor: theme.colors.background.screen },
   content: { padding: theme.spacing.lg, gap: theme.spacing.md, paddingBottom: 40 },
   card: { padding: theme.spacing.lg, borderRadius: theme.radius.lg, gap: theme.spacing.sm },
+  preferenceCard: { borderRadius: theme.radius.lg, overflow: 'hidden' },
   row: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm },
   title: { color: theme.colors.text.primary, fontSize: 16, fontWeight: '600', flex: 1 },
   body: { color: theme.colors.text.primary, fontSize: 16, lineHeight: 25 },

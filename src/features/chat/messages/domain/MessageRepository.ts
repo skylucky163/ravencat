@@ -18,7 +18,8 @@ import type {
 } from './ChatMessage';
 import type { DatabaseReadExecutor, DatabaseTransactionExecutor } from '@platform/persistence';
 import type { ChatRecordStatistics } from './ChatRecordStatistics';
-import type { ChatMessageSearchInput, ChatMessageSearchPage } from './ChatMessageSearch';
+import type { CallTranscriptSearch, ChatMessageSearchInput, ChatMessageSearchPage } from './ChatMessageSearch';
+import type { ChatAttachment } from './ChatAttachment';
 import type { ChatMessageContext, ChatMessageContextInput } from './ChatMessageContext';
 
 /** 统一消息提交输入：消息内容 + 最终预览文本。 */
@@ -32,6 +33,8 @@ export interface CommitMessagesInput {
   messages: CreateMessageInput[];
   /** null 表示本批次没有 assistant 可见消息，不改写 session preview。 */
   previewText: string | null;
+  /** 导入历史只能填入空白单聊。与批量写入共用事务，以免覆盖正在产生的聊天。 */
+  requireEmptyConversation?: boolean;
 }
 
 /** Stateful timeline entry 的幂等提交输入。 */
@@ -39,6 +42,8 @@ export interface UpsertStatefulTimelineEntryInput {
   /** 完整消息快照由 Chat 构造；可将同一身份的过程原子转换为最终 assistant 正文。 */
   message: CreateMessageInput;
   previewText: string | null;
+  /** 重放创建请求时保留原条目的后续状态。 */
+  insertOnly?: boolean;
 }
 
 /** 模型响应证据与执行终态分开：收到响应不代表工具成功。 */
@@ -107,13 +112,14 @@ export interface ChatTimelineAnchorRecord {
  */
 export interface IMessageRepository {
   /** 用户搜索当前会话的可见原文，不套用 AI 的成员资格。 */
-  searchMessagesForUser(input: ChatMessageSearchInput): Promise<ChatMessageSearchPage>;
+  searchMessagesForUser(input: ChatMessageSearchInput, calls?: CallTranscriptSearch): Promise<ChatMessageSearchPage>;
   /** 消息必须属于指定会话，附近原文沿用相同可见边界。 */
   readMessageContextForUser(conversationId: string, input: Required<ChatMessageContextInput>): Promise<ChatMessageContext | null>;
   /** 原文搜索不受摘要游标影响；身份授权、可见范围与结果来自同一数据库快照，读取失败抛出。 */
-  searchMessagesForAssistant(assistantId: string, input: ChatMessageSearchInput): Promise<ChatMessageSearchPage>;
+  searchMessagesForAssistant(assistantId: string, input: ChatMessageSearchInput, calls?: CallTranscriptSearch): Promise<ChatMessageSearchPage>;
   /** 锚点授权与邻居读取共享快照；锚点不存在或不可访问时返回 null，不回退到其他消息。 */
   readMessageContextForAssistant(assistantId: string, input: Required<ChatMessageContextInput>): Promise<ChatMessageContext | null>;
+  readAttachmentForAssistant(assistantId: string, messageId: number, attachmentId: string): Promise<ChatAttachment | null>;
   listAgentActivityEvidence(runIds: readonly string[]): Promise<ChatAgentActivityEvidence[]>;
   /** 只结算不属于本进程活动句柄的旧记录，不重新执行模型。 */
   interruptInactiveAgentActivities(activeRunIds: readonly string[], occurredAt: string): Promise<string[]>;
@@ -386,11 +392,13 @@ export interface IMessageRepository {
   markMessagesAsRead(sessionId: string): Promise<number>;
 
   /**
-   * 按消息 id 精确标记已读（幂等；空数组直接返回 0）
+   * 按正式消息或运行正文身份精确标记已读，T3 身份交接期间保持原子与幂等。
    *
    * @returns 实际更新的消息条数
    */
-  markMessagesAsReadByIds(messageIds: string[]): Promise<number>;
+  markMessagesAsReadByIds(messageIds: string[], clientMessageIds?: string[]): Promise<number>;
+  /** 读取同一正文在正式消息与展示表中的持久阅读事实。 */
+  isAssistantMessageRead(identity: { messageId?: number; clientMessageId?: string }): Promise<boolean>;
 
   /** 首次播放开始时写入；已写入的消息保持原时间并返回 false。 */
   markVoiceMessagePlayed(messageId: number, playedAt: string): Promise<boolean>;
@@ -464,4 +472,8 @@ export interface IMessageRepository {
     messageId: number;
     previewText: string;
   }): Promise<boolean>;
+  updateSessionPreviewForCommittedMessageInTransaction(
+    transaction: DatabaseTransactionExecutor,
+    input: { sessionId: string; messageId: number; previewText: string },
+  ): Promise<boolean>;
 }

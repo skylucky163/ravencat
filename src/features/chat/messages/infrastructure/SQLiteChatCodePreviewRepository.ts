@@ -4,7 +4,7 @@ import { ChatCodeWorkError, type ChatCodeLibraryItem, type ChatCodePreview, type
 async function assertWorkAccess(tx: DatabaseTransactionExecutor, id: string, access: ChatCodeWorkWriteAccess): Promise<void> {
   await access.assertCurrent(tx);
   const own = await tx.getFirstAsync(`SELECT 1 FROM chat_code_previews p
-    JOIN ai_assistants a ON a.agent_id = p.agent_id WHERE p.id = ? AND a.id = ?`, [id, access.assistantId]);
+    JOIN ai_assistants a ON a.agent_id = p.agent_id WHERE p.id = ? AND a.id = ? AND a.deleted_at IS NULL`, [id, access.assistantId]);
   if (!own) throw new ChatCodeWorkError('未找到属于自己的作品，请用 list_code_works 查询有效作品 ID。');
 }
 
@@ -23,7 +23,7 @@ export class SQLiteChatCodePreviewRepository implements ChatCodePreviewRepositor
       }>(`SELECT p.id, p.agent_id, p.language, p.source, p.title, p.can_render, p.created_at,
         (l.preview_id IS NOT NULL) AS in_library, l.cover_file FROM chat_code_previews p
         LEFT JOIN chat_code_library l ON l.preview_id = p.id WHERE p.id = ?
-        ${assistantId === undefined ? '' : 'AND EXISTS (SELECT 1 FROM ai_assistants a WHERE a.agent_id = p.agent_id AND a.id = ?)'}
+        ${assistantId === undefined ? '' : 'AND EXISTS (SELECT 1 FROM ai_assistants a WHERE a.agent_id = p.agent_id AND a.id = ? AND a.deleted_at IS NULL)'}
         `, assistantId === undefined ? [id] : [id, assistantId]);
       return row ? { id: row.id, agentId: row.agent_id, language: row.language, source: row.source, title: row.title,
         canRender: row.can_render === 1, createdAt: row.created_at, inLibrary: row.in_library === 1, coverFile: row.cover_file } : null;
@@ -36,7 +36,7 @@ export class SQLiteChatCodePreviewRepository implements ChatCodePreviewRepositor
         `SELECT p.id, p.title, p.created_at, (l.preview_id IS NOT NULL) AS in_library
          FROM chat_code_previews p JOIN ai_assistants a ON a.agent_id = p.agent_id
          LEFT JOIN chat_code_library l ON l.preview_id = p.id
-         WHERE a.id = ? AND p.can_render = 1
+         WHERE a.id = ? AND a.deleted_at IS NULL AND p.can_render = 1
          ${scope === 'all' ? '' : scope === 'saved' ? 'AND l.preview_id IS NOT NULL' : 'AND l.preview_id IS NULL'}
          ORDER BY p.created_at DESC, p.id DESC LIMIT 21 OFFSET ?`, [assistantId, offset]);
       return { entries: rows.slice(0, 20).map(row => ({ id: row.id, title: row.title, createdAt: row.created_at, inLibrary: row.in_library === 1 })),
@@ -59,7 +59,7 @@ export class SQLiteChatCodePreviewRepository implements ChatCodePreviewRepositor
       const rows = await db.getAllAsync<{ id: string; title: string; cover_file: string | null; created_at: string; added_at: string }>(
         `SELECT p.id, p.title, l.cover_file, p.created_at, l.added_at
          FROM chat_code_library l JOIN chat_code_previews p ON p.id = l.preview_id
-         JOIN ai_assistants a ON a.agent_id = p.agent_id WHERE a.id = ?
+         JOIN ai_assistants a ON a.agent_id = p.agent_id WHERE a.id = ? AND a.deleted_at IS NULL
          ORDER BY l.added_at DESC, p.id DESC`, [assistantId]);
       return rows.map(row => ({ id: row.id, title: row.title, coverFile: row.cover_file, createdAt: row.created_at, addedAt: row.added_at }));
     });

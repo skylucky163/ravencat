@@ -2,7 +2,7 @@
 import { aiAssistantRepository, resolveAuxiliaryModel } from '@features/assistants';
 import { chatSummaryRepository } from './chatSummaryRepository';
 import { userProfileRepository } from '@features/profile';
-import { protocolRepository } from '@features/protocol';
+import { protocolRepository } from '@features/protocol/composition';
 import { configureChatSummaryRuntime, sessionRepository, groupChatRepository, createChatSummaryPromptBlock,
   createSecondaryChatSummaryPromptBlock, buildChatSummaryModelInput, type ChatSummaryModelInput,
   type SecondaryChatSummaryClaim, ChatSummaryGenerationError, type ChatSummaryCallDiagnostics,
@@ -112,6 +112,7 @@ async function generateSummary(input: ChatSummaryModelInput | SecondaryChatSumma
     }
     const response = await createAIClient({ baseURL: model.apiBaseUrl!, apiKey: model.apiKey!, model: model.model,
       temperature: model.temperature, topP: model.topP, disableThinking: 'disableThinking' in model ? model.disableThinking : false,
+      reasoningEffort: 'reasoningEffort' in model ? model.reasoningEffort : 'auto',
       maxTokens }).chat([
       { role: 'system', content: systemPrompt }, ...modelMessages,
     ], { signal: controller.signal, includeSystemPrompt: false, allowReasoningLengthRetry: false });

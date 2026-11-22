@@ -7,13 +7,14 @@ import { Camera, ChevronRight, Pencil } from 'lucide-react-native';
 import { useTheme, useThemedStyles } from '@shared/theme';
 import type { PresentationTheme } from '@shared/theme';
 import NavigationHeader from '@shared/ui/NavigationHeader';
-import { GroupAvatar, showAppDialog } from '@shared/ui';
+import { GroupAvatar, KeyboardAvoidingContainer, showAppDialog } from '@shared/ui';
 import {
   PERSISTENT_IMAGE_CATEGORY,
   usePersistentAvatarDraft,
   type PersistentAvatarDraft,
 } from '@platform/device/DeviceMediaService';
 import ChatWallpaperSettings from '../messages/components/ChatWallpaperSettings';
+import { LongPasteToggle } from '../messages/components/LongPasteToggle';
 import GroupMembersSection from './GroupMembersSection';
 import type {
   GroupChatDetails,
@@ -265,85 +266,90 @@ export default function GroupOptions({
     >
       <NavigationHeader title="群聊信息" onGoBack={onBack} />
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <View style={styles.heroCard}>
-          <TouchableOpacity
-            style={styles.avatarWrapper}
-            activeOpacity={0.8}
-            onPress={handleAvatarPress}
-            disabled={avatarBusy}
-          >
-            <GroupAvatar
-              name={groupName}
-              avatarUrl={avatarUri}
-              size="large"
-            />
-            <View style={styles.avatarEditBadge}>
-              <Camera size={13} color={theme.colors.brand.onPrimary} />
-            </View>
+      <KeyboardAvoidingContainer style={styles.scrollView}>
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <View style={styles.heroCard}>
+            <TouchableOpacity
+              style={styles.avatarWrapper}
+              activeOpacity={0.8}
+              onPress={handleAvatarPress}
+              disabled={avatarBusy}
+            >
+              <GroupAvatar
+                name={groupName}
+                avatarUrl={avatarUri}
+                size="large"
+              />
+              <View style={styles.avatarEditBadge}>
+                <Camera size={13} color={theme.colors.brand.onPrimary} />
+              </View>
+            </TouchableOpacity>
+
+            {isEditingName ? (
+              <TextInput
+                ref={nameInputRef}
+                style={styles.nameInput}
+                value={nameDraft}
+                onChangeText={setNameDraft}
+                autoFocus
+                maxLength={30}
+                blurOnSubmit
+                returnKeyType="done"
+                onTouchStart={(event) => event.stopPropagation()}
+                onSubmitEditing={finishNameEditing}
+                onBlur={commitName}
+              />
+            ) : (
+              <View style={styles.nameRow}>
+                <Text style={styles.groupName}>{groupName}</Text>
+                <TouchableOpacity
+                  onPress={startEditingName}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Pencil size={15} color={theme.colors.text.secondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          <GroupMembersSection groupId={groupId} members={groupDetails?.members ?? []} />
+
+          <TouchableOpacity style={styles.menuItem} activeOpacity={0.7} onPress={onSearchMessages}>
+            <Text style={styles.menuItemTitle}>搜索聊天记录</Text>
+            <ChevronRight size={18} color={theme.colors.text.tertiary} />
           </TouchableOpacity>
 
-          {isEditingName ? (
-            <TextInput
-              ref={nameInputRef}
-              style={styles.nameInput}
-              value={nameDraft}
-              onChangeText={setNameDraft}
-              autoFocus
-              maxLength={30}
-              blurOnSubmit
-              returnKeyType="done"
-              onTouchStart={(event) => event.stopPropagation()}
-              onSubmitEditing={finishNameEditing}
-              onBlur={commitName}
-            />
-          ) : (
-            <View style={styles.nameRow}>
-              <Text style={styles.groupName}>{groupName}</Text>
-              <TouchableOpacity
-                onPress={startEditingName}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Pencil size={15} color={theme.colors.text.secondary} />
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
+          <TouchableOpacity
+            style={styles.menuItem}
+            activeOpacity={0.7}
+            onPress={onAdminSettings}
+          >
+            <Text style={styles.menuItemTitle}>管理员设置</Text>
+            <ChevronRight size={18} color={theme.colors.text.tertiary} />
+          </TouchableOpacity>
 
-        <GroupMembersSection groupId={groupId} members={groupDetails?.members ?? []} />
+          <TouchableOpacity style={styles.menuItem} activeOpacity={0.7} onPress={onSummary}>
+            <Text style={styles.menuItemTitle}>聊天摘要</Text>
+            <ChevronRight size={18} color={theme.colors.text.tertiary} />
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.menuItem} activeOpacity={0.7} onPress={onSearchMessages}>
-          <Text style={styles.menuItemTitle}>搜索聊天记录</Text>
-          <ChevronRight size={18} color={theme.colors.text.tertiary} />
-        </TouchableOpacity>
+          <View style={styles.menuItem}>
+            <LongPasteToggle style={{ flex: 1, paddingVertical: 0 }} />
+          </View>
+          <ChatWallpaperSettings
+            chatKey={chatBackgroundKey}
+            style={styles.wallpaperSection}
+          />
 
-        <TouchableOpacity
-          style={styles.menuItem}
-          activeOpacity={0.7}
-          onPress={onAdminSettings}
-        >
-          <Text style={styles.menuItemTitle}>管理员设置</Text>
-          <ChevronRight size={18} color={theme.colors.text.tertiary} />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.menuItem} activeOpacity={0.7} onPress={onSummary}>
-          <Text style={styles.menuItemTitle}>聊天摘要</Text>
-          <ChevronRight size={18} color={theme.colors.text.tertiary} />
-        </TouchableOpacity>
-
-        <ChatWallpaperSettings
-          chatKey={chatBackgroundKey}
-          style={styles.wallpaperSection}
-        />
-
-        <TouchableOpacity
-          style={[styles.menuItem, styles.dangerItem]}
-          activeOpacity={0.7}
-          onPress={handleDeleteGroup}
-        >
-          <Text style={[styles.menuItemTitle, styles.dangerTitle]}>删除群聊</Text>
-        </TouchableOpacity>
-      </ScrollView>
+          <TouchableOpacity
+            style={[styles.menuItem, styles.dangerItem]}
+            activeOpacity={0.7}
+            onPress={handleDeleteGroup}
+          >
+            <Text style={[styles.menuItemTitle, styles.dangerTitle]}>删除群聊</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingContainer>
     </SafeAreaView>
   );
 }

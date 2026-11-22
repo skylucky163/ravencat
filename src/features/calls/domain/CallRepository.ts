@@ -19,7 +19,7 @@ import type {
 } from './CallParticipant';
 import type { CallSummarySource } from './CallSummary';
 import type { DatabaseTransactionExecutor } from '@platform/persistence';
-import type { CallHistoryEntry, CallHistoryRecord, CallHistoryImage } from './CallHistory';
+import type { CallHistoryEntry, CallHistoryRecord, CallHistoryImage, CallHistoryPage } from './CallHistory';
 
 export interface CreateCallSessionInput {
   id?: string;
@@ -118,6 +118,7 @@ export interface CallSnapshotWriteResult {
 export interface ICallRepository {
   listHistory(assistantId: string): Promise<CallHistoryRecord[]>;
   getHistory(callId: string, assistantId: string): Promise<CallHistoryRecord | null>;
+  readHistoryPage(callId: string, assistantId: string, offset: number): Promise<CallHistoryPage | null>;
   listHistoryEntries(callId: string): Promise<CallHistoryEntry[]>;
   renameHistory(callId: string, assistantId: string, title: string): Promise<'saved' | 'duplicate' | 'missing'>;
   deleteHistory(callId: string, assistantId: string): Promise<string[]>;

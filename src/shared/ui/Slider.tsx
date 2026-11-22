@@ -15,6 +15,8 @@ export interface SliderProps {
   /** 松手或已激活的手势中断时通知最终值，不在组件内执行持久化。 */
   onSlidingComplete?: (value: number) => void;
   accessibilityLabel: string;
+  accessibilityValueText?: string;
+  showStepMarkers?: boolean;
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
 }
@@ -28,10 +30,11 @@ const createStyles = (theme: PresentationTheme) => StyleSheet.create({
   fill: { height: 4, backgroundColor: theme.colors.brand.primary },
   thumb: { position: 'absolute', top: 10, width: 24, height: 24, borderRadius: 12, marginLeft: -12, backgroundColor: theme.colors.brand.primary },
   disabled: { opacity: 0.45 },
+  marker: { position: 'absolute', top: 20, width: 4, height: 4, marginLeft: -2, borderRadius: 2, backgroundColor: theme.colors.text.secondary },
 });
 
 export default function Slider({ value, min, max, upperLimit = max, step, onValueChange, onSlidingComplete,
-  accessibilityLabel, disabled = false, style,
+  accessibilityLabel, accessibilityValueText, showStepMarkers = false, disabled = false, style,
 }: SliderProps) {
   const styles = useThemedStyles(createStyles);
   const [trackWidth, setTrackWidth] = useState(0);
@@ -92,7 +95,7 @@ export default function Slider({ value, min, max, upperLimit = max, step, onValu
         onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
         accessibilityRole="adjustable"
         accessibilityLabel={accessibilityLabel}
-        accessibilityValue={value === null ? { min, max: upperLimit, text: '未设置' } : { min, max: upperLimit, now: value }}
+        accessibilityValue={value === null ? { min, max: upperLimit, text: '未设置' } : { min, max: upperLimit, now: value, ...(accessibilityValueText && { text: accessibilityValueText }) }}
         accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
         accessibilityState={{ disabled }}
         onAccessibilityAction={(event) => {
@@ -104,6 +107,9 @@ export default function Slider({ value, min, max, upperLimit = max, step, onValu
         <View pointerEvents="none" style={styles.track}>
           {value !== null && <View style={[styles.fill, { width: `${percentage}%` }]} />}
         </View>
+        {showStepMarkers && Array.from({ length: Math.floor((max - min) / step) + 1 }, (_, index) => (
+          <View key={index} pointerEvents="none" style={[styles.marker, { left: `${index * step / (max - min) * 100}%` }]} />
+        ))}
         {value !== null && <View pointerEvents="none" style={[styles.thumb, { left: `${percentage}%` }]} />}
       </View>
     </GestureDetector>

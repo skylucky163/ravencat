@@ -1,7 +1,7 @@
 /** 群聊详情页，协调群消息时间线、输入、召唤成员与群聊操作。 */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, ScrollView, ToastAndroid, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Animated, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -51,7 +51,7 @@ import ChatMessageEditor from '../messages/components/ChatMessageEditor';
 import ChatMessageTextSelectionSheet from '../messages/components/ChatMessageTextSelectionSheet';
 import { getChatSelectionKey } from '../../messages/domain/ChatMessageSelection';
 import { canEditChatMessage } from '../../messages/domain/ChatMessageEditing';
-import { copyTextToClipboard } from '@platform/device';
+import { copyChatMessageText } from '../messages/components/copyChatMessageText';
 import { readChatCodeBlock } from '../../messages/domain/ChatCodeBlock';
 import { useAttachmentDraft } from '../messages/ChatDetail/useAttachmentDraft';
 import { translateMessageText } from '@features/integrations';
@@ -164,16 +164,10 @@ export default function GroupChatDetail({
       justifyContent: 'center',
       gap: 4,
     },
-    pillTagDisabled: {
-      backgroundColor: theme.colors.background.app,
-    },
     pillText: {
       color: theme.colors.text.secondary,
       fontSize: 12,
       fontWeight: '600',
-    },
-    pillTextDisabled: {
-      color: theme.colors.text.secondary,
     },
     mentionPanel: {
       maxHeight: 218,
@@ -252,6 +246,7 @@ export default function GroupChatDetail({
     selectImageAttachment,
     capturePhotoAttachment,
     selectDocumentAttachment,
+    attachPastedText,
     clearAttachment,
     removeAttachment,
   } = useAttachmentDraft();
@@ -286,15 +281,16 @@ export default function GroupChatDetail({
     onDeleted: handleSelectionDeleted,
   });
   const share = useChatMessageShare({ sessionId, sourceName: group.name, isActive, onShared: selection.exit });
+  const { open: openShare } = share;
   const favoriteMessage = useChatFavoriteAction(selectedMessage, group.name);
   const stickerAction = useChatStickerAction(selectedMessage);
   const saveImages = useChatSaveImagesAction(selectedMessage, isActive);
   const messageActions = selectedMessage ? getChatMessageActions(selectedMessage) : null;
-  const handleShareMessage = useCallback(() => {
+  const handleShareMessage = useCallback((messageId: number) => {
     dismissInputSurface();
     void voiceMessagePlaybackCoordinator.stop();
-    void share.open([selectedMessage!.id]);
-  }, [dismissInputSurface, share, selectedMessage]);
+    void openShare([messageId]);
+  }, [dismissInputSurface, openShare]);
   const handleEnterSelection = useCallback(() => {
     dismissInputSurface();
     void voiceMessagePlaybackCoordinator.stop();
@@ -357,7 +353,7 @@ export default function GroupChatDetail({
   }, [participantDirectoryRevision, refreshGroupDetails]);
 
   // plan 生命周期不属于消息/typing 状态。application 在持久事实 commit 后只
-  // 发布“已变化”，页面按 groupId 重读窄 query，覆盖手动召唤、自动召唤、
+  // 发布“已变化”，页面按 groupId 重读窄 query，覆盖显式召唤、
   // planning、换代和强制终止，不维护第二份 plan 状态机。
   useEffect(() => setChatEventBus({
     emit: async (eventName, payload) => {
@@ -376,11 +372,9 @@ export default function GroupChatDetail({
     model: '群聊',
     apiKey: '',
     apiBaseUrl: '',
-    temperature: 0.7,
-    topP: 1.0,
-    maxTokens: 2000,
     systemPrompt: undefined,
     enableTools: false,
+    manualReply: true,
     allowMultipleBubbles: true,
     isHostAI: false,
     isBlocked: false,
@@ -409,6 +403,7 @@ export default function GroupChatDetail({
           model: member.model || profile?.model || 'AI',
           apiKey: '',
           apiBaseUrl: '',
+          manualReply: true,
         };
       }),
     ];
@@ -441,7 +436,7 @@ export default function GroupChatDetail({
     activeMentionQuery && filteredMentionCandidates.length > 0
   );
 
-  const isSummonDisabled = isInvoking || Boolean(activePlan);
+  const isSummonDisabled = isInvoking || Boolean(activePlan && activePlan.status !== 'pending');
 
   // 强制终止：先由持久层把 plan 与未到终态任务裁决为 terminated，commit 后
   // 才中止在途请求；终止不产生继承，队列浮层直接反映持久事实。
@@ -465,7 +460,7 @@ export default function GroupChatDetail({
   const handleSend = useCallback(async () => {
     const text = inputText.trim();
     if (!text && readyAttachments.length === 0) {
-      return;
+      return false;
     }
 
     textDrafts.change(sessionId, '');
@@ -494,10 +489,12 @@ export default function GroupChatDetail({
         consumeDraft();
       });
       setSelectedMentions([]);
+      return true;
     } catch (error) {
       showAppDialog({ title: '发送失败', message: error instanceof Error ? error.message : '发送失败', tone: 'error' });
       textDrafts.replaceIfUnchanged(sessionId, clearedDraft, inputText);
       setReplyTo(currentReplyTo);
+      return false;
     }
   }, [inputText, readyAttachments, selectedMentions, sessionId, replyTo, withAttachmentSubmission, textDrafts]);
 
@@ -520,6 +517,8 @@ export default function GroupChatDetail({
       return;
     }
 
+    if ((inputText.trim() || readyAttachments.length > 0) && !await handleSend()) return;
+
     setIsInvoking(true);
     setIsTyping(true);
     try {
@@ -536,7 +535,7 @@ export default function GroupChatDetail({
         console.error('[GroupChatDetail] 召唤后刷新失败:', error);
       });
     }
-  }, [isSummonDisabled, refreshGroupDetails, sessionId]);
+  }, [isSummonDisabled, refreshGroupDetails, sessionId, inputText, readyAttachments.length, handleSend]);
 
   const handleSelectMentionCandidate = useCallback((candidate: GroupAssistantParticipant) => {
     const activeMention = getActiveMentionQuery(inputText);
@@ -578,16 +577,6 @@ export default function GroupChatDetail({
     setSelectedMessage(null);
     setMenuPosition(null);
   }, []);
-
-  const handleCopyMessage = useCallback(() => {
-    if (!selectedMessage) return;
-    try {
-      copyTextToClipboard(readChatCodeBlock(selectedMessage.text)?.source ?? selectedMessage.text);
-      ToastAndroid.show('复制成功', ToastAndroid.SHORT);
-    } catch (error) {
-      showAppDialog({ title: '复制失败', message: error instanceof Error ? error.message : '无法写入剪贴板', tone: 'error' });
-    }
-  }, [selectedMessage]);
 
   const handleSelectMessageText = useCallback(() => {
     dismissInputSurface();
@@ -685,62 +674,12 @@ export default function GroupChatDetail({
     <>
       <View style={localStyles.summonBar}>
         <TouchableOpacity
-          style={[
-            localStyles.pillTag,
-            isSummonDisabled && localStyles.pillTagDisabled,
-          ]}
-          onPress={handleInvoke}
-          disabled={isSummonDisabled}
-          activeOpacity={0.75}
-        >
-          <Ionicons
-            name="sparkles"
-            size={14}
-            color={isSummonDisabled ? theme.colors.text.secondary : theme.colors.brand.primary}
-          />
-          <Text
-            style={[
-              localStyles.pillText,
-              isSummonDisabled && localStyles.pillTextDisabled,
-            ]}
-          >
-            {isInvoking || activePlan ? '召唤中' : '召唤'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
           style={localStyles.pillTag}
           onPress={handleInsertAtMention}
           activeOpacity={0.75}
         >
           <Ionicons name="at" size={14} color={theme.colors.text.secondary} />
         </TouchableOpacity>
-
-        {activePlan ? (
-          <TouchableOpacity
-            style={[
-              localStyles.pillTag,
-              isTerminating && localStyles.pillTagDisabled,
-            ]}
-            onPress={handleTerminate}
-            disabled={isTerminating}
-            activeOpacity={0.75}
-          >
-            <Ionicons
-              name="stop-circle-outline"
-              size={14}
-              color={isTerminating ? theme.colors.text.secondary : theme.colors.feedback.error}
-            />
-            <Text
-              style={[
-                localStyles.pillText,
-                { color: isTerminating ? theme.colors.text.secondary : theme.colors.feedback.error },
-              ]}
-            >
-              {isTerminating ? '终止中' : '终止'}
-            </Text>
-          </TouchableOpacity>
-        ) : null}
 
         <TouchableOpacity
           style={localStyles.pillTag}
@@ -786,6 +725,9 @@ export default function GroupChatDetail({
         disabled={!draftReady}
         onChangeText={setInputText}
         onSend={handleSend}
+        onInvoke={handleInvoke}
+        onStopReply={activePlan && activePlan.status !== 'pending' || isTerminating ? handleTerminate : undefined}
+        isStoppingReply={isTerminating}
         attachmentDrafts={draftAttachments}
         hasReadyAttachment={readyAttachments.length > 0}
         isPreparingAttachment={isPreparingAttachment}
@@ -793,6 +735,7 @@ export default function GroupChatDetail({
         onImagePress={selectImageAttachment}
         onCameraPress={capturePhotoAttachment}
         onFilePress={selectDocumentAttachment}
+        onAttachPastedText={attachPastedText}
         onStickerPress={handleStickerPress}
         replyTo={replyTo}
         onCancelReply={handleCancelReply}
@@ -839,6 +782,8 @@ export default function GroupChatDetail({
             onTogetherListeningDecline={(id) => listeningAction(declineChatTogetherListeningInvitation, id)}
             onTogetherListeningLeave={(id) => listeningAction(leaveChatTogetherListening, id)}
             onMessageLongPress={handleMessageLongPress}
+            onShareMessage={handleShareMessage}
+            shareableMessageKeys={selection.availableKeys}
             translations={messageTranslations}
             onHideTranslation={handleHideTranslation}
             onPreviewFile={onOpenFilePreview}
@@ -878,12 +823,13 @@ export default function GroupChatDetail({
         onClose={handleCloseActionMenu}
         position={menuPosition}
         onSaveImages={saveImages}
-        onCopy={selectedMessage?.text.trim() ? handleCopyMessage : undefined}
+        onCopy={selectedMessage?.text.trim() ? () => copyChatMessageText(selectedMessage.text) : undefined}
         onSelectText={selectedMessage?.text.trim() ? handleSelectMessageText : undefined}
         onRewrite={selectedMessage && canEditChatMessage(selectedMessage) ? handleRewriteMessage : undefined}
         onDelete={handleDeleteMessage}
         onMultiSelect={selectedMessage && selection.availableKeys.has(getChatSelectionKey(selectedMessage)) ? handleEnterSelection : undefined}
-        onForward={selectedMessage && selection.availableKeys.has(getChatSelectionKey(selectedMessage)) ? handleShareMessage : undefined}
+        onForward={selectedMessage && selection.availableKeys.has(getChatSelectionKey(selectedMessage))
+          ? () => handleShareMessage(selectedMessage.id) : undefined}
         onQuote={messageActions?.quote ? handleQuoteMessage : undefined}
         onTranslate={messageActions?.translate ? handleTranslateMessage : undefined}
         onFavorite={messageActions?.favorite ? favoriteMessage.toggle : undefined}

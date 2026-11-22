@@ -6,6 +6,7 @@ export interface ReplyPreview {
   text: string;
   status?: ReplyPreviewStatus;
   correlationId?: string;
+  requestCorrelationId?: string;
   sessionId?: string;
   messageId?: number;
 }
@@ -57,6 +58,7 @@ export interface FloatingTogetherListeningPresentation {
 export interface ConversationDisplayedEvent {
   sessionId: string;
   messageIds: string[];
+  clientMessageIds: string[];
 }
 
 export interface BatteryOptimizationState {

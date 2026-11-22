@@ -5,6 +5,8 @@ import type { ConversationKind } from '../../conversation/domain/ConversationRef
 export type ChatSubScreen =
   | 'search'
   | 'menu'
+  | 'conversationImport'
+  | 'deepSeekImport'
   | 'protocol'
   | 'callHistory'
   | 'statistics'

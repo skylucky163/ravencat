@@ -1,5 +1,6 @@
 /** 在 Host 组合根维护 Built-in Tool 的唯一注册、元数据与暴露策略。 */
 import { groupManagementTools } from './GroupManagementTools';
+import { roleApplicationTools } from './RoleApplicationTools';
 import { ListCodeWorksTool, GetCodeWorkTool, SetCodeWorkInLibraryTool, EditCodeWorkTool } from './ChatCodeWorkTools';
 import { ShareMomentTool } from './ShareMomentTool';
 
@@ -8,7 +9,8 @@ import { readPromptDefaults, listAssistantDirectToolNames } from '@features/prom
 import { createMomentToolForRun } from '@features/moments/composition';
 import { WebSearchTool, WebFetchTool, DownloadFileTool, KimiWebSearchTool, KimiWebFetchTool, KimiMewTool, KimiConvertTool, KimiRethinkTool, KimiRandomChoiceTool, KimiExcelTool, KimiDateTool, KimiBase64Tool, DeepSeekWebSearchTool, DeepSeekWebFetchTool } from '@features/webTools';
 import { resolveOfficialToolsAPIBaseURL, type OfficialToolProvider } from '@platform/ai';
-import { DownloadImageTool, QueryDownloadedImagesTool, ViewImageTool, GenerateImageTool } from '@features/media';
+import { DownloadImageTool, QueryDownloadedImagesTool, QueryGeneratedImagesTool, ViewImageTool, GenerateImageTool, RenameOwnImageTool, DeleteOwnImageTool } from '@features/media';
+import { createConfiguredGenerateImageTool } from '@features/media/composition';
 import { applicationSettingsTools } from './ApplicationSettingsTools';
 import { COMPLETION_INTENT_RULE } from '@shared/aiTools';
 import type {
@@ -49,7 +51,7 @@ import {
   AddLedgerRecordTool, DeleteLedgerRecordTool, GetLedgerContextTool, UpdateLedgerRecordTool,
   CreateLedgerQuickActionTool, UpdateLedgerQuickActionTool, DeleteLedgerQuickActionTool, UseLedgerQuickActionTool,
 } from '@features/wallet';
-import { LookAtUserTool, RequestVideoCallTool } from '@features/calls';
+import { LookAtUserTool, ReadCallHistoryTool, RequestVideoCallTool } from '@features/calls';
 import {
   releaseMemoryRecallRun,
   ForgetMemoryTool,
@@ -60,6 +62,8 @@ import {
 } from '@features/memory';
 import {
   OpenAppTool,
+  SetAlarmTool,
+  ShowAlarmsTool, DismissAlarmTool, SnoozeAlarmTool, GetNextAlarmTool,
   ReleaseSoftLockTool,
   SearchInstalledAppsTool,
   SoftLockAppTool,
@@ -86,7 +90,7 @@ import {
 } from '@features/phoneTools';
 import { productionNetEaseChildTools } from '@features/phoneTools/neteaseComposition';
 import { ReadScreenAccessibilityTool, ReadScreenOcrTool } from '@features/screenCapture';
-import { SendImageTool, SendVoiceMessageTool, SearchChatMessagesTool, ReadChatMessageContextTool, SearchChatSummariesTool, GetSecondarySummaryTool, EditSecondarySummaryTool, EditPrimarySummaryTool, DeletePrimarySummaryTool, createConfiguredVoiceMessageTool } from '@features/chat';
+import { SendImageTool, SendVoiceMessageTool, SearchChatMessagesTool, ReadChatMessageContextTool, ReadChatFileTool, SearchChatSummariesTool, GetSecondarySummaryTool, EditSecondarySummaryTool, EditPrimarySummaryTool, DeletePrimarySummaryTool, createConfiguredVoiceMessageTool } from '@features/chat';
 import {
   ListStickerGroupsTool,
   ListStickersInGroupTool,
@@ -295,6 +299,9 @@ const BUILT_IN_TOOL_REGISTRATIONS: readonly BuiltInToolRegistration[] = [
   agentNativeBuiltInTool(DownloadImageTool, 'media', REVERSIBLE_ACTION, { directChatOnly: true, groupChatAllowed: true }),
   agentNativeBuiltInTool(GenerateImageTool, 'media', EXTERNAL_SIDE_EFFECT, { directChatOnly: true, groupChatAllowed: true, callForbidden: false, defaultEnabled: true, toolPackageId: 'media' }),
   agentNativeBuiltInTool(QueryDownloadedImagesTool, 'media', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true }),
+  agentNativeBuiltInTool(QueryGeneratedImagesTool, 'media', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true }),
+  agentNativeBuiltInTool(RenameOwnImageTool, 'media', REVERSIBLE_ACTION, { directChatOnly: true, groupChatAllowed: true }),
+  agentNativeBuiltInTool(DeleteOwnImageTool, 'media', SENSITIVE_ACTION, { directChatOnly: true, groupChatAllowed: true }),
   agentNativeBuiltInTool(ViewImageTool, 'media', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true }),
   ...applicationSettingsTools.map(({ tool, owner, hostOnly, mutating }) => agentNativeBuiltInTool(
     tool, owner, mutating ? REVERSIBLE_ACTION : PRIVATE_READ,
@@ -336,6 +343,8 @@ const BUILT_IN_TOOL_REGISTRATIONS: readonly BuiltInToolRegistration[] = [
   agentNativeBuiltInTool(SearchChatSummariesTool, 'chat', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'memory' }),
   agentNativeBuiltInTool(SearchChatMessagesTool, 'chat', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'memory' }),
   agentNativeBuiltInTool(ReadChatMessageContextTool, 'chat', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'memory' }),
+  agentNativeBuiltInTool(ReadChatFileTool, 'chat', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'memory' }),
+  agentNativeBuiltInTool(ReadCallHistoryTool, 'calls', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'memory' }),
   agentNativeBuiltInTool(GetSecondarySummaryTool, 'chat', PRIVATE_READ, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'memory' }),
   agentNativeBuiltInTool(EditSecondarySummaryTool, 'chat', REVERSIBLE_WRITE, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'memory' }),
   agentNativeBuiltInTool(EditPrimarySummaryTool, 'chat', REVERSIBLE_WRITE, { directChatOnly: true, groupChatAllowed: true, toolPackageId: 'memory' }),
@@ -344,11 +353,17 @@ const BUILT_IN_TOOL_REGISTRATIONS: readonly BuiltInToolRegistration[] = [
   agentNativeBuiltInTool(ForgetMemoryTool, 'memory', REVERSIBLE_WRITE, { memoryParticipation: 'read_write' }),
   builtInTool(BlockAIAssistantTool, 'assistants', SENSITIVE_ACTION, { hostOnly: true }),
   builtInTool(UnblockAIAssistantTool, 'assistants', SENSITIVE_ACTION, { hostOnly: true }),
+  ...roleApplicationTools.map(tool => agentNativeBuiltInTool(tool, 'assistants', EXTERNAL_SIDE_EFFECT, {
+    directChatOnly: true, groupChatAllowed: true, callForbidden: true,
+  })),
   builtInTool(ReleaseHostCooldownTool, 'assistants', SENSITIVE_ACTION, { hostOnly: true, cooldownOnly: true, dynamicRunExposure: true }),
   builtInTool(SoftLockAppTool, 'deviceControl', SENSITIVE_ACTION, { hostOnly: true }),
   builtInTool(ReleaseSoftLockTool, 'deviceControl', SENSITIVE_ACTION, { hostOnly: true }),
   builtInTool(SearchInstalledAppsTool, 'deviceControl', PRIVATE_READ, { hostOnly: true }),
   builtInTool(OpenAppTool, 'deviceControl', REVERSIBLE_ACTION, { hostOnly: true }),
+  builtInTool(SetAlarmTool, 'deviceControl', EXTERNAL_SIDE_EFFECT, { hostOnly: true }),
+  ...[ShowAlarmsTool, DismissAlarmTool, SnoozeAlarmTool].map(tool => builtInTool(tool, 'deviceControl', EXTERNAL_SIDE_EFFECT, { hostOnly: true })),
+  builtInTool(GetNextAlarmTool, 'deviceControl', PRIVATE_READ, { hostOnly: true }),
   builtInTool(GetForegroundAppTool, 'phoneTools', PRIVATE_READ, { hostOnly: true }),
   builtInTool(GetAppUsageTool, 'phoneTools', PRIVATE_READ, { hostOnly: true }),
   builtInTool(GetCurrentLocationTool, 'phoneTools', PRIVATE_READ, { hostOnly: true }),
@@ -469,6 +484,7 @@ export interface CreateAgentToolRegistryOptions {
   createLegacyContext: LegacyToolContextFactory;
   voiceMessageTool?: { definition: { description: string; parameters: JsonSchema }; execute: typeof SendVoiceMessageTool.execute };
   createMomentTool?: typeof AICreateMomentTool;
+  generateImageTool?: typeof GenerateImageTool;
 }
 
 /** Tool 派生的临时队列随 run 终态释放，通用执行宿主只调用此装配入口。 */
@@ -479,19 +495,22 @@ export function releaseAgentToolRunScope(runId: string): void {
 
 /** 具体 Feature 的能力快照在组合根准备，通用执行宿主只消费完成的 registry。 */
 export async function prepareAgentToolRegistry(createLegacyContext: LegacyToolContextFactory, task: { assistantId: string; allowedToolNames: readonly string[] }) {
-  const [voiceMessageTool, createMomentTool] = await Promise.all([
+  const [voiceMessageTool, createMomentTool, generateImageTool] = await Promise.all([
     task.allowedToolNames.includes(SendVoiceMessageTool.name)
       ? createConfiguredVoiceMessageTool(task.assistantId) : undefined,
     task.allowedToolNames.includes(AICreateMomentTool.name)
       ? createMomentToolForRun() : undefined,
+    task.allowedToolNames.includes(GenerateImageTool.name)
+      ? createConfiguredGenerateImageTool() : undefined,
   ]);
-  return createAgentToolRegistry({ createLegacyContext, voiceMessageTool, createMomentTool });
+  return createAgentToolRegistry({ createLegacyContext, voiceMessageTool, createMomentTool, generateImageTool });
 }
 
 export function createAgentToolRegistry({
   createLegacyContext,
   voiceMessageTool,
   createMomentTool,
+  generateImageTool,
 }: CreateAgentToolRegistryOptions): AgentToolRegistry {
   const registry = new AgentToolRegistry();
 
@@ -504,7 +523,8 @@ export function createAgentToolRegistry({
       ));
       continue;
     }
-    const tool = registration.tool.name === SendVoiceMessageTool.name && voiceMessageTool ? voiceMessageTool : registration.tool;
+    const tool = registration.tool.name === SendVoiceMessageTool.name && voiceMessageTool ? voiceMessageTool
+      : registration.tool.name === GenerateImageTool.name && generateImageTool ? generateImageTool : registration.tool;
     registry.register({
       descriptor: {
         name: registration.tool.name,

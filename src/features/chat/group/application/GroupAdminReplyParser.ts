@@ -1,6 +1,7 @@
 /** 定义群聊管理员本轮成员别名，并把模型返回映射回稳定成员身份。 */
 
 import type { GroupChatMember } from '../domain/GroupChat';
+import { USER_SUMMON_INTENT } from '../../reply/domain/UserSummonIntent';
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
 import { getMessageAttachments, getMessageSharedRecord, getMessageSharedMoment } from '../../messages/domain/chatMessageMetadata';
 import { buildSharedChatRecordText } from '../../messages/domain/SharedChatRecord';
@@ -65,7 +66,7 @@ export function buildGroupAdminInput(params: {
   const publicMembers = memberAliases.map(({ member }) => ({ aiAssistantId: member.aiAssistantId, name: member.name || 'AI' }));
   const userBatchText = userMessages
     .map((message) => `用户: ${buildGroupMentionModelText(formatUserMessageForAdmin(message), message, publicMembers)}`)
-    .join('\n') || '无';
+    .join('\n') || USER_SUMMON_INTENT;
   const currentUserMessageIds = new Set(userMessages.map((message) => message.id));
   const recentText = recentMessages
     .filter((message) => !currentUserMessageIds.has(message.id))

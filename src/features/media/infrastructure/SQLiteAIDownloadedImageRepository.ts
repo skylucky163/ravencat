@@ -17,8 +17,24 @@ export class SQLiteAIDownloadedImageRepository implements AIDownloadedImageRepos
         AND ${byId ? 'media_asset_id = ?' : 'instr(lower(file_name), lower(?)) > 0'}
     ) SELECT mediaAssetId, fileName, sourceUrl, createdAt FROM matched WHERE position = 1
       ORDER BY createdAt DESC, id DESC LIMIT ? OFFSET ?`,
-    [assistantId, byId ? query.mediaAssetId : query.keyword, limit + 1, offset]);
+    [assistantId, byId ? query.mediaAssetId : query.keyword ?? '', limit + 1, offset]);
     return { images: rows.slice(0, limit), nextOffset: rows.length > limit ? offset + limit : null };
+  }
+
+  async renameInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string, mediaAssetId: string, fileName: string): Promise<number> {
+    const result = await transaction.runAsync(
+      'UPDATE ai_downloaded_images SET file_name = ? WHERE assistant_id = ? AND media_asset_id = ?',
+      [fileName, assistantId, mediaAssetId],
+    );
+    return result.changes;
+  }
+
+  async deleteInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string, mediaAssetId: string): Promise<number> {
+    const result = await transaction.runAsync(
+      'DELETE FROM ai_downloaded_images WHERE assistant_id = ? AND media_asset_id = ?',
+      [assistantId, mediaAssetId],
+    );
+    return result.changes;
   }
 
   async addInTransaction(transaction: DatabaseTransactionExecutor, input: {

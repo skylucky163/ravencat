@@ -6,6 +6,7 @@ export { ProfileFieldScreen } from './presentation/ProfileFieldScreen';
 export { isUserProfileField, type UserProfileField } from './domain/UserProfileField';
 export {
   getCurrentUserProfile,
+  getCurrentUserNameInTransaction,
   updateCurrentUserMomentsCover,
   clearCurrentUserLegacyCachedMomentsCover,
   subscribeUserProfileUpdated,

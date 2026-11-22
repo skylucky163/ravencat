@@ -1,4 +1,11 @@
 /** 定义群聊、成员、管理员配置及群发言计划与任务的领域模型契约。 */
+export interface GroupInvocationResult {
+  success: boolean;
+  error: string | null;
+  planId: string | null;
+  outcome: 'completed' | 'already_running' | 'not_found' | 'failed';
+}
+
 export type GroupSpeechPlanStatus =
   | 'pending'
   /**
@@ -80,7 +87,6 @@ export interface GroupChatAdminConfig {
   serviceConfigId?: string | null;
   apiKey: string | null;
   apiBaseUrl: string | null;
-  systemPrompt: string | null;
   temperature: number | null;
   topP: number | null;
   maxTokens: number | null;
@@ -94,7 +100,6 @@ export interface UpdateGroupChatAdminConfigInput {
   model?: string;
   apiKey?: string | null;
   apiBaseUrl?: string | null;
-  systemPrompt?: string | null;
   temperature?: number | null;
   topP?: number | null;
   maxTokens?: number | null;
@@ -109,7 +114,7 @@ export interface GroupSpeechPlan {
   inputUpperBoundMessageId: number | null;
   /**
    * 非空表示该 plan 是用户消息换代产生的 pending successor：pending 期间处于
-   * 30 秒输入窗口，激活前 last_included_message_id 保存的是窗口起点（旧 plan
+   * 等待召唤的输入窗口，激活前 last_included_message_id 保存的是窗口起点（旧 plan
    * 的输入上界）。fresh claim 的瞬时 pending 该字段为 null。
    */
   supersedesPlanId: string | null;
@@ -167,7 +172,6 @@ export interface CreateGroupChatRecordInput {
     model: string;
     apiKey?: string | null;
     apiBaseUrl?: string | null;
-    systemPrompt?: string | null;
     temperature?: number | null;
     topP?: number | null;
     maxTokens?: number | null;

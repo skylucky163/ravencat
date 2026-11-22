@@ -13,7 +13,7 @@ import {
   releaseMediaAssetCandidates,
 } from '@features/media';
 import type { PersistentAvatarDraft } from '@platform/device/DeviceMediaService';
-import { databaseCoordinator, type DatabaseTransactionExecutor } from '@platform/persistence';
+import { CoordinatedDatabaseError, databaseCoordinator, type DatabaseTransactionExecutor } from '@platform/persistence';
 import { SettingChangeConflictError } from '@shared/errors/SettingChangeConflictError';
 import { throwIfAbortSignalAborted } from '@shared/runtime/abortSignal';
 import { ApplicationSettingsAccessError } from './domain/ApplicationSettingsAccess';
@@ -24,8 +24,13 @@ import {
 } from './application/HostAuthorityCoordinator';
 import { aiAssistantRepository } from './infrastructure/SQLiteAssistantRepository';
 import { aiHostRepository } from './infrastructure/SQLiteHostRepository';
+import { assistantRecycleBinRepository } from './infrastructure/SQLiteAssistantRecycleBinRepository';
+import type { AssistantRecycleLifecycleChange } from './domain/AssistantRecycleBin';
 
-export interface AssistantChatSessionGateway {
+export interface AssistantRuntimeGateway {
+  recordRecycleLifecycleInTransaction(transaction: DatabaseTransactionExecutor, change: AssistantRecycleLifecycleChange): Promise<() => void>;
+  suspendAssistantInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string): Promise<() => Promise<void>>;
+  purgeAssistantInTransaction(transaction: DatabaseTransactionExecutor, assistantId: string, agentId: string): Promise<readonly string[]>;
   recordNicknameChangeInTransaction(transaction: DatabaseTransactionExecutor, change: AssistantNicknameChange): Promise<() => void>;
   resolveCanonicalConversation(aiId: string): Promise<{
     id: string;
@@ -38,11 +43,21 @@ export interface AssistantChatSessionGateway {
   ): Promise<void>;
 }
 
-let chatSessionGateway: AssistantChatSessionGateway | null = null;
+let assistantRuntimeGateway: AssistantRuntimeGateway | null = null;
 const hostAuthorityCoordinator = new HostAuthorityCoordinator(aiHostRepository);
+const hostAppointmentListeners = new Set<() => void>();
 
-export function configureAssistantRuntime(gateway: AssistantChatSessionGateway): void {
-  chatSessionGateway = gateway;
+export function subscribeHostAppointmentChanged(listener: () => void): () => void {
+  hostAppointmentListeners.add(listener);
+  return () => { hostAppointmentListeners.delete(listener); };
+}
+
+function emitHostAppointmentChanged() {
+  for (const listener of hostAppointmentListeners) listener();
+}
+
+export function configureAssistantRuntime(gateway: AssistantRuntimeGateway): void {
+  assistantRuntimeGateway = gateway;
 }
 
 export async function listAIAssistants(): Promise<AIProfile[]> {
@@ -66,25 +81,72 @@ export async function applyAssistantContextLimits(assistantIds: readonly string[
 
 export async function deleteAIAssistant(aiId: string): Promise<boolean> {
   return hostAuthorityCoordinator.runHostMutation(async () => {
-    const assistant = await aiAssistantRepository.getById(aiId);
-    // 引用候选由删除事务自己给出（AI 头像 + identity 级联带走的消息媒体引用）：收集与删除
-    // 共享同一个 exclusive transaction，窗口期内新提交的消息引用不会漏出候选集。
-    const { deleted, mediaAssetCandidates } = await aiAssistantRepository.delete(aiId);
-    if (deleted) {
-      await releaseMediaAssetCandidates(mediaAssetCandidates);
-    }
-    if (deleted && assistant?.isHostAI) {
-      await requireChatSessionGateway().onHostRelationshipRemoved(aiId, 'deleted');
-    }
-    return deleted;
+    const result = await assistantRecycleBinRepository.recycle(aiId, async (transaction, change) => {
+      const gateway = requireAssistantRuntimeGateway();
+      const notify = await gateway.recordRecycleLifecycleInTransaction(transaction, change);
+      const suspend = await gateway.suspendAssistantInTransaction(transaction, aiId);
+      return async () => { notify(); await suspend(); };
+    });
+    if (!result) return false;
+    if (result.wasHost) emitHostAppointmentChanged();
+    emitAssistantLifecycleChanged(aiId, 'recycled');
+    await Promise.all([result.afterCommit(), result.wasHost
+      ? requireAssistantRuntimeGateway().onHostRelationshipRemoved(aiId, 'deleted') : Promise.resolve()]);
+    return true;
   });
+}
+
+export const listRecycledAIAssistants = () => assistantRecycleBinRepository.list();
+export const getNextAIRecycleBinExpiry = () => assistantRecycleBinRepository.getNextExpiry();
+
+export async function restoreAIAssistant(aiId: string): Promise<boolean> {
+  return hostAuthorityCoordinator.runHostMutation(async () => {
+    const result = await assistantRecycleBinRepository.restore(aiId, new Date(), (tx, change) =>
+      requireAssistantRuntimeGateway().recordRecycleLifecycleInTransaction(tx, change));
+    if (!result) return false;
+    result.afterCommit();
+    emitAssistantLifecycleChanged(aiId, 'restored');
+    return true;
+  });
+}
+
+async function purgeRecycledAssistant(aiId: string, deletedAt: string): Promise<boolean> {
+  const result = await aiAssistantRepository.delete(aiId, { deletedAt,
+    beforeDelete: (transaction, agentId) => requireAssistantRuntimeGateway().purgeAssistantInTransaction(transaction, aiId, agentId) });
+  if (result.deleted) {
+    emitAssistantLifecycleChanged(aiId, 'purged');
+    await releaseMediaAssetCandidates(result.mediaAssetCandidates);
+  }
+  return result.deleted;
+}
+
+export async function permanentlyDeleteAIAssistant(aiId: string): Promise<boolean> {
+  const deletion = await assistantRecycleBinRepository.getDeletion(aiId);
+  return deletion ? purgeRecycledAssistant(aiId, deletion.deletedAt) : false;
+}
+
+/** 进程不在运行时不额外唤醒设备；启动、前台恢复及到期维护共用这一个清理命令。 */
+export async function purgeExpiredAIAssistants(): Promise<void> {
+  for (const deletion of await assistantRecycleBinRepository.listExpired(new Date())) {
+    await purgeRecycledAssistant(deletion.id, deletion.deletedAt);
+  }
+}
+
+type AssistantLifecycleChange = { assistantId: string; change: 'recycled' | 'restored' | 'purged' };
+const assistantLifecycleListeners = new Set<(event: AssistantLifecycleChange) => void>();
+function emitAssistantLifecycleChanged(assistantId: string, change: AssistantLifecycleChange['change']) {
+  for (const listener of assistantLifecycleListeners) listener({ assistantId, change });
+}
+export function subscribeAssistantLifecycleChanged(listener: (event: AssistantLifecycleChange) => void): () => void {
+  assistantLifecycleListeners.add(listener);
+  return () => assistantLifecycleListeners.delete(listener);
 }
 
 export async function createAIAssistant(aiAssistant: AIProfile): Promise<AIProfile> {
   const insertedAI = await aiAssistantRepository.insert(aiAssistant);
 
   try {
-    const conversation = await requireChatSessionGateway()
+    const conversation = await requireAssistantRuntimeGateway()
       .resolveCanonicalConversation(insertedAI.id);
     return {
       ...insertedAI,
@@ -122,7 +184,7 @@ export async function updateAIAssistantSettings(
   }, async transaction => {
     const result = await aiAssistantRepository.updateSettingsInTransaction(transaction, aiId, settings);
     const notifyNicknameChange = result.nicknameChange === null ? null
-      : await requireChatSessionGateway().recordNicknameChangeInTransaction(transaction, result.nicknameChange);
+      : await requireAssistantRuntimeGateway().recordNicknameChangeInTransaction(transaction, result.nicknameChange);
     return { updated: result.updated, notifyNicknameChange };
   });
   // 历史与当前值一同提交后，Chat 才刷新时间线和摘要 consumer。
@@ -278,25 +340,37 @@ export async function getHostAIAssistant(): Promise<AIProfile | null> {
 
 export async function appointHostAIAssistant(aiId: string): Promise<boolean> {
   return hostAuthorityCoordinator.runHostMutation(async () => {
-    const assistant = await aiAssistantRepository.getById(aiId);
-    if (!assistant) {
-      throw new HostRelationshipError('assistant_not_found', '指定的 AI 不存在');
-    }
-    if (assistant.isBlocked) {
-      throw new HostRelationshipError('assistant_blocked', '被限制的 AI 不能成为主理 AI');
-    }
-    if (!assistant.model.trim()) {
-      throw new HostRelationshipError(
-        'assistant_model_unconfigured',
-        '没有可用聊天模型的 AI 不能成为主理 AI'
+    let afterCommit: (() => Promise<void>) | null;
+    try {
+      afterCommit = await databaseCoordinator.transaction(
+        { name: 'assistants.appoint-host', feature: 'assistants', priority: 'interactive' },
+        (tx) => appointHostAIAssistantInTransaction(tx, aiId),
       );
+    } catch (error) {
+      if (error instanceof CoordinatedDatabaseError && error.cause instanceof HostRelationshipError) throw error.cause;
+      throw error;
     }
-    const appointed = await aiHostRepository.setHostAI(aiId);
-    if (appointed && !assistant.isHostAI) {
-      await requireChatSessionGateway().onHostRelationshipChanged(aiId, 'appointed', new Date().toISOString());
-    }
-    return appointed;
+    await afterCommit?.();
+    return true;
   });
+}
+
+/** 设置页与申请卡共用任命裁决，通知由持有事务的调用方于提交后执行。 */
+export async function appointHostAIAssistantInTransaction(
+  tx: DatabaseTransactionExecutor, aiId: string,
+): Promise<(() => Promise<void>) | null> {
+  const assistant = await aiAssistantRepository.readHostAppointmentCandidate(tx, aiId);
+  if (!assistant) throw new HostRelationshipError('assistant_not_found', '指定的 AI 不存在');
+  if (assistant.blocked_until) throw new HostRelationshipError('assistant_blocked', '被限制的 AI 不能成为主理 AI');
+  if (!assistant.model.trim()) {
+    throw new HostRelationshipError('assistant_model_unconfigured', '没有可用聊天模型的 AI 不能成为主理 AI');
+  }
+  if (!await aiHostRepository.setHostAIInTransaction(tx, aiId)) return null;
+  const occurredAt = new Date().toISOString();
+  return async () => {
+    emitHostAppointmentChanged();
+    await requireAssistantRuntimeGateway().onHostRelationshipChanged(aiId, 'appointed', occurredAt);
+  };
 }
 
 export async function revokeHostAIAssistant(aiId: string): Promise<boolean> {
@@ -304,7 +378,8 @@ export async function revokeHostAIAssistant(aiId: string): Promise<boolean> {
     const assistant = await aiAssistantRepository.getById(aiId);
     const revoked = await aiHostRepository.revokeHostAI(aiId);
     if (revoked && assistant?.isHostAI) {
-      const gateway = requireChatSessionGateway();
+      emitHostAppointmentChanged();
+      const gateway = requireAssistantRuntimeGateway();
       await Promise.all([
         gateway.onHostRelationshipChanged(aiId, 'revoked', new Date().toISOString()),
         gateway.onHostRelationshipRemoved(aiId, 'revoked'),
@@ -334,17 +409,23 @@ export async function getHostAICooldownStatus() {
   return { appointment };
 }
 
+export function getHostAppointmentAvailability() {
+  return aiHostRepository.getAppointmentAvailability();
+}
+
 /** 只能由冷静期中的原主理 AI 决定解除，不恢复主理身份。 */
 export async function releaseHostAICooldown(actorAIId: string, signal?: AbortSignal): Promise<boolean> {
-  return hostAuthorityCoordinator.runHostMutation(() => {
+  return hostAuthorityCoordinator.runHostMutation(async () => {
     throwIfAbortSignalAborted(signal);
-    return aiHostRepository.releaseAppointmentCooldown(actorAIId);
+    const released = await aiHostRepository.releaseAppointmentCooldown(actorAIId);
+    if (released) emitHostAppointmentChanged();
+    return released;
   });
 }
 
-function requireChatSessionGateway(): AssistantChatSessionGateway {
-  if (!chatSessionGateway) {
-    throw new Error('助手聊天会话网关尚未配置');
+function requireAssistantRuntimeGateway(): AssistantRuntimeGateway {
+  if (!assistantRuntimeGateway) {
+    throw new Error('AI 助手运行时网关尚未配置');
   }
-  return chatSessionGateway;
+  return assistantRuntimeGateway;
 }

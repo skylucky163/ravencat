@@ -1,6 +1,14 @@
 /** 定义聊天附件及其草稿、解析状态和 AI 处理元数据的领域契约。 */
 export type ChatAttachmentType = 'image' | 'file';
 
+/** 文件解析和粘贴入口共用此上限，单位为 UTF-16 码元。 */
+export const CHAT_TEXT_ATTACHMENT_MAX_LENGTH = 50_000;
+export const CHAT_FILE_PAGE_SIZE = 4_000;
+
+export function formatChatFileReference(messageId: number, attachment: Pick<ChatAttachment, 'id' | 'fileName'>): string {
+  return `文件：${attachment.fileName}；messageId=${messageId}；attachmentId=${attachment.id}`;
+}
+
 /** 新上传文档与收藏文件分类共用 TXT/MD 的业务类型定义；历史预览独立保留旧类型。 */
 export function isChatTextDocumentFileName(fileName: string): boolean {
   return /\.(txt|md)$/i.test(fileName);
@@ -10,6 +18,7 @@ export type ChatAttachmentSource =
   | 'gallery'
   | 'camera'
   | 'document'
+  | 'clipboard'
   | 'media_library'
   | 'screen_capture';
 
@@ -54,6 +63,7 @@ export interface LegacyChatAttachment extends ChatAttachmentFields {
   thumbnailUri?: string | null;
   mediaAssetId?: never;
   thumbnailMediaAssetId?: never;
+  unavailable?: never;
 }
 
 /** 已迁移的 Chat 附件引用；媒体字节由 MediaAsset backing/resolver 所有。 */
@@ -62,10 +72,20 @@ export interface MediaAssetChatAttachment extends ChatAttachmentFields {
   thumbnailMediaAssetId?: string | null;
   localUri?: never;
   thumbnailUri?: never;
+  unavailable?: never;
 }
 
-/** M3a 过渡期 DTO：legacy URI 与 MediaAsset 身份必须是互斥形态。 */
-export type ChatAttachment = LegacyChatAttachment | MediaAssetChatAttachment;
+/** 外部历史记录保留附件身份和文件名，即使源端已无法提供字节。 */
+export interface UnavailableChatAttachment extends ChatAttachmentFields {
+  unavailable: true;
+  localUri?: never;
+  thumbnailUri?: never;
+  mediaAssetId?: never;
+  thumbnailMediaAssetId?: never;
+}
+
+export type StoredChatAttachment = MediaAssetChatAttachment | UnavailableChatAttachment;
+export type ChatAttachment = LegacyChatAttachment | StoredChatAttachment;
 
 export interface ChatMessageAttachmentAIPolicy {
   sentToModel: boolean;
@@ -108,7 +128,7 @@ export interface AttachmentDraftItem {
   id: string;
   type: ChatAttachmentType;
   source: ChatAttachmentSource;
-  originalUri: string;
+  originalUri?: string;
   localUri?: string | null;
   fileName: string;
   mimeType?: string | null;

@@ -1,6 +1,7 @@
 /** 将 Chat 的仓储端口与数据库维护能力连接到具体实现。 */
 import { chatSummaryRepository } from './chatSummaryRepository';
-import { resolveImageGroundingPrompt, resolveVisionOCRPrompt } from '@features/prompting';
+import { buildCallTranscriptSearch } from '@features/calls/composition';
+import { resolveGroupAdminPrompt, resolveImageGroundingPrompt, resolveVisionOCRPrompt } from '@features/prompting';
 import {
   configureChatRuntimeDependencies,
   configureChatCodePreview,
@@ -56,7 +57,7 @@ import {
 } from './agent';
 import { ToolContext } from '@shared/aiTools';
 import { momentRepository } from '@features/moments';
-import { protocolRepository } from '@features/protocol';
+import { protocolRepository } from '@features/protocol/composition';
 import { userProfileRepository } from '@features/profile';
 import { ledgerRepository } from '@features/wallet';
 import {
@@ -98,9 +99,16 @@ export function configureChatRuntime(): void {
   });
   subscribeAuxiliaryModelsChanged(notifyChatImageModelsChanged);
   configureChatRuntimeDependencies({
+    callTranscriptSearch: buildCallTranscriptSearch,
     captureGroupHistory: (tx, groupId, groupName) => chatSummaryRepository.captureGroupHistoryInTransaction(tx, groupId, groupName),
     mutations: { isRunCurrent: (transaction, runId) => conversationTurnRepository.isRunCurrentInTransaction(transaction, runId) },
     turnPresentation: { freeze: freezeTurnDisplays, interrupt: interruptSessionTurnDisplays },
+    turnCancellation: {
+      onCommitted: (sessionId) => getConversationTurnCoordinator().abortInvalidatedTurn(sessionId),
+    },
+    userReplyRequest: {
+      onRequested: (sessionId) => getConversationTurnCoordinator().requestReplyFromHost(sessionId),
+    },
     repositories: {
       messages: messageRepository,
       sessions: sessionRepository,
@@ -135,7 +143,7 @@ export function configureChatRuntime(): void {
       },
     },
     regeneration: {
-      onRequested: (sessionId) => getConversationTurnCoordinator().requestRegenerationFromHost(sessionId),
+      onRequested: (sessionId) => getConversationTurnCoordinator().requestReplyFromHost(sessionId),
       onInvalidated: (sessionId) => getConversationTurnCoordinator().abortInvalidatedTurn(sessionId),
     },
     legacyChatAttachments: {
@@ -203,6 +211,7 @@ export function configureChatRuntime(): void {
     prompt: {
       readImageGroundingReminder: resolveImageGroundingPrompt,
       resolveVisionOCRPrompt,
+      resolveGroupAdminPrompt,
       assembleChat: assembleResolvedChatPromptPack,
       assembleLedger: assembleResolvedLedgerPromptPack,
       assembleStandalone: assembleResolvedStandalonePromptPack,

@@ -9,6 +9,7 @@ export {
   finishMessageArrival,
   addNotificationResponseListener,
   cancelConversationNotifications,
+  cancelReadMessageNotifications,
   cancelIncomingCallNotification,
   leaveCallScreen,
   cancelTogetherListeningPresentation,

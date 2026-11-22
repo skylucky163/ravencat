@@ -115,11 +115,11 @@ export async function interruptSessionTurnDisplays(sessionId: string): Promise<v
   const ids = [...(closingRuns.get(sessionId) ?? [])];
   const interrupted = [...runs.values()].filter(run => closingRuns.get(sessionId)?.has(run.runId));
   for (const run of interrupted) run.interrupt();
-  // T1 已把完成回复一次放行；同时撤销旧的内存 pending 过滤，不等分段 timer。
+  // 以事务确认的交付版本为准，同步撤销这些正式消息的内存 pending 过滤，不等分段 timer。
   const messageIds = await repositorySlot.get().listPublishedMessageIds(ids);
   if (messageIds.length) await releaseArrived(messageIds);
   emitChatMessagesReloadRequested(sessionId);
-  // T1 已封口；历史投影读取不属于新输入的关键路径。
+  // 事务已封口；历史投影读取不阻塞后续输入或终止操作。
   void reloadTurnDisplayHistory(sessionId, undefined, interrupted.map(run => run.runId))
     .catch(error => console.error('[ChatTurnPresentation] 中断历史读取失败', error));
 }
@@ -164,11 +164,6 @@ export function reloadTurnDisplayHistory(sessionId: string, messages?: readonly 
           if (runs.has(run.runId) && run.state === 'open') continue;
           runs.get(run.runId)?.interrupt();
           runs.delete(run.runId);
-          if (run.kind === 'regenerate' && !run.committed) {
-            // 显式重写是替换原答复；失败按原契约撤销尝试投影，恢复仍在库中的原答复。
-            clearAgentTransientTimelineRun(run.runId, sessionId);
-            continue;
-          }
           // 当前页面已经交付的行保留到 canonical 读回；不制造先清空再异步重载的空窗。
           if (run.items.length) {
             applyAgentTransientTimelineSnapshots({ sessionId, source: 'history', snapshots: run.items.map(({ snapshot }) => ({
@@ -337,25 +332,29 @@ export class ChatTurnPresentation {
       await this.hostClosed;
       await this.flush();
       await repositorySlot.get().interrupt(this.runId, reason);
+      emitChatTurnExecutionChanged(this.sessionId);
       await reloadTurnDisplayHistory(this.sessionId, undefined, [this.runId]);
       emitChatMessagesReloadRequested(this.sessionId);
-      emitChatTurnExecutionChanged(this.sessionId);
     } finally {
       runs.delete(this.runId);
       await activatePacing(this.runId, false);
     }
   }
 
-  async publishSegment(message: ChatMessage): Promise<boolean> {
+  async publishSegment(message: ChatMessage, publishedAtReplacement = false): Promise<boolean> {
     if (this.control.executionDeadlineAt !== undefined && performance.now() >= this.control.executionDeadlineAt) this.onHostStopped();
     if (this.closed || frozenSessions.has(this.sessionId)) return false;
     const scheduled = this.arrivalByIdentity.get(message.clientMessageId!);
-    if (scheduled) await scheduled;
-    else if (!this.deliveredIdentities.has(message.clientMessageId!) && !await pacing(this.runId, `ai:${this.assistantId}`)) return false;
+    if (!publishedAtReplacement) {
+      if (scheduled) await scheduled;
+      else if (!this.deliveredIdentities.has(message.clientMessageId!) && !await pacing(this.runId, `ai:${this.assistantId}`)) return false;
+    }
     if (this.closed || frozenSessions.has(this.sessionId)) return false;
     // 已交付正文在 T3 只绑定正式消息身份，不重新申请发布资格；否则首段可能
     // 收口已经全部流式到达的批次，让后续分段失去正常的交付回调。
-    if (this.deliveredIdentities.has(message.clientMessageId!)) {
+    if (publishedAtReplacement || this.deliveredIdentities.has(message.clientMessageId!)) {
+      // 重写首泡已经在 T3 随版本替换发布；只接管正式身份，不再次申请发布资格。
+      this.deliveredIdentities.add(message.clientMessageId!);
       await releaseArrived([message.id]);
       return true;
     }
@@ -367,8 +366,8 @@ export class ChatTurnPresentation {
       applyAgentTransientTimelineSnapshots({ sessionId: this.sessionId, agentId: this.agentId,
         snapshots: [item.snapshot] });
     }
-    await releaseArrived([message.id]);
     emitChatTurnExecutionChanged(this.sessionId);
+    await releaseArrived([message.id]);
     return true;
   }
 
@@ -410,22 +409,26 @@ export class ChatTurnPresentation {
           if (this.arriving.has(identity)) continue;
           this.arriving.add(identity);
           this.arrivals = this.arrivals.then(async () => {
-            if (this.closed || !await pacing(this.runId, `ai:${this.assistantId}`)) return;
-            if (this.closed || frozenSessions.has(this.sessionId)) return;
+            if (this.closed || this.deliveredIdentities.has(identity) || !await pacing(this.runId, `ai:${this.assistantId}`)) return;
+            if (this.closed || this.deliveredIdentities.has(identity) || frozenSessions.has(this.sessionId)) return;
             const latest = this.available.get(identity)!;
-            if (!await repository.publishVersions(this.runId, [latest]) || this.closed) return;
+            const published = await repository.publishVersions(this.runId, [latest]);
+            if (!published || this.closed || this.deliveredIdentities.has(identity)) return;
             this.deliveredIdentities.add(identity);
             applyAgentTransientTimelineSnapshots({ sessionId: this.sessionId, agentId: this.agentId,
               snapshots: [latest.snapshot] });
+            if (published.completed) emitChatTurnExecutionChanged(this.sessionId);
             await this.notifyCompletedSegments([latest]);
           }).catch(error => { this.failure = error; });
           this.arrivalByIdentity.set(identity, this.arrivals);
         } else immediate.push(item);
       }
-      if (immediate.length && await repository.publishVersions(this.runId, immediate) && !this.closed) {
+      const published = immediate.length ? await repository.publishVersions(this.runId, immediate) : null;
+      if (published && !this.closed) {
         for (const item of immediate) this.deliveredIdentities.add(item.snapshot.clientMessageId);
         applyAgentTransientTimelineSnapshots({ sessionId: this.sessionId,
           agentId: this.agentId, snapshots: immediate.map(item => item.snapshot) });
+        if (published.completed) emitChatTurnExecutionChanged(this.sessionId);
         await this.notifyCompletedSegments(immediate);
       }
     });
@@ -439,14 +442,12 @@ export class ChatTurnPresentation {
       await this.flush();
       await this.arrivals;
       await this.flush();
-      if (this.closed) await repositorySlot.get().interrupt(this.runId, String(this.control.signal?.reason ?? 'execution_interrupted'));
-      if (await repositorySlot.get().complete(this.runId)) {
-        this.closed = true;
-        runs.delete(this.runId);
+      if (this.closed) {
+        await repositorySlot.get().interrupt(this.runId, String(this.control.signal?.reason ?? 'execution_interrupted'));
+        emitChatTurnExecutionChanged(this.sessionId);
       }
       await reloadTurnDisplayHistory(this.sessionId, undefined, [this.runId]);
       emitChatMessagesReloadRequested(this.sessionId);
-      emitChatTurnExecutionChanged(this.sessionId);
     } finally {
       this.interrupt();
       runs.delete(this.runId);

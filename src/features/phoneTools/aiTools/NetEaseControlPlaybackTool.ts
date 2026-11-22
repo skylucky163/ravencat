@@ -18,7 +18,7 @@ export interface NetEaseControlPlaybackArgs {
 
 export const netEaseControlPlaybackDefinition = {
   name: 'netease_control_playback',
-  description: '控制网易云当前播放会话的播放命令。成功仅表示请求已派发，不代表已确认新的播放状态。',
+  description: '控制网易云当前播放会话的播放命令。返回派发状态；新状态需重新读取播放状态。',
   parameters: {
     type: 'object',
     properties: {

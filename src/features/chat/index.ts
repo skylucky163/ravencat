@@ -54,6 +54,7 @@ export { buildChatUserMessageModelInput } from './reply/application/BuildChatBat
 export { buildGroupMentionModelText } from './group/application/GroupMentionModelText';
 export {
   requestProactiveChatReply,
+  requestOptionalProactiveChatReply,
 } from './reply/application/RequestProactiveChatReply';
 export type {
   RequestProactiveChatReplyParams,
@@ -80,6 +81,7 @@ export {
 export {
   listRecentChatTranscript,
   listRecentChatPreviewMessages,
+  isChatAssistantMessageRead,
   findCommittedAssistantMessageIdByRelatedSource,
   findFirstVisibleTimelineMessageByRunId,
   findFirstVisibleTimelineAnchorsByRunIds,
@@ -290,6 +292,8 @@ export type { ChatSubScreen, GroupChatSubScreen } from './presentation/shell/cha
 export {
   ChatConversationRouteScreen,
   ChatFilePreviewRouteScreen,
+  ChatImportRouteScreen,
+  DeepSeekImportRouteScreen,
   ChatMenuRouteScreen,
   ChatProtocolRouteScreen,
   ChatStatisticsRouteScreen,
@@ -313,6 +317,7 @@ export type { ChatSummaryTask, ChatSummaryCallDiagnostics } from './summary/doma
 export { SearchChatSummariesTool } from './summary/aiTools/SearchChatSummariesTool';
 export { SearchChatMessagesTool } from './messages/aiTools/SearchChatMessagesTool';
 export { ReadChatMessageContextTool } from './messages/aiTools/ReadChatMessageContextTool';
+export { ReadChatFileTool } from './messages/aiTools/ReadChatFileTool';
 export { GetSecondarySummaryTool, EditSecondarySummaryTool, EditPrimarySummaryTool, DeletePrimarySummaryTool } from './summary/aiTools/ChatSummaryTools';
 export { isChatReplyRunCurrentInTransaction } from './reply/application/ChatRunMutationFence';
 export { isGroupSpeechTaskRunCurrentInTransaction } from './group/application/GroupSpeechTermination';

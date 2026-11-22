@@ -40,7 +40,7 @@ internal object RavenCatOverlayRuntime {
   private var unsubscribeInteractionExclusion: (() -> Unit)? = null
 
   /** 可见消息身份由原生 View 回报，Host 统一提交 Chat 已读。 */
-  var conversationDisplayedListener: ((sessionId: String, messageIds: List<Long>) -> Unit)? = null
+  var conversationDisplayedListener: ((String, List<Long>, List<String>) -> Unit)? = null
   var conversationRefreshListener: (() -> Unit)? = null
 
   /**
@@ -85,8 +85,8 @@ internal object RavenCatOverlayRuntime {
     val applicationContext = context.applicationContext
     runtimeContext = applicationContext
     val nextController = RavenCatOverlayController(applicationContext, ::handleIntent)
-    nextController.conversationDisplayedListener = { sessionId, messageIds ->
-      conversationDisplayedListener?.invoke(sessionId, messageIds)
+    nextController.conversationDisplayedListener = { sessionId, messageIds, clientMessageIds ->
+      conversationDisplayedListener?.invoke(sessionId, messageIds, clientMessageIds)
     }
     val nextDispatcher = RavenCatFloatingMessageDispatcher(applicationContext)
     controller = nextController
@@ -198,7 +198,7 @@ internal object RavenCatOverlayRuntime {
     updateSnapshot(snapshot.withConversationPreview(sessionId, messages))
   }
 
-  fun updateReplyPreview(text: String, status: String?, correlationId: String?, sessionId: String? = null, messageId: Long? = null): Boolean {
+  fun updateReplyPreview(text: String, status: String?, correlationId: String?, sessionId: String? = null, messageId: Long? = null, requestCorrelationId: String? = null): Boolean {
     if (sessionId != null && sessionId != snapshot.conversationSessionId) return false
     val next = RavenCatOverlayMessage(
       role = previewRoleForStatus(status),
@@ -206,7 +206,7 @@ internal object RavenCatOverlayRuntime {
       correlationId = correlationId?.takeIf { it.isNotBlank() },
       messageId = messageId,
     )
-    updateSnapshot(snapshot.withReplyPreview(next))
+    updateSnapshot(snapshot.withReplyPreview(next, requestCorrelationId))
 
     // 回复投影只返回交付结果；已读由 View 的实际可见消息回执统一承担。
     val displayed =

@@ -9,6 +9,8 @@
 import { getErrorDisplayInfo, redactAIErrorMessage } from './errorMapping';
 import { normalizeAIBaseURL } from './baseUrl';
 import { beginAIHttpCapture } from './HttpExchangeCapture';
+import { buildThinkingParameters } from './reasoning';
+import { OpenAIMessageDecoder, usesLeadingThinkTags, reasoningReplayContract, type AssistantTextResult, type ReasoningCompletionContext } from './OpenAIMessageDecoder';
 import type {
   AIClientConfig,
   ChatMessage,
@@ -23,36 +25,20 @@ import type {
   ConnectionTestResult,
   OpenAIChatCompletionResponse,
   OpenAIChatUsage,
+  OpenAIAssistantPayload,
+  AIProtocolIssue,
   OpenAIEmbeddingResponse,
   EmbeddingResponse,
 } from './types';
 
 const maxTokensFieldCache = new Map<string, string>();
+interface DecodedCompletionResponse extends OpenAIChatCompletionResponse {
+  extraction: AssistantTextResult;
+  parsedToolCalls: ToolCall[];
+}
 /** HTTP 状态保留给调用方分类失败，不要求业务层猜测服务端错误文案。 */
 class AIHttpError extends Error {
   constructor(readonly status: number, message: string) { super(`HTTP ${status}: ${message}`); }
-}
-
-/** 同一份序列化文本用于发送和诊断，响应先留原文，再交给 Provider 解析。 */
-async function fetchAIResponseText(url: string, requestBody: Record<string, unknown>,
-  apiKey: string, signal?: AbortSignal): Promise<{ response: Response; rawText: string }> {
-  const body = JSON.stringify(requestBody);
-  const capture = await beginAIHttpCapture({ url, requestBody: body,
-    model: String(requestBody.model ?? ''), transport: 'complete' }, apiKey);
-  let failure: unknown;
-  try {
-    const response = await fetch(url, { method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, signal, body });
-    capture?.setResponse(response.status, '');
-    const rawText = await response.text();
-    capture?.setResponse(response.status, rawText);
-    return { response, rawText };
-  } catch (error) {
-    failure = error;
-    throw error;
-  } finally {
-    await capture?.finish(failure);
-  }
 }
 
 /** Provider 错误属于外部协议；保留 code/message，纯文本拒绝也不能丢失。 */
@@ -70,17 +56,20 @@ function parseHTTPErrorBody(rawText: string): string {
 }
 
 export class BaseAIClient {
-  config: Required<AIClientConfig> & { temperature: number | null; maxTokens: number | null; topP: number | null };
+  config: AIClientConfig;
   baseURL: string;
   private maxTokensFieldName: string;
+  private readonly parseThinkTags: boolean;
+
+  private reasoningContext(hasToolCalls: boolean): ReasoningCompletionContext {
+    return { hasToolCalls, replayContract: reasoningReplayContract(this.baseURL), thinkingDisabled: this.config.disableThinking };
+  }
 
   constructor(config: AIClientConfig) {
-    this.config = {
-      maxTokens: 2000,
-      ...config,
-    } as Required<AIClientConfig> & { temperature: number | null; maxTokens: number | null; topP: number | null };
+    this.config = { ...config };
 
     this.baseURL = this.buildBaseURL(this.config.baseURL);
+    this.parseThinkTags = usesLeadingThinkTags(config);
     this.maxTokensFieldName = getCachedMaxTokensFieldName(this.baseURL, this.config.model);
   }
 
@@ -136,19 +125,7 @@ export class BaseAIClient {
       requestBody.response_format = { type: responseFormat };
     }
 
-    // 可切换模型必须显式表达开关两端；百炼的 Kimi 等模型默认不思考。
-    // 未提供开关的调用与非思考模型仍沿用服务商行为，不在展示层隐藏模型输出。
-    if (this.config.disableThinking !== undefined
-      && (this.config.disableThinking || supportsThinkingToggle(this.config.model))) {
-      const enabled = !this.config.disableThinking;
-      if (providerHostname === 'openrouter.ai') {
-        requestBody.reasoning = { enabled };
-      } else if (this.config.model.toLowerCase().includes('qwen') || this.baseURL.includes('dashscope')) {
-        requestBody.enable_thinking = enabled;
-      } else {
-        requestBody.thinking = { type: enabled ? 'enabled' : 'disabled' };
-      }
-    }
+    Object.assign(requestBody, buildThinkingParameters({ ...this.config, baseURL: this.baseURL }));
 
     // DeepSeek 默认启用思考；带工具的首次请求也要求历史 assistant 提供该字段。
     // 这里只补纯对话历史的空记录；真实工具轮的思考必须由调用链原样回传。
@@ -156,6 +133,13 @@ export class BaseAIClient {
       && this.config.disableThinking !== true) {
       requestBody.messages = withDeepSeekHistoryReasoning(messages);
     }
+
+    // 原始思考只在本次工具续轮回放；内部载荷不能作为未知请求字段泄漏给服务商。
+    requestBody.messages = (requestBody.messages as ChatMessage[]).map(({ reasoningReplay, ...message }) => {
+      if (!reasoningReplay) return message;
+      const { reasoning_content: _displayReasoning, ...wireMessage } = message;
+      return { ...wireMessage, ...reasoningReplay };
+    });
 
     if (this.config.temperature !== null && this.config.temperature !== undefined) {
       requestBody.temperature = this.config.temperature;
@@ -173,7 +157,7 @@ export class BaseAIClient {
   private async sendRequest(
     requestBody: Record<string, unknown>,
     options: { signal?: AbortSignal; allowImageContentFallback?: boolean } = {}
-  ): Promise<OpenAIChatCompletionResponse> {
+  ): Promise<DecodedCompletionResponse> {
     const data = await this.sendRequestOnce(requestBody, options);
     return data;
   }
@@ -212,6 +196,8 @@ export class BaseAIClient {
         requestBody,
         signal: options.signal,
         onDelta: options.onDelta,
+        parseThinkTags: this.parseThinkTags,
+        reasoningContext: this.reasoningContext(false),
       });
     }
 
@@ -220,6 +206,7 @@ export class BaseAIClient {
     let capture = await beginAIHttpCapture({ url, requestBody: body,
       model: String(requestBody.model ?? ''), transport: 'stream' }, this.config.apiKey);
     let failure: unknown;
+    let protocolIssues: readonly AIProtocolIssue[] = [];
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -234,10 +221,11 @@ export class BaseAIClient {
 
       if (!response.ok) {
         const rawText = await response.text();
-        capture?.setResponse(response.status, rawText);
-        await capture?.finish();
-        capture = null;
         const errorMessage = parseHTTPErrorBody(rawText) || response.statusText;
+        const httpError = new AIHttpError(response.status, errorMessage);
+        capture?.setResponse(response.status, rawText);
+        await capture?.finish(httpError);
+        capture = null;
         const fallbackRequestBody = this.buildMaxTokensFallbackRequestBody(requestBody, errorMessage);
 
         if (fallbackRequestBody) {
@@ -255,83 +243,110 @@ export class BaseAIClient {
           return this.sendStreamingRequestOnce(responseFormatFallbackRequestBody, options);
         }
 
-        throw new AIHttpError(response.status, errorMessage);
+        throw httpError;
       }
 
       this.rememberMaxTokensFieldName(getRequestBodyMaxTokensFieldName(requestBody) || 'max_tokens');
 
       return await readOpenAICompatibleSSE(response, options.onDelta,
         capture ? (chunk) => capture.appendResponse(chunk) : undefined,
-        (error) => { failure = error; });
+        (error) => { failure = error; }, this.parseThinkTags, options.signal, this.reasoningContext(false),
+        (issues) => { protocolIssues = issues; });
     } catch (error) {
       failure = error;
       throw error;
     } finally {
-      await capture?.finish(failure);
+      await capture?.finish(failure, protocolIssues);
     }
   }
 
   private async sendRequestOnce(
     requestBody: Record<string, unknown>,
     options: { signal?: AbortSignal; allowImageContentFallback?: boolean } = {}
-  ): Promise<OpenAIChatCompletionResponse> {
-    const { response, rawText } = await fetchAIResponseText(
-      `${this.baseURL}/chat/completions`, requestBody, this.config.apiKey, options.signal,
-    );
+  ): Promise<DecodedCompletionResponse> {
+    const url = `${this.baseURL}/chat/completions`;
+    const body = JSON.stringify(requestBody);
+    let capture = await beginAIHttpCapture({ url, requestBody: body,
+      model: String(requestBody.model ?? ''), transport: 'complete' }, this.config.apiKey);
+    let failure: unknown;
+    let protocolIssues: readonly AIProtocolIssue[] = [];
+    try {
+      const response = await fetch(url, { method: 'POST', headers: {
+        'Content-Type': 'application/json', Authorization: `Bearer ${this.config.apiKey}`,
+      }, signal: options.signal, body });
+      capture?.setResponse(response.status, '');
+      const rawText = await response.text();
+      capture?.setResponse(response.status, rawText);
+      if (!response.ok) {
+        const errorMessage = parseHTTPErrorBody(rawText) || response.statusText;
+        const httpError = new AIHttpError(response.status, errorMessage);
+        await capture?.finish(httpError);
+        capture = null;
+        const fallbackRequestBody = this.buildMaxTokensFallbackRequestBody(requestBody, errorMessage);
 
-    if (!response.ok) {
-      const errorMessage = parseHTTPErrorBody(rawText) || response.statusText;
-      const fallbackRequestBody = this.buildMaxTokensFallbackRequestBody(requestBody, errorMessage);
+        if (fallbackRequestBody) {
+          console.warn('[BaseAIClient] Retrying request with alternate max tokens field', {
+            model: this.config.model,
+            requestURL: `${this.baseURL}/chat/completions`,
+            fromField: getRequestBodyMaxTokensFieldName(requestBody),
+            toField: getRequestBodyMaxTokensFieldName(fallbackRequestBody),
+          });
 
-      if (fallbackRequestBody) {
-        console.warn('[BaseAIClient] Retrying request with alternate max tokens field', {
-          model: this.config.model,
-          requestURL: `${this.baseURL}/chat/completions`,
-          fromField: getRequestBodyMaxTokensFieldName(requestBody),
-          toField: getRequestBodyMaxTokensFieldName(fallbackRequestBody),
-        });
+          const data = await this.sendRequestOnce(fallbackRequestBody, options);
+          this.rememberMaxTokensFieldName(getRequestBodyMaxTokensFieldName(fallbackRequestBody) || 'max_tokens');
+          return data;
+        }
 
-        const data = await this.sendRequestOnce(fallbackRequestBody, options);
-        this.rememberMaxTokensFieldName(getRequestBodyMaxTokensFieldName(fallbackRequestBody) || 'max_tokens');
-        return data;
+        const imageFallbackRequestBody = options.allowImageContentFallback === false || (response.status !== 400 && response.status !== 422)
+          ? null
+          : this.buildImageContentFallbackRequestBody(requestBody, errorMessage);
+
+        if (imageFallbackRequestBody) {
+          console.warn('[BaseAIClient] Retrying request without image_url content parts', {
+            model: this.config.model,
+            requestURL: `${this.baseURL}/chat/completions`,
+          });
+
+          return this.sendRequestOnce(imageFallbackRequestBody, options);
+        }
+
+        const responseFormatFallbackRequestBody = this.buildResponseFormatFallbackRequestBody(
+          requestBody,
+          errorMessage
+        );
+
+        if (responseFormatFallbackRequestBody) {
+          console.warn('[BaseAIClient] Retrying request without response_format', {
+            model: this.config.model,
+            requestURL: `${this.baseURL}/chat/completions`,
+          });
+
+          return this.sendRequestOnce(responseFormatFallbackRequestBody, options);
+        }
+
+        throw httpError;
       }
 
-      const imageFallbackRequestBody = options.allowImageContentFallback === false || (response.status !== 400 && response.status !== 422)
-        ? null
-        : this.buildImageContentFallbackRequestBody(requestBody, errorMessage);
+      this.rememberMaxTokensFieldName(getRequestBodyMaxTokensFieldName(requestBody) || 'max_tokens');
 
-      if (imageFallbackRequestBody) {
-        console.warn('[BaseAIClient] Retrying request without image_url content parts', {
-          model: this.config.model,
-          requestURL: `${this.baseURL}/chat/completions`,
-        });
-
-        return this.sendRequestOnce(imageFallbackRequestBody, options);
+      const data = JSON.parse(rawText) as OpenAIChatCompletionResponse;
+      const providerError = readProviderError(data);
+      if (providerError !== null) throw new Error(`模型接口错误：${providerError}`);
+      const choice = data.choices?.[0];
+      if (!choice?.message || typeof choice.message !== 'object' || Array.isArray(choice.message)) {
+        throw new Error('Invalid API response: no assistant message');
       }
-
-      const responseFormatFallbackRequestBody = this.buildResponseFormatFallbackRequestBody(
-        requestBody,
-        errorMessage
-      );
-
-      if (responseFormatFallbackRequestBody) {
-        console.warn('[BaseAIClient] Retrying request without response_format', {
-          model: this.config.model,
-          requestURL: `${this.baseURL}/chat/completions`,
-        });
-
-        return this.sendRequestOnce(responseFormatFallbackRequestBody, options);
-      }
-
-      throw new AIHttpError(response.status, errorMessage);
-    }
-
-    this.rememberMaxTokensFieldName(getRequestBodyMaxTokensFieldName(requestBody) || 'max_tokens');
-
-    const data = JSON.parse(rawText);
-    const providerError = readProviderError(data);
-    if (providerError !== null) throw new Error(`模型接口错误：${providerError}`);
-    return data as OpenAIChatCompletionResponse;
+      const decoder = new OpenAIMessageDecoder(this.parseThinkTags);
+      decoder.append(choice.message);
+      decoder.finish();
+      protocolIssues = decoder.protocolIssues;
+      const parsedToolCalls = normalizeToolCalls(choice.message.tool_calls);
+      const extraction = decoder.complete(this.reasoningContext(parsedToolCalls.length > 0 || choice.finish_reason === 'tool_calls'), true);
+      return { ...data, extraction, parsedToolCalls };
+    } catch (error) {
+      failure = error;
+      throw error;
+    } finally { await capture?.finish(failure, protocolIssues); }
   }
 
   private rememberMaxTokensFieldName(fieldName: string): void {
@@ -434,16 +449,16 @@ export class BaseAIClient {
   }
 
   private createSuccessResponse(
-    data: OpenAIChatCompletionResponse,
-    message: { content?: string | null; reasoning_content?: string; reasoning?: unknown; tool_calls?: unknown[] },
+    data: DecodedCompletionResponse,
     toolCalls: ToolCall[],
     isToolCall: boolean,
     finishReason?: string | null
   ): ChatResponse {
-    const extraction = extractAssistantTextResult(message);
+    const extraction = data.extraction;
     return {
       text: extraction.text,
       reasoningText: extraction.reasoningText || '',
+      ...(extraction.reasoningReplay ? { reasoningReplay: extraction.reasoningReplay } : {}),
       finishReason: finishReason ?? null,
       usageReported: data.usage != null,
       messageId: data.id || null,
@@ -589,15 +604,16 @@ export class BaseAIClient {
         throw new Error('Invalid API response: no choices');
       }
 
-      const message = choice.message || {};
-      const toolCalls = normalizeToolCalls(message?.tool_calls);
-      const extraction = extractAssistantTextResult(message);
+      const toolCalls = data.parsedToolCalls;
+      const extraction = data.extraction;
 
+      const maxTokens = this.config.maxTokens;
       if (
         allowReasoningLengthRetry
+        && maxTokens != null
         && shouldRetryForReasoningOnlyCompletion(choice, extraction)
       ) {
-        const nextMaxTokens = getExpandedMaxTokens(this.config.maxTokens);
+        const nextMaxTokens = getExpandedMaxTokens(maxTokens);
 
         return this.runWithTemporaryMaxTokens(nextMaxTokens, () => this.chat(messages, {
           includeSystemPrompt,
@@ -610,12 +626,12 @@ export class BaseAIClient {
 
       if (toolCalls.length > 0) {
         return {
-          ...this.createSuccessResponse(data, message, toolCalls, true, choice.finish_reason),
+          ...this.createSuccessResponse(data, toolCalls, true, choice.finish_reason),
           text: '',
         };
       }
 
-      return this.createSuccessResponse(data, message, [], false, choice.finish_reason);
+      return this.createSuccessResponse(data, [], false, choice.finish_reason);
     } catch (error) {
       if (isAbortLikeError(error)) {
         throw error;
@@ -738,16 +754,17 @@ export class BaseAIClient {
         throw new Error('Invalid API response: no choices');
       }
 
-      const message = choice.message || {};
-      const toolCalls = normalizeToolCalls(message?.tool_calls);
-      const extraction = extractAssistantTextResult(message);
+      const toolCalls = data.parsedToolCalls;
+      const extraction = data.extraction;
 
+      const maxTokens = this.config.maxTokens;
       if (
         allowReasoningLengthRetry
+        && maxTokens != null
         && toolCalls.length === 0
         && shouldRetryForReasoningOnlyCompletion(choice, extraction)
       ) {
-        const nextMaxTokens = getExpandedMaxTokens(this.config.maxTokens);
+        const nextMaxTokens = getExpandedMaxTokens(maxTokens);
 
         return this.runWithTemporaryMaxTokens(nextMaxTokens, () => this.chatWithTools(messages, tools, {
           toolChoice,
@@ -761,14 +778,14 @@ export class BaseAIClient {
       const isToolCall = choice.finish_reason === 'tool_calls' || toolCalls.length > 0;
 
       if (isToolCall && toolCalls.length > 0) {
-        return this.createSuccessResponse(data, message, toolCalls, true, choice.finish_reason);
+        return this.createSuccessResponse(data, toolCalls, true, choice.finish_reason);
       }
 
       if (isToolCall && toolCalls.length === 0) {
         throw new Error('Tool call response missing tool_calls payload');
       }
 
-      return this.createSuccessResponse(data, message, [], false, choice.finish_reason);
+      return this.createSuccessResponse(data, [], false, choice.finish_reason);
     } catch (error) {
       if (isAbortLikeError(error)) {
         throw error;
@@ -1069,13 +1086,15 @@ async function sendStreamingRequestWithXMLHttpRequest(params: {
   requestBody: Record<string, unknown>;
   signal?: AbortSignal;
   onDelta?: (delta: ChatStreamDelta) => void | Promise<void>;
+  parseThinkTags: boolean;
+  reasoningContext: ReasoningCompletionContext;
 }): Promise<ChatResponse> {
   const body = JSON.stringify(params.requestBody);
   const capture = await beginAIHttpCapture({ url: params.url, requestBody: body,
     model: String(params.requestBody.model ?? ''), transport: 'stream' }, params.apiKey);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    const parser = createOpenAICompatibleSSEParser(params.onDelta);
+    const parser = createOpenAICompatibleSSEParser(params.onDelta, params.parseThinkTags, params.signal, params.reasoningContext);
     let processedLength = 0;
     let progressChain = Promise.resolve();
     let settled = false;
@@ -1102,7 +1121,7 @@ async function sendStreamingRequestWithXMLHttpRequest(params: {
       settled = true;
       cleanup();
       saveResponse();
-      void Promise.resolve(capture?.finish(error)).then(() => reject(error));
+      void Promise.resolve(capture?.finish(error, parser.protocolIssues())).then(() => reject(error));
     };
 
     const settleResolve = (response: ChatResponse) => {
@@ -1113,7 +1132,7 @@ async function sendStreamingRequestWithXMLHttpRequest(params: {
       settled = true;
       cleanup();
       saveResponse();
-      void Promise.resolve(capture?.finish()).then(() => resolve(response));
+      void Promise.resolve(capture?.finish(undefined, parser.protocolIssues())).then(() => resolve(response));
     };
 
     const consumeNewText = (isFinal = false) => {
@@ -1122,7 +1141,14 @@ async function sendStreamingRequestWithXMLHttpRequest(params: {
       const nextChunk = responseText.slice(processedLength);
       processedLength = responseText.length;
       progressChain = progressChain.then(async () => {
+        if (settled) return;
         await parser.push(nextChunk, isFinal);
+        if (isFinal) settleResolve(parser.getResponse());
+      }).catch(error => {
+        if (settled) return;
+        // 流内错误可能早于连接结束；先取出已收到的原文，再释放传输。
+        settleReject(error);
+        if (!isFinal) xhr.abort();
       });
     };
 
@@ -1145,7 +1171,7 @@ async function sendStreamingRequestWithXMLHttpRequest(params: {
       xhr.setRequestHeader('Authorization', `Bearer ${params.apiKey}`);
 
       xhr.onprogress = () => {
-        consumeNewText(false);
+        if (xhr.status >= 200 && xhr.status < 300) consumeNewText(false);
       };
 
       xhr.onerror = () => {
@@ -1162,17 +1188,12 @@ async function sendStreamingRequestWithXMLHttpRequest(params: {
       };
 
       xhr.onload = () => {
+        // HTTP 拒绝正文不属于成功的 SSE，不能提前发布 done 或让解析错误遮住状态码。
+        if (xhr.status < 200 || xhr.status >= 300) {
+          settleReject(new AIHttpError(xhr.status, extractXHRStreamingError(xhr)));
+          return;
+        }
         consumeNewText(true);
-        progressChain
-          .then(() => {
-            if (xhr.status < 200 || xhr.status >= 300) {
-              settleReject(new AIHttpError(xhr.status, extractXHRStreamingError(xhr)));
-              return;
-            }
-
-            settleResolve(parser.getResponse());
-          })
-          .catch(settleReject);
       };
 
       xhr.send(body);
@@ -1190,11 +1211,13 @@ function extractXHRStreamingError(xhr: XMLHttpRequest): string {
 }
 
 function createOpenAICompatibleSSEParser(
-  onDelta?: (delta: ChatStreamDelta) => void | Promise<void>
+  onDelta?: (delta: ChatStreamDelta) => void | Promise<void>,
+  parseThinkTags = false,
+  signal?: AbortSignal,
+  context: ReasoningCompletionContext = { hasToolCalls: false, replayContract: 'details' },
 ) {
   let buffer = '';
-  let contentText = '';
-  let reasoningText = '';
+  let finished = false;
   let messageId: string | null = null;
   let promptTokens = 0;
   let completionTokens = 0;
@@ -1202,40 +1225,37 @@ function createOpenAICompatibleSSEParser(
   let cachedTokens: number | undefined;
   let finishReason: string | null = null;
   let isToolCall = false;
-  const toolCallAccumulator = createStreamingToolCallAccumulator(onDelta);
-
-  const handlePayload = async (payloadText: string): Promise<boolean> => {
-    const normalizedPayload = payloadText.trim();
-    if (!normalizedPayload) {
-      return false;
+  const decoder = new OpenAIMessageDecoder(parseThinkTags);
+  let completedText: AssistantTextResult;
+  const emit = async (event: ChatStreamDelta) => {
+    if (signal?.aborted) throw new Error('Request aborted');
+    await onDelta?.(event);
+  };
+  const toolCallAccumulator = createStreamingToolCallAccumulator(emit);
+  const emitText = async (events: ChatStreamDelta[]) => {
+    for (const event of events) {
+      await emit(event);
     }
-
-    if (normalizedPayload === '[DONE]') {
-      await toolCallAccumulator.finalizeOpenCalls();
-      await onDelta?.({ type: 'done' });
-      return true;
-    }
-
-    const payload = JSON.parse(normalizedPayload) as {
+  };
+  const finish = async () => {
+    if (finished) return;
+    await emitText(decoder.finish());
+    await toolCallAccumulator.finalizeOpenCalls();
+    completedText = decoder.complete({ ...context,
+      hasToolCalls: toolCallAccumulator.getToolCalls().length > 0 || finishReason === 'tool_calls' });
+    finished = true;
+    await emit({ type: 'done' });
+  };
+  const handlePayload = async (payloadText: string) => {
+    if (finished || !payloadText.trim()) return;
+    if (signal?.aborted) throw new Error('Request aborted');
+    if (payloadText.trim() === '[DONE]') { await finish(); return; }
+    const payload = JSON.parse(payloadText) as {
       error?: unknown;
       id?: string;
-      choices?: {
-        delta?: {
-          content?: unknown;
-          reasoning?: unknown;
-          reasoning_content?: unknown;
-          tool_calls?: unknown[];
-        };
-        message?: {
-          content?: string | null;
-          reasoning_content?: string;
-          tool_calls?: unknown[];
-        };
-        finish_reason?: string | null;
-      }[];
+      choices?: { delta?: OpenAIAssistantPayload; message?: OpenAIAssistantPayload; finish_reason?: string | null }[];
       usage?: OpenAIChatUsage | null;
     };
-
     if (payload.error != null) throw new Error(`模型流式接口错误：${readProviderError(payload)}`);
     messageId = payload.id || messageId;
     if (payload.usage) {
@@ -1244,120 +1264,51 @@ function createOpenAICompatibleSSEParser(
       totalTokens = payload.usage.total_tokens || totalTokens;
       cachedTokens = readCachedTokens(payload.usage) ?? cachedTokens;
     }
-
     const choice = payload.choices?.[0];
-    if (choice?.finish_reason) {
-      finishReason = choice.finish_reason;
-    }
-    const delta = choice?.delta || {};
+    if (choice?.finish_reason) finishReason = choice.finish_reason;
+    const delta = choice?.delta;
     const message = choice?.message;
-    const deltaReasoningText = extractTextFromNode(delta.reasoning_content ?? delta.reasoning);
-    const deltaContentText = normalizeStreamDeltaText(extractTextFromNode(delta.content));
-
-    if (delta.tool_calls || message?.tool_calls || choice?.finish_reason === 'tool_calls') {
+    if (delta) await emitText(decoder.append(delta));
+    if (message) await emitText(decoder.snapshot(message));
+    if (delta?.tool_calls || message?.tool_calls || choice?.finish_reason === 'tool_calls') {
       isToolCall = true;
-      await toolCallAccumulator.processRawToolCalls(delta.tool_calls, {
-        finalize: choice?.finish_reason === 'tool_calls',
-      });
-      await toolCallAccumulator.processRawToolCalls(message?.tool_calls, {
-        finalize: true,
-      });
-      if (choice?.finish_reason === 'tool_calls') {
-        await toolCallAccumulator.finalizeOpenCalls();
-      }
+      await toolCallAccumulator.processRawToolCalls(delta?.tool_calls, { finalize: choice?.finish_reason === 'tool_calls' });
+      await toolCallAccumulator.processRawToolCalls(message?.tool_calls, { finalize: true });
+      if (choice?.finish_reason === 'tool_calls') await toolCallAccumulator.finalizeOpenCalls();
     }
-
-    if (deltaReasoningText) {
-      reasoningText += deltaReasoningText;
-      await onDelta?.({ type: 'reasoning_delta', text: deltaReasoningText });
-    }
-
-    if (deltaContentText) {
-      contentText += deltaContentText;
-      await onDelta?.({ type: 'answer_delta', text: deltaContentText });
-    }
-
-    if (message) {
-      const extraction = extractAssistantTextResult(message);
-      if (extraction.reasoningText && extraction.reasoningText !== reasoningText) {
-        const nextReasoningDelta = extraction.reasoningText.slice(reasoningText.length);
-        reasoningText = extraction.reasoningText;
-        if (nextReasoningDelta) {
-          await onDelta?.({ type: 'reasoning_delta', text: nextReasoningDelta });
-        }
-      }
-
-      if (extraction.contentText && extraction.contentText !== contentText) {
-        const nextContentDelta = extraction.contentText.slice(contentText.length);
-        contentText = extraction.contentText;
-        if (nextContentDelta) {
-          await onDelta?.({ type: 'answer_delta', text: nextContentDelta });
-        }
-      }
-    }
-
-    return false;
   };
-
+  const consumeEvent = async (raw: string) => {
+    const lines = raw.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart());
+    if (lines.length) await handlePayload(lines.join('\n'));
+  };
   const push = async (chunk: string, isFinal = false): Promise<boolean> => {
-    buffer += normalizeStreamDeltaText(chunk);
-    let done = false;
-    let separatorIndex = buffer.indexOf('\n\n');
-
-    while (separatorIndex >= 0) {
-      const rawEvent = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const dataLines = rawEvent
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trimStart());
-
-      if (dataLines.length > 0) {
-        done = await handlePayload(dataLines.join('\n')) || done;
-      }
-
-      separatorIndex = buffer.indexOf('\n\n');
+    if (finished) return true;
+    buffer += chunk;
+    let separator: RegExpExecArray | null;
+    while (!finished && (separator = /\r?\n\r?\n/.exec(buffer))) {
+      const event = buffer.slice(0, separator.index);
+      buffer = buffer.slice(separator.index + separator[0].length);
+      await consumeEvent(event);
     }
-
-    if (isFinal && buffer.trim()) {
-      const dataLines = buffer
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trimStart());
-
-      if (dataLines.length > 0) {
-        done = await handlePayload(dataLines.join('\n')) || done;
-      }
-
+    if (isFinal && !finished) {
+      if (buffer.trim()) await consumeEvent(buffer);
       buffer = '';
+      await finish();
     }
-
-    return done;
+    return finished;
   };
-
   const getResponse = (): ChatResponse => {
-    const text = contentText;
+    const text = completedText;
     const toolCalls = toolCallAccumulator.getToolCalls();
     return {
-      text,
-      reasoningText,
-      finishReason,
-      messageId,
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      cachedTokens,
-      success: true,
-      error: null,
-      toolCalls: isToolCall ? toolCalls : null,
+      text: text.text, reasoningText: text.reasoningText,
+      ...(text.reasoningReplay ? { reasoningReplay: text.reasoningReplay } : {}),
+      finishReason, messageId, promptTokens, completionTokens, totalTokens, cachedTokens,
+      success: true, error: null, toolCalls: isToolCall ? toolCalls : null,
       isToolCall: isToolCall && toolCalls.length > 0,
     };
   };
-
-  return {
-    push,
-    getResponse,
-  };
+  return { push, getResponse, protocolIssues: () => decoder.protocolIssues };
 }
 
 async function readOpenAICompatibleSSE(
@@ -1365,155 +1316,15 @@ async function readOpenAICompatibleSSE(
   onDelta?: (delta: ChatStreamDelta) => void | Promise<void>,
   onRawText?: (chunk: string) => void,
   onRawError?: (error: unknown) => void,
+  parseThinkTags = false,
+  signal?: AbortSignal,
+  context: ReasoningCompletionContext = { hasToolCalls: false, replayContract: 'details' },
+  onProtocolIssues?: (issues: readonly AIProtocolIssue[]) => void,
 ): Promise<ChatResponse> {
   const reader = response.body?.getReader?.();
-  if (!reader) {
-    throw new Error('Streaming response body unavailable');
-  }
-
-  const decoder = new TextDecoder('utf-8');
-  let buffer = '';
-  let contentText = '';
-  let reasoningText = '';
-  let messageId: string | null = null;
-  let promptTokens = 0;
-  let completionTokens = 0;
-  let totalTokens = 0;
-  let cachedTokens: number | undefined;
-  let finishReason: string | null = null;
-  let isToolCall = false;
-  const toolCallAccumulator = createStreamingToolCallAccumulator(onDelta);
-
-  const handlePayload = async (payloadText: string): Promise<boolean> => {
-    const normalizedPayload = payloadText.trim();
-    if (!normalizedPayload) {
-      return false;
-    }
-
-    if (normalizedPayload === '[DONE]') {
-      await toolCallAccumulator.finalizeOpenCalls();
-      await onDelta?.({ type: 'done' });
-      return true;
-    }
-
-    const payload = JSON.parse(normalizedPayload) as {
-      error?: unknown;
-      id?: string;
-      choices?: {
-        delta?: {
-          content?: unknown;
-          reasoning?: unknown;
-          reasoning_content?: unknown;
-          tool_calls?: unknown[];
-        };
-        message?: {
-          content?: string | null;
-          reasoning_content?: string;
-          tool_calls?: unknown[];
-        };
-        finish_reason?: string | null;
-      }[];
-      usage?: OpenAIChatUsage | null;
-    };
-
-    if (payload.error != null) throw new Error(`模型流式接口错误：${readProviderError(payload)}`);
-    messageId = payload.id || messageId;
-    if (payload.usage) {
-      promptTokens = payload.usage.prompt_tokens || promptTokens;
-      completionTokens = payload.usage.completion_tokens || completionTokens;
-      totalTokens = payload.usage.total_tokens || totalTokens;
-      cachedTokens = readCachedTokens(payload.usage) ?? cachedTokens;
-    }
-
-    const choice = payload.choices?.[0];
-    if (choice?.finish_reason) {
-      finishReason = choice.finish_reason;
-    }
-    const delta = choice?.delta || {};
-    const message = choice?.message;
-    const deltaReasoningText = extractTextFromNode(delta.reasoning_content ?? delta.reasoning);
-    const deltaContentText = normalizeStreamDeltaText(extractTextFromNode(delta.content));
-
-    if (delta.tool_calls || message?.tool_calls || choice?.finish_reason === 'tool_calls') {
-      isToolCall = true;
-      await toolCallAccumulator.processRawToolCalls(delta.tool_calls, {
-        finalize: choice?.finish_reason === 'tool_calls',
-      });
-      await toolCallAccumulator.processRawToolCalls(message?.tool_calls, {
-        finalize: true,
-      });
-      if (choice?.finish_reason === 'tool_calls') {
-        await toolCallAccumulator.finalizeOpenCalls();
-      }
-    }
-
-    if (deltaReasoningText) {
-      reasoningText += deltaReasoningText;
-      await onDelta?.({ type: 'reasoning_delta', text: deltaReasoningText });
-    }
-
-    if (deltaContentText) {
-      contentText += deltaContentText;
-      await onDelta?.({ type: 'answer_delta', text: deltaContentText });
-    }
-
-    if (message) {
-      const extraction = extractAssistantTextResult(message);
-      if (extraction.reasoningText && extraction.reasoningText !== reasoningText) {
-        const nextReasoningDelta = extraction.reasoningText.slice(reasoningText.length);
-        reasoningText = extraction.reasoningText;
-        if (nextReasoningDelta) {
-          await onDelta?.({ type: 'reasoning_delta', text: nextReasoningDelta });
-        }
-      }
-
-      if (extraction.contentText && extraction.contentText !== contentText) {
-        const nextContentDelta = extraction.contentText.slice(contentText.length);
-        contentText = extraction.contentText;
-        if (nextContentDelta) {
-          await onDelta?.({ type: 'answer_delta', text: nextContentDelta });
-        }
-      }
-    }
-
-    return false;
-  };
-
-  const consumeBufferedEvents = async (isFinal = false): Promise<boolean> => {
-    let done = false;
-    let separatorIndex = buffer.indexOf('\n\n');
-
-    while (separatorIndex >= 0) {
-      const rawEvent = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const dataLines = rawEvent
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trimStart());
-
-      if (dataLines.length > 0) {
-        done = await handlePayload(dataLines.join('\n')) || done;
-      }
-
-      separatorIndex = buffer.indexOf('\n\n');
-    }
-
-    if (isFinal && buffer.trim()) {
-      const dataLines = buffer
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trimStart());
-
-      if (dataLines.length > 0) {
-        done = await handlePayload(dataLines.join('\n')) || done;
-      }
-
-      buffer = '';
-    }
-
-    return done;
-  };
-
+  if (!reader) throw new Error('Streaming response body unavailable');
+  const textDecoder = new TextDecoder('utf-8');
+  const parser = createOpenAICompatibleSSEParser(onDelta, parseThinkTags, signal, context);
   let modelDone = false;
   let parseFailure: unknown;
   let parsingFailed = false;
@@ -1522,46 +1333,25 @@ async function readOpenAICompatibleSSE(
       let readResult: ReadableStreamReadResult<Uint8Array>;
       try { readResult = await reader.read(); }
       catch (error) {
-        // DONE 后模型已完整返回，额外诊断读流失败只标记记录，不推翻模型结果。
         if (!modelDone) throw error;
         onRawError?.(error);
         break;
       }
-      const rawText = readResult.done ? decoder.decode() : decoder.decode(readResult.value, { stream: true });
+      const rawText = readResult.done ? textDecoder.decode() : textDecoder.decode(readResult.value, { stream: true });
       onRawText?.(rawText);
       if (!modelDone && !parsingFailed) {
-        buffer += rawText.replace(/\r\n/g, '\n');
-        try { modelDone = await consumeBufferedEvents(readResult.done); }
+        try { modelDone = await parser.push(rawText, readResult.done); }
         catch (error) {
           if (!onRawText) throw error;
           parseFailure = error;
           parsingFailed = true;
         }
       }
-      // 开启原文诊断时读取完整 HTTP body，DONE 后不再解析或产生模型事件。
       if (readResult.done || (modelDone && !onRawText)) break;
     }
-  } finally {
-    reader.releaseLock();
-  }
+  } finally { onProtocolIssues?.(parser.protocolIssues()); reader.releaseLock(); }
   if (parsingFailed) throw parseFailure;
-
-  const text = contentText;
-  const toolCalls = toolCallAccumulator.getToolCalls();
-  return {
-    text,
-    reasoningText,
-    finishReason,
-    messageId,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cachedTokens,
-    success: true,
-    error: null,
-    toolCalls: isToolCall ? toolCalls : null,
-    isToolCall: isToolCall && toolCalls.length > 0,
-  };
+  return parser.getResponse();
 }
 
 /** 缓存统计只在 Provider 边界归一化；0 与未提供数据保持不同语义。 */
@@ -1599,139 +1389,6 @@ function isValidEmbeddingVector(value: unknown): value is number[] {
 }
 
 /** 只为已知可切换系列补开启参数，避免给旧版非思考模型改变请求契约。 */
-function supportsThinkingToggle(model: string): boolean {
-  const name = model.toLowerCase().split('/').pop()!;
-  const qwen = /^(?:qwen3(?:[.-]|$)|qwen-(?:plus|flash|turbo)(?:-|$))/.test(name)
-    && !/(?:thinking|instruct|preview)/.test(name);
-  return qwen
-    || /^deepseek-v(?:3\.[12]|4(?:\.1)?)(?:-|$)/.test(name)
-    || /^kimi-k2\.[56](?:-|$)/.test(name)
-    || /^glm-(?:4\.[67]|5(?:\.[12])?)(?:-|$)/.test(name);
-}
-
-interface TextExtractionResult {
-  text: string;
-  source?: string;
-  contentText?: string;
-  reasoningText?: string;
-}
-
-/**
- * 从 assistant message 中分别提取可见正文与思维链
- * 兼容 string / array / object content，但 reasoning_content 不得冒充可见正文
- * @param message - 消息对象
- * @returns 提取结果
- */
-function extractAssistantTextResult(message: { content?: string | null; reasoning_content?: string; reasoning?: unknown }): TextExtractionResult {
-  const contentText = normalizeExtractedText(extractTextFromNode(message?.content));
-  // 思考属于工具续轮的协议载荷；不得按展示正文裁空白、换行或其他字符。
-  const reasoningText = extractTextFromNode(message.reasoning_content ?? message.reasoning);
-
-  if (contentText) {
-    return {
-      text: contentText,
-      source: 'content',
-      contentText,
-      reasoningText,
-    };
-  }
-
-  if (reasoningText) {
-    return {
-      text: '',
-      source: 'reasoning',
-      contentText,
-      reasoningText,
-    };
-  }
-
-  return {
-    text: '',
-    source: 'empty',
-    contentText: '',
-    reasoningText: '',
-  };
-}
-
-/**
- * 递归提取常见文本节点
- * @param node - 任意节点
- * @param depth - 递归深度
- * @returns 提取的文本
- */
-function extractTextFromNode(node: unknown, depth = 0): string {
-  if (node === null || node === undefined || depth > 6) {
-    return '';
-  }
-
-  if (typeof node === 'string') {
-    return node;
-  }
-
-  if (typeof node === 'number' || typeof node === 'boolean') {
-    return String(node);
-  }
-
-  if (Array.isArray(node)) {
-    return node
-      .map(item => extractTextFromNode(item, depth + 1))
-      .filter(Boolean)
-      .join('');
-  }
-
-  if (typeof node !== 'object') {
-    return '';
-  }
-
-  const nodeObj = node as Record<string, unknown>;
-  const prioritizedKeys = ['text', 'value', 'content', 'output_text', 'parts', 'items', 'chunks', 'segments', 'message'];
-  const fragments: string[] = [];
-
-  for (const key of prioritizedKeys) {
-    if (!(key in nodeObj)) continue;
-    const fragment = extractTextFromNode(nodeObj[key], depth + 1);
-    if (fragment) {
-      fragments.push(fragment);
-    }
-  }
-
-  if (fragments.length > 0) {
-    return fragments.join('');
-  }
-
-  if (typeof nodeObj.type === 'string' && nodeObj.type.toLowerCase() === 'text') {
-    return '';
-  }
-
-  return '';
-}
-
-/**
- * 标准化提取结果，保留换行但压缩多余空白
- * @param text - 原始文本
- * @returns 标准化后的文本
- */
-function normalizeExtractedText(text: string): string {
-  if (typeof text !== 'string') {
-    return '';
-  }
-
-  return text
-    .replace(/\r\n/g, '\n')
-    .replace(/\u0000/g, '')
-    .trim();
-}
-
-function normalizeStreamDeltaText(text: string): string {
-  if (typeof text !== 'string') {
-    return '';
-  }
-
-  return text
-    .replace(/\r\n/g, '\n')
-    .replace(/\u0000/g, '');
-}
-
 /**
  * 判断是否因为 reasoning 内容过长而截断，导致最终答案缺失
  * @param choice - API 返回的 choice
@@ -1740,7 +1397,7 @@ function normalizeStreamDeltaText(text: string): string {
  */
 function shouldRetryForReasoningOnlyCompletion(
   choice: { finish_reason?: string },
-  extraction: TextExtractionResult
+  extraction: AssistantTextResult
 ): boolean {
   return (
     choice?.finish_reason === 'length'
@@ -1755,13 +1412,8 @@ function shouldRetryForReasoningOnlyCompletion(
  * @param currentMaxTokens - 当前最大 token 数
  * @returns 扩容后的 token 数
  */
-function getExpandedMaxTokens(currentMaxTokens: number | null | undefined): number {
-  const normalized = Number(currentMaxTokens);
-  if (!Number.isFinite(normalized) || normalized <= 0) {
-    return 2048;
-  }
-
-  return Math.min(Math.max(normalized * 2, 1024), 4096);
+function getExpandedMaxTokens(currentMaxTokens: number): number {
+  return Math.min(Math.max(currentMaxTokens * 2, 1024), 4096);
 }
 
 /**
@@ -1858,7 +1510,7 @@ function normalizeRequestMessage(message: ChatMessage): ChatMessage | null {
 
   if (normalized.role === 'assistant') {
     const hasToolCalls = Array.isArray(normalized.tool_calls) && normalized.tool_calls.length > 0;
-    const hasReasoning = typeof normalized.reasoning_content === 'string'
+    const hasReasoning = normalized.reasoningReplay !== undefined || typeof normalized.reasoning_content === 'string'
       && normalized.reasoning_content.trim().length > 0;
     if (hasToolCalls || hasReasoning) {
       return normalized;

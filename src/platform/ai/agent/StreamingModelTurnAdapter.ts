@@ -61,6 +61,7 @@ export class StreamingModelTurnAdapter {
         cachedTokens: response.cachedTokens,
       },
       finishReason,
+      ...(response.reasoningReplay ? { reasoningReplay: response.reasoningReplay } : {}),
     });
     return collector.getResult();
   }

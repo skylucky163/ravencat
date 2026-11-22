@@ -11,6 +11,11 @@ export const PROMPTING_SCHEMA = `
     definition_id TEXT PRIMARY KEY,
     content TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS prompt_legacy_group_admin_texts (
+    group_id TEXT PRIMARY KEY REFERENCES group_chats(id) ON DELETE CASCADE,
+    group_name TEXT NOT NULL,
+    content TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS prompt_default_switches (
     key TEXT PRIMARY KEY,
     enabled INTEGER NOT NULL CHECK (enabled IN (0, 1))

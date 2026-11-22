@@ -2,12 +2,18 @@
 import { CoordinatedDatabaseError, databaseCoordinator, type DatabaseReadExecutor, type DatabaseTransactionExecutor, type DatabaseTaskPriority } from '@platform/persistence';
 import { estimateTextTokens } from '@shared/prompt';
 import type { ChatMessage } from '../../messages/domain/ChatMessage';
+import { DEEPSEEK_HISTORY_IMPORT_SOURCE } from '../../messages/domain/DeepSeekImport';
 import { buildGroupMentionModelText } from '../../group/application/GroupMentionModelText';
 import { timelineOrderedMessagesCte, timelineProjectionOrderBy, timelineCursorCondition } from '../../messages/infrastructure/ChatTimelineSql';
 import { parseChatContextCursor, projectChatContextMessage, type ChatCanonicalCursor, type ChatContextItem } from '../domain/ChatContext';
-import { editChatSummaryText, ChatSummaryEditError, type ChatSummaryTextEdit, CHAT_SUMMARY_MAX_AUTOMATIC_ATTEMPTS, DEFAULT_CHAT_SUMMARY_SETTINGS, type ChatSummaryAddition, type ChatSummaryCallBoundary, type ChatSummaryClaim, type ChatSummaryRepository, type ChatSummarySegment, type ChatSummarySettings, type ChatSummarySettingsPatch, type SecondaryChatSummaryClaim, type ChatSummarySearchInput, type ChatSummaryTask, type ChatSummaryTaskClaim, type ChatSummaryFailure, type ChatSummaryCallDiagnostics, type ChatSummaryLevel , ChatBackgroundContextOptions, ChatBackgroundContext } from '../domain/ChatSummaryRepository';
+import { editChatSummaryText, ChatSummaryEditError, type ChatSummaryTextEdit, CHAT_SUMMARY_MAX_AUTOMATIC_ATTEMPTS, DEFAULT_CHAT_SUMMARY_SETTINGS, type ChatSummaryAddition, type ChatSummaryCallBoundary, type ChatSummaryClaim, type ChatSummaryRepository, type ChatSummarySegment, type ChatSummarySettings, type ChatSummarySettingsPatch, type SecondaryChatSummaryClaim, type ChatSummarySearchInput, type ChatSummaryTask, type ChatSummaryTaskClaim, type ChatSummaryFailure, type ChatSummaryCallDiagnostics, type ChatSummaryLevel, type ChatSummaryContextOptions, ChatBackgroundContextOptions, ChatBackgroundContext } from '../domain/ChatSummaryRepository';
 import type { CallSummarySource } from '@features/calls';
 import { buildConversationTimeline, selectSummaryRange, type ConversationContextItem } from '../domain/ChatSummaryTimeline';
+
+async function isRecycledConversation(db: DatabaseReadExecutor, conversationId: string): Promise<boolean> {
+  return await db.getFirstAsync(`SELECT 1 FROM sessions direct JOIN ai_assistants a ON a.id = direct.ai_assistant_id
+    WHERE direct.id = ? AND a.deleted_at IS NOT NULL`, [conversationId]) !== null;
+}
 
 // 查询和工具编辑共用同一身份边界；群成员资格必须在写入事务内读取。
 const assistantSummaryAccess = `(s.ai_assistant_id = ? OR EXISTS (SELECT 1 FROM group_chat_members m
@@ -175,14 +181,16 @@ function claimKey(claim: ChatSummaryClaim): string {
 }
 interface ReadItemsOptions {
   visibleOnly?: boolean; after?: ChatCanonicalCursor | null; includeMessageId?: number; messageId?: number;
+  importedHistoryLimit?: number;
 }
+const isImportedHistory = `json_extract(CASE WHEN json_valid(m.metadata_json) THEN m.metadata_json END, '$.importSource') IS '${DEEPSEEK_HISTORY_IMPORT_SOURCE}'`;
 async function readItems(db: DatabaseReadExecutor, conversationId: string, options: ReadItemsOptions = {}): Promise<ChatContextItem[]> {
   return (await readItemPage(db, conversationId, options)).items;
 }
 async function readItemPage(
   db: DatabaseReadExecutor,
   conversationId: string,
-  { visibleOnly = true, after = null, includeMessageId, messageId, limit }: ReadItemsOptions & { limit?: number },
+  { visibleOnly = true, after = null, includeMessageId, messageId, limit, importedHistoryLimit }: ReadItemsOptions & { limit?: number },
 ): Promise<{ items: ChatContextItem[]; nextCursor: ChatCanonicalCursor | null; hasMore: boolean }> {
   const group = await db.getFirstAsync<{ id: string }>('SELECT id FROM group_chats WHERE id = ?', [conversationId]);
   const members = group ? await db.getAllAsync<{ aiAssistantId: string; agentId: string; name: string }>(`SELECT m.ai_assistant_id AS aiAssistantId,
@@ -191,10 +199,17 @@ async function readItemPage(
     timeline_order_created_at: after[0], timeline_order_anchor_id: after[1],
     timeline_order_item_index: after[2], id: after[3],
   }) : null;
+  const importedHistoryFilter = importedHistoryLimit === undefined ? ''
+    : importedHistoryLimit === 0 ? `AND NOT (${isImportedHistory})`
+      : `AND (NOT (${isImportedHistory}) OR m.id IN (
+        SELECT m.id FROM messages m WHERE m.session_id = ? AND ${isImportedHistory}
+          AND m.sender_type IN ('user', 'assistant') ORDER BY m.id DESC LIMIT ?
+      ))`;
   // 已处理历史在 SQL 边界排除，避免每次 claim 都在独占事务中解析、排序并传回整段历史。
   // 自主 run 状态按会话聚合一次；共享回合由展示状态裁决，旧记录仍读取自身终态。
   const rows = await db.getAllAsync<ContextRow>(`${timelineOrderedMessagesCte(`m.session_id = ?
     ${messageId !== undefined ? 'AND m.id = ?' : ''}
+    ${importedHistoryFilter}
     ${visibleOnly ? 'AND m.id > COALESCE((SELECT visible_after_message_id FROM sessions WHERE id = m.session_id), 0)' : ''}`)}
     , pending_activity_runs AS (
       SELECT turn_run_id FROM messages
@@ -211,6 +226,7 @@ async function readItemPage(
     LEFT JOIN pending_activity_runs p ON p.turn_run_id = o.turn_run_id
     ${condition ? `WHERE ${condition.sql}${includeMessageId !== undefined ? ' OR id = ?' : ''}` : ''}
     ORDER BY ${timelineProjectionOrderBy('ASC')}${limit === undefined ? '' : ' LIMIT ?'}`, [conversationId, ...(messageId !== undefined ? [messageId] : []),
+      ...(importedHistoryLimit === undefined || importedHistoryLimit === 0 ? [] : [conversationId, importedHistoryLimit]),
       conversationId, ...(condition?.params ?? []), ...(condition && includeMessageId !== undefined ? [includeMessageId] : []), ...(limit === undefined ? [] : [limit])]);
   const items = rows.flatMap((row) => {
     const cursor: ChatCanonicalCursor = [row.timeline_order_created_at, row.timeline_order_anchor_id, row.timeline_order_item_index, row.id];
@@ -244,7 +260,8 @@ async function readPrimaryRange(db: DatabaseReadExecutor, conversationId: string
   let after = fromCursor;
   let limit = Math.max(128, batchSize + recentWindowLimit + 1);
   while (true) {
-    const page = await readItemPage(db, conversationId, { after, limit });
+    // 导入历史不计入摘要批次或近期保留条数。
+    const page = await readItemPage(db, conversationId, { after, limit, importedHistoryLimit: 0 });
     items.push(...page.items);
     const protectedIndex = items.findIndex(item => item.pending === true
       || (item.kind === 'dialogue' && item.role === 'user' && item.messageId > replyCursor));
@@ -397,7 +414,7 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
     });
   }
 
-  async readContext(conversationId: string, protectedMessageIds: readonly number[]) {
+  async readContext(conversationId: string, protectedMessageIds: readonly number[], { importedHistoryLimit }: ChatSummaryContextOptions = {}) {
     return executor('context', 'interactive').withExclusiveTransactionAsync(async (tx) => {
       const state = await readState(tx, conversationId);
       const settings = await readSettings(tx, conversationId);
@@ -406,7 +423,7 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
       if (settings.fixedMessageId !== null && !fixed) throw new Error('固定起点不在当前可见的对话范围内');
       const raw = await readItems(tx, conversationId, { after: fixed ? fixed.cursor
         : settings.generationEnabled ? parseChatContextCursor(state.processed_cursor) : null,
-        ...(fixed ? { includeMessageId: fixed.messageId } : {}) });
+        ...(fixed ? { includeMessageId: fixed.messageId } : { importedHistoryLimit }) });
       const protectedIds = new Set(protectedMessageIds);
       // 未消费输入及其已封存的中断正文由固定输入组装器按原任务顺序提供，普通历史不再重复注入。
       const protectedReplies = protectedMessageIds.length ? await tx.getAllAsync<{ id: number }>(`SELECT m.id FROM messages m
@@ -447,6 +464,8 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
       ) SELECT p.conversation_id AS id FROM pending p
         LEFT JOIN chat_summary_settings settings ON settings.conversation_id = p.conversation_id
         WHERE COALESCE(settings.enabled,1) = 1
+        AND NOT EXISTS (SELECT 1 FROM sessions direct JOIN ai_assistants a ON a.id = direct.ai_assistant_id
+          WHERE direct.id = p.conversation_id AND a.deleted_at IS NOT NULL)
         ${conversationIds ? 'AND p.conversation_id IN (SELECT value FROM json_each(?))' : ''}
         ORDER BY p.conversation_id`, [now, now, ...(conversationIds ? [JSON.stringify(conversationIds)] : [])]);
       return { conversationIds: rows.map((row) => row.id), pausedConversationIds: [...new Set(exhausted.map((task) => task.conversation_id))] };
@@ -464,6 +483,7 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
   }
   async claim(conversationId: string, batchSize: number, claimId: string, now: string, expiresAt: string, timeZone: string, recentWindowLimit: number): Promise<ChatSummaryClaim | null> {
     return executor('claim').withExclusiveTransactionAsync(async (tx) => {
+      if (await isRecycledConversation(tx, conversationId)) return null;
       const state = await readState(tx, conversationId);
       const settings = await readSettings(tx, conversationId);
       if (!settings.generationEnabled) return null;
@@ -544,6 +564,7 @@ export class SQLiteChatSummaryRepository implements ChatSummaryRepository {
   }
   async claimSecondary(conversationId: string, claimId: string, now: string, expiresAt: string, timeZone: string): Promise<SecondaryChatSummaryClaim | null> {
     return executor('secondaryClaim').withExclusiveTransactionAsync(async (tx) => {
+      if (await isRecycledConversation(tx, conversationId)) return null;
       const settings = await readSettings(tx, conversationId);
       if (!settings.generationEnabled || !settings.secondaryEnabled) return null;
       const state = await readState(tx, conversationId);

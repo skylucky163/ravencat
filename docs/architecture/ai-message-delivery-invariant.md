@@ -28,8 +28,8 @@ Host 在业务查询前通过 `ensureHostDatabaseReady()` 完成恢复事务门�
   同一次应用宿主请求内串行执行，孤儿接管与终态覆盖判定由 executeTurnFromHost 承担。
 - assistant 消息持久交付后的判定统一在 `AIMessageDeliveryCoordinator`
   （每个 JS runtime 注册一次）：前台正在查看的会话抑制系统通知（已读由 Host UI 同序完成），
-  其余走 Native NotificationManager 聚合通知，`userNotificationHandled` 尊重
-  RavenCat overlay preview 消费者；Chat 页面 / KimiPhoneHost / RavenCat / 通知模块
+  其余先由协调器向当前悬浮单聊投影正文，原生 CHAT 面板确认承载展示时返回 handled_by_consumer，
+  未承载则走 Native NotificationManager 聚合通知。所有来源共用这条消费链，reply callback 不再决定通知抑制；Chat 页面 / KimiPhoneHost / RavenCat / 通知模块
   不得各自维护一套「回复来了怎么办」的判定。
 - 普通正文在完整气泡的展示版本持久发布后立即交付通知，不等待工具循环结束或 T3。
   流式活动尾泡只更新展示，闭合或本次模型发言结束才通知；reasoning/tool 不发消息通知。
@@ -38,8 +38,8 @@ Host 在业务查询前通过 `ensureHostDatabaseReady()` 完成恢复事务门�
   经同一回合 owner 的输出事务取得正式消息、媒体引用与可见版本，随后立即交付；不等待续轮。
   T3 只绑定已经发送的媒体身份，不重放分段回调或系统通知。语音和重写媒体仍在 T3 后交付。
   中断或恢复不会补发未闭合正文，也不重放已发送媒体。
-  悬浮预览通过运行正文投影回执表达已展示，统一协调器继续尊重
-  `userNotificationHandled`；正式身份交接不得重复弹出预览。
+  悬浮预览由统一协调器使用稳定正文身份投影；原始请求身份仅用于收口对应等待状态。
+  正式身份交接通过同一 clientMessageId 合并，不得重复弹出预览。
 - 正常完成的正文仍在 T3 一次提交全部分段，并绑定已提交媒体的最终顺序。生成中的运行片段在独立展示表中保存快照；
   回合中断后，已经交付的正文在收口事务中封存为普通消息，复用消息操作与已读状态。封存不改变回合终态或回复游标，也不重放工具、补发通知。非流式正文使用原生约 1 秒
   到达时钟；流式正文按持久批次逐步交付并在自然边界继续下一泡，后续 reasoning/tool
@@ -65,6 +65,8 @@ ConversationTurn 的固定输入区间、事务状态转换与提交 fence 见
 [`conversation-turn-coordination-invariant.md`](./conversation-turn-coordination-invariant.md)。
 
 用户任命／撤销主理 AI 的即时回应由 `executeHostRelationshipReply` 在同一个应用宿主中等待本轮执行，等待 Chat 的 `requestProactiveChatReply` 到达终态。关系事实先提交，操作通知仅作为本轮模型输入，不伪造 canonical 用户消息，不推进 `user_reply` 游标，不在设置页执行模型。实际 assistant 消息继续经过本文件的统一交付协调器。该即时沟通不建立新的持久恢复队列，也不因回复失败回滚身份变更。
+
+主理申请卡提交后也通过同一个应用宿主通知发卡时的在任者。宿主读取卡片和接收者当前任职状态，撤任或回收后丢弃旧通知。通知只作为应用输入，为当前主理提供一次可静默的回复机会。Chat 在完整回复写入前处理静默控制信号，实际消息仍走统一交付。
 
 ### Protected Chat Background Execution Contract
 

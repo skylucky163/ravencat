@@ -10,28 +10,21 @@
 import { createAIClient } from './OpenAIClient';
 import type { ConnectionTestResult, ConnectionTestOptions } from './types';
 
-interface TestClientOptions {
-  disableThinking?: boolean;
-  skipParams?: boolean;
-  temperature?: number | null;
-  maxTokens?: number;
-  topP?: number | null;
-}
-
 function createTestClient(
   baseURL: string,
   apiKey: string,
   model: string,
-  options: TestClientOptions = {}
+  options: ConnectionTestOptions
 ) {
   return createAIClient({
     baseURL,
     apiKey,
     model: model || 'test-model',
     temperature: options.skipParams ? null : options.temperature,
-    maxTokens: options.skipParams ? null : (options.maxTokens ?? 2000),
+    maxTokens: options.skipParams ? null : options.maxTokens,
     topP: options.skipParams ? null : options.topP,
     disableThinking: options.disableThinking,
+    reasoningEffort: options.reasoningEffort,
   });
 }
 

@@ -11,7 +11,6 @@
 import { getChatGroupRuntimeDependencies } from './ChatGroupRuntime';
 import type { DatabaseTransactionExecutor } from '@platform/persistence';
 import { abortGroupSpeechPlanExecution, listActiveGroupSpeechGroupIds } from './GroupSpeechExecutionAbort';
-import { cancelGroupAutoInvocation } from './GroupAutoInvocationScheduler';
 import { emitChatGroupSpeechPlanChanged } from '../../messages/events/ChatEvents';
 
 /** 群工具的持久提交资格来自当前发言任务，与网络取消分工。 */
@@ -25,7 +24,6 @@ export async function interruptAbandonedGroupSpeechPlans(): Promise<void> {
     listActiveGroupSpeechGroupIds(),
   );
   for (const groupId of groupIds) {
-    cancelGroupAutoInvocation(groupId);
     emitChatGroupSpeechPlanChanged(groupId);
   }
 }
@@ -39,8 +37,7 @@ export async function terminateGroupSpeechPlan(groupId: string): Promise<boolean
   }
   emitChatGroupSpeechPlanChanged(groupId);
   // 以下都是 commit 后的资源节约副作用，不影响已裁决的持久事实：
-  // 中止在途请求；取消 30 秒自动召唤计时，避免被终止的输入窗口再次触发召唤。
+  // 中止在途请求；是否再次发言由用户下一次显式召唤决定。
   abortGroupSpeechPlanExecution(terminatedPlanId);
-  cancelGroupAutoInvocation(groupId);
   return true;
 }

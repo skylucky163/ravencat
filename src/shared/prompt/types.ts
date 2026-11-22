@@ -34,6 +34,7 @@ export type PromptBlockKey =
   | 'persona'
   | 'paragraph_breaks'
   | 'action_description'
+  | 'format_guidelines'
   | 'protocol_space'
   | 'tool_context_explanation'
   | 'agent_registry_summary'

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import {
+  ActivityIndicator,
   Image,
   ScrollView,
   StyleSheet,
@@ -10,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { X } from 'lucide-react-native';
 
 import type { AttachmentDraftItem } from '@features/chat/messages/domain';
 import { formatFileSize } from '@features/chat/messages/domain';
@@ -62,24 +64,28 @@ export default function ChatAttachmentComposerTray({
 
   return (
     <View style={styles.container}>
-      {attachments.length > 1 ? (
-        <Text style={styles.selectionCount}>已选 {attachments.length} 张图片</Text>
-      ) : null}
-      <ScrollView horizontal={attachments.length > 1} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.cards}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.cards}>
         {attachments.map((attachment) => {
           const isImage = attachment.type === 'image';
           const previewUri = attachment.thumbnailUri || attachment.localUri || attachment.originalUri;
           return (
-            <View key={attachment.id} style={[styles.card, attachments.length > 1 ? styles.multiCard : null]}>
+            <View key={attachment.id} style={isImage ? styles.imageCard : styles.card}>
               {isImage ? (
-                <View style={styles.previewWrap}>
+                <View accessibilityLabel={attachment.status === 'ready' ? '待发送图片' : getStatusText(attachment)}>
                   {previewUri ? (
-                    <Image source={{ uri: previewUri }} style={styles.imagePreview} />
+                    <Image source={{ uri: previewUri }} style={[styles.imagePreview, styles.photoPreview]} resizeMode="cover" resizeMethod="resize" />
                   ) : (
                     <View style={[styles.imagePreview, styles.imagePlaceholder]}>
                       <Ionicons name="image-outline" size={20} color={theme.colors.icon.secondary} />
                     </View>
                   )}
+                  {attachment.status !== 'ready' ? (
+                    <View style={styles.imageStatus}>
+                      {attachment.status === 'failed'
+                        ? <Text numberOfLines={2} style={styles.imageError}>处理失败</Text>
+                        : <ActivityIndicator size="small" color={theme.colors.brand.onPrimary} />}
+                    </View>
+                  ) : null}
                 </View>
               ) : (
                 <View style={styles.fileIconWrap}>
@@ -87,9 +93,9 @@ export default function ChatAttachmentComposerTray({
                 </View>
               )}
 
-              <View style={styles.content}>
+              {!isImage ? <View style={styles.content}>
                 <Text numberOfLines={1} style={styles.fileName}>
-                  {attachment.fileName || (isImage ? '未命名图片' : '未命名文件')}
+                  {attachment.fileName || '未命名文件'}
                 </Text>
                 <Text numberOfLines={2} style={[
                   styles.statusText,
@@ -98,19 +104,18 @@ export default function ChatAttachmentComposerTray({
                   {getStatusText(attachment)}
                 </Text>
                 <Text numberOfLines={1} style={styles.metaText}>
-                  {isImage
-                    ? `${attachment.width && attachment.height ? `${attachment.width}×${attachment.height} · ` : ''}${formatFileSize(attachment.fileSize)}`
-                    : `${formatFileSize(attachment.fileSize)}${attachment.previewText ? ` · ${attachment.previewText}` : ''}`}
+                  {`${formatFileSize(attachment.fileSize)}${attachment.previewText ? ` · ${attachment.previewText}` : ''}`}
                 </Text>
-              </View>
+              </View> : null}
 
               <TouchableOpacity
-                style={styles.removeButton}
+                style={isImage ? styles.imageRemoveButton : styles.removeButton}
+                hitSlop={8}
                 onPress={() => onRemove?.(attachment.id)}
                 accessibilityRole="button"
                 accessibilityLabel={`移除${attachment.fileName}`}
               >
-                <Ionicons name="close-circle" size={22} color={theme.colors.icon.secondary} />
+                <X size={isImage ? 14 : 20} color={isImage ? theme.colors.text.primary : theme.colors.icon.secondary} />
               </TouchableOpacity>
             </View>
           );
@@ -122,11 +127,12 @@ export default function ChatAttachmentComposerTray({
 
 const createStyles = (theme: PresentationTheme) => StyleSheet.create({
   container: {
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    backgroundColor: theme.colors.chat.inputBar,
+    // 待发送内容直接浮在会话背景上，不延伸输入栏的整条底色。
+    paddingHorizontal: 16,
+    paddingTop: 4,
   },
   card: {
+    width: 280,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: theme.colors.surface.default,
@@ -136,26 +142,48 @@ const createStyles = (theme: PresentationTheme) => StyleSheet.create({
     padding: 10,
   },
   cards: {
-    gap: 8,
+    gap: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
+    paddingRight: 8,
   },
-  multiCard: {
-    width: 280,
-  },
-  selectionCount: {
-    fontSize: 12,
-    color: theme.colors.text.secondary,
-    marginBottom: 6,
-  },
-  previewWrap: {
-    marginRight: 10,
+  imageCard: {
+    width: 72,
+    height: 72,
   },
   imagePreview: {
-    width: 52,
-    height: 52,
-    borderRadius: 8,
-    backgroundColor: theme.colors.surface.muted,
+    width: 72,
+    height: 72,
+    borderRadius: theme.radius.lg,
+  },
+  photoPreview: {
+    ...theme.shadow.sm,
   },
   imagePlaceholder: {
+    backgroundColor: theme.colors.surface.muted,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageStatus: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: theme.radius.lg,
+    backgroundColor: theme.effects.overlay.strong,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageError: {
+    fontSize: 11,
+    color: theme.colors.brand.onPrimary,
+  },
+  imageRemoveButton: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surface.raised,
+    ...theme.shadow.sm,
     justifyContent: 'center',
     alignItems: 'center',
   },

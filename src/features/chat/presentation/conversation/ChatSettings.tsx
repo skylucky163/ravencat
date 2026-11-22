@@ -20,6 +20,7 @@ import { createCommonStyles } from '@shared/ui/commonStyles';
 import type { AIProfile } from '@features/assistants';
 import { ChevronRight } from 'lucide-react-native';
 import ChatWallpaperSettings from '../messages/components/ChatWallpaperSettings';
+import { LongPasteToggle } from '../messages/components/LongPasteToggle';
 import { CallRingtoneSettings } from '@features/calls';
 
 interface ChatSettingsProps {
@@ -52,6 +53,8 @@ export default function ChatSettings({ aiAssistant, onOpenContextSettings, chatB
     setShowTokenUsage,
     showActionSteps,
     setShowActionSteps,
+    manualReply,
+    setManualReply,
     settingsErrors,
     callBackgroundUri,
 
@@ -81,6 +84,19 @@ export default function ChatSettings({ aiAssistant, onOpenContextSettings, chatB
               </View>
               <ChevronRight size={18} color={theme.colors.text.tertiary} />
             </Pressable>
+          </ThemedSurface>
+
+          <Text style={styles.sectionLabel}>发送设置</Text>
+          <ThemedSurface variant="card" style={styles.toggleCard}>
+            <ToggleField
+              layout="inline"
+              style={styles.toggleRow}
+              label="手动召唤回复"
+              hint="开启后可连续发送文字和附件，点召唤再一起回复；关闭后发送即回复"
+              value={manualReply}
+              onValueChange={setManualReply}
+            />
+            <LongPasteToggle style={styles.lastToggleRow} />
           </ThemedSurface>
 
           {/* 气泡数量只影响客户端自动分段，不改变聊天输出格式要求。 */}

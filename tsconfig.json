@@ -23,6 +23,6 @@
     "index.js",
     "src/**/*",
     ".expo/types/**/*.ts",
-    "scripts/verify-architecture-aliases.ts"
+    "tests/architecture/verify-architecture-aliases.ts"
   ]
 }

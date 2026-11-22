@@ -24,6 +24,7 @@ interface ChatVoiceReviewPanelProps {
   onSend: () => void;
   onCancel: () => void;
   paddingBottom: number;
+  replyStopButton?: React.ReactNode;
   styles: InputAreaStyles;
   theme: PresentationTheme;
 }
@@ -44,6 +45,7 @@ export function ChatVoiceReviewPanel({
   onSend,
   onCancel,
   paddingBottom,
+  replyStopButton,
   styles,
   theme,
 }: ChatVoiceReviewPanelProps) {
@@ -71,6 +73,7 @@ export function ChatVoiceReviewPanel({
       />
 
       <View style={styles.voiceReviewActions}>
+        {replyStopButton}
         <TouchableOpacity
           style={[styles.voiceReviewButton, styles.voiceReviewCancelButton]}
           onPress={onCancel}

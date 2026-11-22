@@ -7,8 +7,12 @@ import type { PresentationTheme } from '@shared/theme';
 // Moon Kimi 局部视觉常量，不构成独立主题系统。
 const MOON_KIMI_CHIP_H_PADDING = 14;
 const MOON_KIMI_CHIP_ICON_TEXT_GAP = 6;
+export const GLASS_COMPOSER_CONTROL_SIZE = 44;
 
 export function createInputAreaStyles(theme: PresentationTheme) {
+  const usesGlass = theme.effects.glass.enabled;
+  const glassRadius = GLASS_COMPOSER_CONTROL_SIZE / 2;
+
   return StyleSheet.create({
     container: {
       // 透明背景使回复预览自然悬浮在聊天背景上。
@@ -39,10 +43,34 @@ export function createInputAreaStyles(theme: PresentationTheme) {
       flexDirection: 'row',
       padding: 8,
       paddingHorizontal: 12,
-      borderTopWidth: 0.5,
+      borderTopWidth: usesGlass ? 0 : 0.5,
       borderTopColor: theme.colors.border.light,
-      backgroundColor: theme.colors.chat.inputBar,
+      backgroundColor: usesGlass ? 'transparent' : theme.colors.chat.inputBar,
       alignItems: 'center',
+      gap: usesGlass ? 6 : 0,
+    },
+    glassField: {
+      flex: 1,
+      minWidth: 0,
+      borderRadius: glassRadius,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    glassFieldReplyButton: {
+      width: GLASS_COMPOSER_CONTROL_SIZE,
+      height: GLASS_COMPOSER_CONTROL_SIZE,
+    },
+    glassInputWithReplyButton: {
+      paddingRight: 4,
+    },
+    glassButton: {
+      width: GLASS_COMPOSER_CONTROL_SIZE,
+      height: GLASS_COMPOSER_CONTROL_SIZE,
+      borderRadius: glassRadius,
+    },
+    glassButtonTouchTarget: {
+      width: '100%',
+      height: '100%',
     },
     moonKimiInputContainer: {
       borderTopWidth: 0,
@@ -68,12 +96,13 @@ export function createInputAreaStyles(theme: PresentationTheme) {
       paddingHorizontal: 12,
       paddingVertical: 8,
       paddingTop: 8,
-      marginRight: 8,
+      // 右侧间距按“可见墨迹”算，见 rightActions 的 12 约定。
+      marginRight: usesGlass ? 0 : 3,
       fontSize: 16,
       color: theme.colors.text.primary,
       maxHeight: 100,
-      minHeight: 36,
-      borderWidth: 0.5,
+      minHeight: usesGlass ? GLASS_COMPOSER_CONTROL_SIZE : 36,
+      borderWidth: usesGlass ? 0 : 0.5,
       borderColor: theme.colors.border.default,
     },
     moonKimiInput: {
@@ -108,13 +137,16 @@ export function createInputAreaStyles(theme: PresentationTheme) {
     rightActions: {
       flexDirection: 'row',
       alignItems: 'center',
+      gap: usesGlass ? 6 : 0,
+      // 可见间距统一 12：输入框 3 右边距 + 按钮 marginLeft + 图标在 32 盒里的 3 内缩 = 12；
+      // 发送是实心圆没有内缩，所以它的 marginLeft 单独取 9。
     },
     iconButton: {
       width: 32,
       height: 32,
       justifyContent: 'center',
       alignItems: 'center',
-      marginLeft: 4,
+      marginLeft: usesGlass ? 0 : 6,
     },
     iconButtonActive: {},
     voiceButton: {
@@ -122,7 +154,7 @@ export function createInputAreaStyles(theme: PresentationTheme) {
       height: 32,
       justifyContent: 'center',
       alignItems: 'center',
-      marginRight: 8,
+      marginRight: usesGlass ? 0 : 8,
     },
     voiceErrorBanner: {
       flexDirection: 'row',
@@ -235,35 +267,14 @@ export function createInputAreaStyles(theme: PresentationTheme) {
       color: theme.colors.text.primary,
     },
     sendButton: {
-      backgroundColor: theme.colors.brand.primary,
-      borderRadius: 6,
-      width: 52,
-      height: 36,
-      justifyContent: 'center',
-      alignItems: 'center',
-      marginLeft: 4,
-    },
-    sendButtonDisabled: {
-      backgroundColor: theme.colors.icon.disabled,
-    },
-    sendButtonText: {
-      color: theme.colors.brand.onPrimary,
-      fontSize: 14,
-      fontWeight: '600',
+      // 实心圆没有 32 盒的内缩，补满与图标按钮相同的可见间距（12 - 3）。
+      marginLeft: usesGlass ? 0 : 9,
     },
     moonKimiSendButton: {
-      width: 23,
-      height: 23,
-      borderRadius: theme.radius.round,
-      backgroundColor: theme.colors.text.primary,
-      justifyContent: 'center',
-      alignItems: 'center',
+      // 尺寸与配色由 ChatSendButton 决定，这里只对齐两侧间距。
       marginLeft: theme.spacing.xs,
       // 可见圆形的右边缘需要与左侧语音图标的可见圆形对齐。
       marginRight: 5,
-    },
-    moonKimiSendButtonDisabled: {
-      backgroundColor: theme.colors.icon.disabled,
     },
     moonKimiDisclaimer: {
       textAlign: 'center',

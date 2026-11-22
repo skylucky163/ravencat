@@ -155,6 +155,7 @@ export async function processAIReply(
       temperature: aiConfig.temperature,
       topP: aiConfig.topP,
       disableThinking: aiConfig.disableThinking,
+      reasoningEffort: aiConfig.reasoningEffort,
       maxTokens: aiConfig.maxTokens,
       systemPrompt: promptPack.systemPrompt,
     });
@@ -205,6 +206,7 @@ export async function processAIReply(
     if (isChatReplyRunCancellationError(error)) {
       return;
     }
+    if (runtimeContext.allowSilentReply) throw error;
 
     // 模型请求失败走既有错误气泡与失败收尾，不升级为开发版 error 提示；
     // 内部非预期异常仍保留 error 级别，避免掩盖程序问题。
@@ -308,7 +310,7 @@ async function persistReplyError(params: {
     return;
   }
 
-  // 重写失败恢复原回复，不能追加错误气泡或把旧回答替换成错误提示。
+  // 重写错误交给宿主收口；错误说明不属于需要封存的正文。
   if (runtimeContext.isRegeneration) throw new Error(errorMessage);
 
   // 错误气泡与正常气泡走同一提交 fence：探针之后、INSERT 之前被换代时，

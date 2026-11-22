@@ -15,7 +15,7 @@ interface Args {
 
 const definition = {
   name: 'aiEditOwnMoment',
-  description: '编辑当前 AI 自己发布的时刻。只覆盖传入字段；省略的字段保持不变。保留原发布时间、评论和点赞，显示已编辑，不重新投递发布未读。不能编辑用户或其他 AI 的时刻。',
+  description: '编辑当前 AI 自己发布的时刻。只覆盖传入字段；省略的字段保持不变。保留原发布时间、评论和点赞，显示已编辑，不重新投递发布未读。',
   parameters: {
     type: 'object' as const,
     properties: {

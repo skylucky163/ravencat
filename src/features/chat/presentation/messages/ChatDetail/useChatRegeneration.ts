@@ -1,4 +1,4 @@
-/** 生成期间只隐藏旧回复；新回复完整提交后，旧回复转入候选存档。 */
+/** 跟随持久重写状态，正文交接由消息列表在新正文到达时呈现。 */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ToastAndroid } from 'react-native';
 import { getChatRegenerationState, regenerateChatReply } from '../../../reply/application/RegenerateChatReply';
@@ -39,7 +39,6 @@ export function useChatRegeneration(sessionId: string | undefined, refresh: () =
             try {
               if (shouldRefresh) await refresh();
             } finally {
-              // refresh 失败不能把投影卡死：隐藏状态以数据库事实为准，宁可短暂闪回旧 cache。
               if (!disposed && expectedRevision === revision) setState(next);
             }
           } catch (error) {
@@ -81,7 +80,7 @@ export function useChatRegeneration(sessionId: string | undefined, refresh: () =
     } catch (error) {
       if (activeSession.current !== sessionId || requesting.current !== request) return;
       setState(current => ({ ...IDLE, versionedRunIds: current.versionedRunIds }));
-      ToastAndroid.show(error instanceof Error ? error.message : '重写失败，已恢复原消息', ToastAndroid.LONG);
+      ToastAndroid.show(error instanceof Error ? error.message : '无法启动重写', ToastAndroid.LONG);
     } finally {
       if (requesting.current === request) requesting.current = null;
     }

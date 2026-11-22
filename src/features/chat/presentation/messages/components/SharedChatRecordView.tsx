@@ -31,7 +31,6 @@ export default function SharedChatRecordCard({ messageId, record, comment, onPre
   const [expanded, setExpanded] = useRecyclingState(false, [messageId]);
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
-  const insets = useSafeAreaInsets();
   return <>
     <TouchableOpacity accessibilityRole="button" accessibilityLabel="查看分享的聊天记录" onPress={() => setExpanded(true)} onLongPress={onLongPress ? (event) => onLongPress({ x: event.nativeEvent.pageX, y: event.nativeEvent.pageY }) : undefined} style={styles.card}>
       <MessagesSquare size={24} color={theme.colors.brand.primary} />
@@ -40,17 +39,27 @@ export default function SharedChatRecordCard({ messageId, record, comment, onPre
       {comment ? <Text style={styles.text}>{comment}</Text> : null}
       <Text style={styles.time}>{record.selectionCount} 条消息 · 点击查看</Text>
     </TouchableOpacity>
-    <Modal visible={expanded} animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={() => setExpanded(false)}>
-      <View style={[styles.page, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <View style={styles.header}><Text style={styles.author}>{record.sourceName}的聊天记录</Text><TouchableOpacity onPress={() => setExpanded(false)} style={styles.close}><Text style={styles.link}>关闭</Text></TouchableOpacity></View>
-        <ScrollView>{comment ? <Text style={[styles.text, styles.entries]}>附言：{comment}</Text> : null}<SharedChatRecordEntries record={record} onOpenMoment={() => setExpanded(false)} onPreviewFile={(params) => { setExpanded(false); onPreviewFile(params); }} /></ScrollView>
-      </View>
-    </Modal>
+    <SharedChatRecordDetail visible={expanded} record={record} comment={comment} onClose={() => setExpanded(false)} onPreviewFile={onPreviewFile} />
   </>;
 }
 
+export function SharedChatRecordDetail({ visible, record, comment, onClose, onPreviewFile }: {
+  visible: boolean; record: SharedChatRecord; comment: string; onClose: () => void; onPreviewFile: PreviewFileHandler;
+}) {
+  const styles = useThemedStyles(createStyles);
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+      <View style={[styles.page, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={styles.header}><Text style={styles.author}>{record.sourceName}的聊天记录</Text><TouchableOpacity onPress={onClose} style={styles.close}><Text style={styles.link}>关闭</Text></TouchableOpacity></View>
+        <ScrollView>{comment ? <Text style={[styles.text, styles.entries]}>附言：{comment}</Text> : null}<SharedChatRecordEntries record={record} onOpenMoment={onClose} onPreviewFile={(params) => { onClose(); onPreviewFile(params); }} /></ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
 const createStyles = (theme: PresentationTheme) => StyleSheet.create({
-  page: { flex: 1, backgroundColor: theme.colors.background.screen },
+  page: { flex: 1, backgroundColor: theme.effects.glass.enabled ? theme.components.modalSheet.backgroundColor : theme.colors.background.screen },
   // 分享消息外层保留玻璃材质，卡片白底会遮住它采样的会话背景。
   card: { padding: 12, gap: 6, backgroundColor: theme.effects.glass.enabled ? 'transparent' : theme.colors.surface.default, borderRadius: theme.effects.glass.enabled ? theme.radius.lg : 4, minWidth: 200, maxWidth: '100%', flexShrink: 1 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, minHeight: 52, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.colors.border.light },

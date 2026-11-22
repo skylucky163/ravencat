@@ -181,7 +181,6 @@ export class AICallRuntimeService {
       source: params.payload.source || 'aiTool',
       sourceToolCallId: params.payload.sourceToolCallId || null,
       openingLine: params.payload.openingLine,
-      reason: params.payload.reason,
       startedAt: now,
     });
 
@@ -199,8 +198,6 @@ export class AICallRuntimeService {
       payloadJson: JSON.stringify({
         to: 'ringing',
         direction: 'incoming',
-        urgency: params.payload.urgency,
-        reason: params.payload.reason,
       }),
     });
 
@@ -213,7 +210,6 @@ export class AICallRuntimeService {
       aiAvatar: params.aiConfig.avatar || null,
       sessionId: params.chatSessionId,
       openingLine: params.payload.openingLine,
-      reason: params.payload.reason,
       ringtoneUri,
       ringDurationMs: INCOMING_CALL_RINGING_TIMEOUT_MS,
     });

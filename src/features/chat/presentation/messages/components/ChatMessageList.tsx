@@ -1,8 +1,9 @@
 /** 构建并渲染聊天消息时间线，处理分段投影、分页加载、滚动跟随与消息交互。 */
 import { getAssistantDisplayName } from '@features/assistants';
 
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
   View,
   Text,
   Pressable,
@@ -13,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { TextSelectionScrollView } from '@platform/device';
 import { FlashList, type FlashListRef, type ListRenderItemInfo } from '@shopify/flash-list';
+import { useReducedMotion } from 'react-native-reanimated';
 
 import type { ChatMessage } from '@features/chat/messages/domain/ChatMessage';
 import {
@@ -29,7 +31,9 @@ import type { ChatDetailAIAssistantLike } from './chatTypes';
 import { MessageListItem } from './ChatMessageListParts';
 import { ReasoningExpansionContext } from './reasoningExpansionState';
 import { ChatMediaResolutionCacheContext, createChatMediaResolutionCache } from './chatMediaResolutionCache';
-import { getChatSelectionKey } from '../../../messages/domain/ChatMessageSelection';
+import { splitReplyContentBlocks } from '../../../messages/domain/ChatCodeBlock';
+import { canSelectChatMessage, getChatSelectionKey } from '../../../messages/domain/ChatMessageSelection';
+import { DEEPSEEK_HISTORY_IMPORT_SOURCE } from '../../../messages/domain/DeepSeekImport';
 import {
   buildMessageBubbleRenderState,
   areRenderedMessageItemsEquivalent,
@@ -81,6 +85,7 @@ import {
   type HistoryPaginationGate,
 } from './chatHistoryPagination';
 import { reloadTurnDisplayHistory, retainTurnDisplayHistory } from '../../../reply/application/ChatTurnPresentationRuntime';
+import type { ChatRegenerationState } from '../../../reply/domain/ConversationTurn';
 
 const EMPTY_ATTACHMENTS: ChatAttachment[] = [];
 interface PaperNoteFooterItem {
@@ -109,7 +114,7 @@ type OlderPageRequestReason = 'scroll' | 'queued-scroll' | 'anchor' | 'bootstrap
  * 消息列表组件的属性定义
  */
 interface ChatMessageListProps {
-  hiddenRunId?: string | null;
+  regeneration?: Pick<ChatRegenerationState, 'sourceRunId' | 'activeRunId' | 'versionedRunIds'>;
   sessionId?: string | null;
   /**
    * 消息列表数据
@@ -150,6 +155,8 @@ interface ChatMessageListProps {
    * @param msg - 被长按的消息对象
    */
   onMessageLongPress?: (msg: ChatMessage, position: { x: number; y: number }) => void;
+  onShareMessage?: (messageId: number) => void;
+  shareableMessageKeys?: ReadonlySet<string>;
 
   /**
    * 加载更多历史消息的回调，通常在滚动到顶部时触发
@@ -218,8 +225,17 @@ function getAttachmentsFromMetadata(
   return Array.isArray(attachments) && attachments.length > 0 ? attachments : EMPTY_ATTACHMENTS;
 }
 
-function buildBubbleTextFromMessage(message: ChatMessage, attachments: ChatAttachment[]) {
+const TRAILING_HTML_IMAGE_TAGS = /(?:(?:^|\r?\n) {0,3}<img(?=[ \t])(?=[^<>\r\n]*[ \t]src[ \t]*=)[^<>\r\n]+>[ \t]*)+[ \t\r\n]*$/i;
+
+function buildBubbleTextFromMessage(message: ChatMessage, attachments: ChatAttachment[], metadata: ParsedChatMessageMetadata | null) {
   if (String(message.text || '').trim()) {
+    if (message.senderType === 'assistant' && metadata?.importSource === DEEPSEEK_HISTORY_IMPORT_SOURCE) {
+      const trailingImages = TRAILING_HTML_IMAGE_TAGS.exec(message.text);
+      // 导出保留了正文末尾的 HTML 图片引用，回放时隐藏这些标签，代码围栏仍展示原文。
+      if (trailingImages && splitReplyContentBlocks(message.text, true).at(-1)?.kind !== 'code') {
+        return message.text.slice(0, trailingImages.index).trimEnd();
+      }
+    }
     return message.text;
   }
 
@@ -283,7 +299,7 @@ function resolveMessageAIIdentity(
 }
 
 function ChatMessageList({
-  hiddenRunId,
+  regeneration,
   sessionId,
   messages = [],
   aiAssistant,
@@ -292,6 +308,8 @@ function ChatMessageList({
   userName,
   showAssistantName = false,
   onMessageLongPress,
+  onShareMessage,
+  shareableMessageKeys,
   onOpenAssistantProfile,
   onLoadMore,
   hasMore,
@@ -323,9 +341,42 @@ function ChatMessageList({
     sessionId,
     messages,
   );
+  const activeRewriteId = regeneration?.activeRunId;
+  // 已到达的新回复与原版退出同帧呈现；等待模型或只有思考时保留原气泡。
+  const hasNewReply = Boolean(activeRewriteId && completeTimelineMessages.some(message =>
+    message.turnRunId === activeRewriteId && message.senderType === 'assistant'
+    && (message.text.trim() || getMessageSticker(message) || getMessageVoice(message))
+  ));
+  const hiddenRunId = hasNewReply ? regeneration?.sourceRunId : null;
   const timelineMessages = useMemo(() => completeTimelineMessages.filter((message) =>
     !hiddenRunId || message.turnRunId !== hiddenRunId || message.turnItemIndex == null
   ), [completeTimelineMessages, hiddenRunId]);
+  const versionedRunIds = regeneration?.versionedRunIds;
+  const latestReplyRunId = versionedRunIds?.length
+    ? timelineMessages.findLast(message => message.senderType === 'assistant')?.turnRunId
+    : undefined;
+  const transitioningRunId = hasNewReply ? activeRewriteId
+    : latestReplyRunId && versionedRunIds?.includes(latestReplyRunId) ? latestReplyRunId : undefined;
+  const firstReplyRow = transitioningRunId ? timelineMessages.find(message =>
+    message.turnRunId === transitioningRunId && message.senderType === 'assistant'
+  ) : undefined;
+  const versionKey = firstReplyRow ? getAgentTimelineRenderKey(firstReplyRow) : null;
+  const [replyOpacity] = useState(() => new Animated.Value(1));
+  const reduceMotion = useReducedMotion();
+  const priorVersion = useRef({ sessionId, versionKey });
+  useLayoutEffect(() => {
+    const previous = priorVersion.current;
+    priorVersion.current = { sessionId, versionKey };
+    if (!versionKey || previous.sessionId !== sessionId || previous.versionKey === versionKey || reduceMotion) {
+      replyOpacity.setValue(1);
+      return;
+    }
+    // 用正文稳定身份去重，流式增量和随后落库不重播动画。
+    replyOpacity.setValue(0.72);
+    const transition = Animated.timing(replyOpacity, { toValue: 1, duration: 160, useNativeDriver: true });
+    transition.start();
+    return () => transition.stop();
+  }, [replyOpacity, reduceMotion, sessionId, versionKey]);
   const listRef = useRef<FlashListRef<ChatListItem> | null>(null);
   const mediaResolutionCache = useMemo(() => {
     void sessionId;
@@ -486,7 +537,7 @@ function ChatMessageList({
       const attachments = getAttachmentsFromMetadata(metadata);
       const sticker = getMessageSticker(msg);
       const voice = getMessageVoice(msg);
-      const bubbleText = sticker || voice ? '' : buildBubbleTextFromMessage(msg, attachments);
+      const bubbleText = sticker || voice ? '' : buildBubbleTextFromMessage(msg, attachments, metadata);
       const processCard = actionGroup
         ? null
         : buildToolStatusProcessCard(metadata, interactionProfile.toolStatusSurface);
@@ -687,7 +738,10 @@ function ChatMessageList({
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<ChatListItem>) => {
       if ('kind' in item) return <PaperNoteChatFooter aiName={item.aiName} />;
-      return (
+      const canShare = interactionProfile.showAssistantInlineActions && item.isAssistantOutputTail
+        && !selection && onShareMessage && canSelectChatMessage(item.msg)
+        && shareableMessageKeys?.has(getChatSelectionKey(item.msg));
+      const row = (
         <MessageListItem
           item={item}
           userAvatar={userAvatar}
@@ -702,6 +756,7 @@ function ChatMessageList({
           isVoiceTranscriptExpanded={expandedVoiceTranscriptIds.has(item.msg.id)}
           onOpenAssistantProfile={onOpenAssistantProfile}
           onMessageLongPress={onMessageLongPress}
+          onShareMessage={canShare ? onShareMessage : undefined}
           onRetryMessage={onRetryMessage}
           onHideTranslation={onHideTranslation}
           onPreviewFile={onPreviewFile}
@@ -711,6 +766,10 @@ function ChatMessageList({
           onTogetherListeningLeave={onTogetherListeningLeave}
         />
       );
+      const runId = item.msg.turnRunId;
+      return runId && (runId === activeRewriteId || versionedRunIds?.includes(runId))
+        ? <Animated.View style={runId === transitioningRunId ? { opacity: replyOpacity } : undefined}>{row}</Animated.View>
+        : row;
     },
     [
       userAvatar,
@@ -722,6 +781,9 @@ function ChatMessageList({
       selectionKeyForItem,
       expandedVoiceTranscriptIds,
       onMessageLongPress,
+      onShareMessage,
+      shareableMessageKeys,
+      interactionProfile.showAssistantInlineActions,
       onOpenAssistantProfile,
       onRetryMessage,
       onHideTranslation,
@@ -730,6 +792,10 @@ function ChatMessageList({
       onTogetherListeningAccept,
       onTogetherListeningDecline,
       onTogetherListeningLeave,
+      activeRewriteId,
+      versionedRunIds,
+      transitioningRunId,
+      replyOpacity,
     ]
   );
 

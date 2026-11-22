@@ -18,6 +18,7 @@ import type {
 } from '@shared/prompt';
 import {
   DEFAULT_ACTION_DESCRIPTION_PROMPT,
+  DEFAULT_FORMAT_GUIDELINES_PROMPT,
   DEFAULT_CORE_SYSTEM_PROMPTS,
   GROUP_MEMBER_REPLY_CONFIDENTIALITY_RULES,
   resolveBuiltInPromptContent,
@@ -209,6 +210,20 @@ export class PromptPackBlockFactory {
       required: false,
       status: 'ready',
       source: 'PromptPackBlockFactory.actionDescription',
+      truncatable: false,
+      scenario: 'shared',
+      placement: 'system',
+    };
+  }
+
+  createFormatGuidelinesBlock(aiConfig: PromptPackAIConfig): PromptPackBlock {
+    return {
+      key: 'format_guidelines',
+      title: '输出格式规范',
+      content: resolveBuiltInContent(aiConfig, 'output.format_guidelines', DEFAULT_FORMAT_GUIDELINES_PROMPT),
+      required: false,
+      status: 'ready',
+      source: 'PromptPackBlockFactory.formatGuidelines',
       truncatable: false,
       scenario: 'shared',
       placement: 'system',

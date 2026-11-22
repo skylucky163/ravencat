@@ -10,5 +10,10 @@ class NativeTextSelectionModule : Module() {
     AsyncFunction("releaseFocus") {
       releaseTextSelectionFocus(appContext.currentActivity?.currentFocus)
     }.runOnQueue(Queues.MAIN)
+    View(OverflowPasteView::class) {
+      Events("onOverflowPaste")
+      Prop("inlineLimit") { view: OverflowPasteView, value: Int -> view.inlineLimit = value }
+      Prop("attachmentLimit") { view: OverflowPasteView, value: Int -> view.attachmentLimit = value }
+    }
   }
 }

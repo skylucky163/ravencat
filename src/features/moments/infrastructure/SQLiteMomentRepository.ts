@@ -108,6 +108,9 @@ interface MomentSettingsRow {
 
 const MOMENT_COLUMNS =
   'id, author_type, author_id, author_name_snapshot, content, location_label, audience_mode, created_at, edited_at, edit_revision';
+/** 只隐藏回收 AI 自己发布的动态；其他动态中的评论和点赞保持原事实。 */
+const AUTHOR_VISIBLE_PREDICATE = `NOT EXISTS (SELECT 1 FROM ai_assistants recycled
+  WHERE m.author_type = 'ai' AND recycled.agent_id = m.author_id AND recycled.deleted_at IS NOT NULL)`;
 /** 带 `moments` 别名的同一份列清单，供带 JOIN/EXISTS 条件的可见性查询使用。 */
 const MOMENT_COLUMNS_QUALIFIED = MOMENT_COLUMNS
   .split(', ')
@@ -137,7 +140,7 @@ const MEDIA_COLUMNS = [
  *
  * 用户读路径不使用这段条件：AI audience 只约束其他 AI。
  */
-const AGENT_VISIBILITY_PREDICATE = `(
+const AGENT_VISIBILITY_PREDICATE = `${AUTHOR_VISIBLE_PREDICATE} AND (
   (m.author_type = 'ai' AND m.author_id = ?)
   OR m.audience_mode = 'all'
   OR (m.audience_mode = 'selected' AND EXISTS (
@@ -284,20 +287,20 @@ export class SQLiteMomentRepository implements IMomentRepository {
   private async readMomentsForUser(database: DatabaseReadExecutor, options?: MomentPageRequest): Promise<Moment[]> {
     if (!options) {
       const rows = await database.getAllAsync<MomentRow>(
-        `SELECT ${MOMENT_COLUMNS} FROM moments ORDER BY created_at DESC, id DESC`
+        `SELECT ${MOMENT_COLUMNS} FROM moments m WHERE ${AUTHOR_VISIBLE_PREDICATE} ORDER BY created_at DESC, id DESC`
       );
       return rows.map(toMoment);
     }
 
     const cursor = createMomentCursorWhere(options.cursor, '');
-    const conditions = cursor.sql ? [cursor.sql] : [];
+    const conditions = [AUTHOR_VISIBLE_PREDICATE, ...(cursor.sql ? [cursor.sql] : [])];
     const params: (string | number)[] = [...cursor.params];
     if (options.author) {
       conditions.push('author_type = ? AND author_id = ?');
       params.push(options.author.actorType, options.author.actorId);
     }
     const rows = await database.getAllAsync<MomentRow>(
-      `SELECT ${MOMENT_COLUMNS} FROM moments
+      `SELECT ${MOMENT_COLUMNS} FROM moments m
        ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
        ORDER BY created_at DESC, id DESC LIMIT ?`,
       [...params, options.limit]
@@ -339,7 +342,7 @@ export class SQLiteMomentRepository implements IMomentRepository {
   async getMomentForUser(momentId: string): Promise<Moment | null> {
     const database = this.#executor('moments.getMomentForUser', 'runtime');
     const row = await database.getFirstAsync<MomentRow>(
-      `SELECT ${MOMENT_COLUMNS} FROM moments WHERE id = ? LIMIT 1`,
+      `SELECT ${MOMENT_COLUMNS} FROM moments m WHERE id = ? AND ${AUTHOR_VISIBLE_PREDICATE} LIMIT 1`,
       [momentId]
     );
     return row ? toMoment(row) : null;
@@ -348,7 +351,7 @@ export class SQLiteMomentRepository implements IMomentRepository {
   async getMomentDetailForUser(momentId: string): Promise<MomentTimelineEntry | null> {
     const database = this.#executor('moments.getMomentDetailForUser', 'surface');
     return database.withExclusiveTransactionAsync(async transaction => {
-      const row = await transaction.getFirstAsync<MomentRow>(`SELECT ${MOMENT_COLUMNS} FROM moments WHERE id = ?`, [momentId]);
+      const row = await transaction.getFirstAsync<MomentRow>(`SELECT ${MOMENT_COLUMNS} FROM moments m WHERE id = ? AND ${AUTHOR_VISIBLE_PREDICATE}`, [momentId]);
       if (!row) return null;
       const media = await transaction.getAllAsync<MomentMediaRow>(`SELECT ${MEDIA_COLUMNS} FROM moment_media WHERE moment_id = ? ORDER BY sort_order`, [momentId]);
       const comments = await transaction.getAllAsync<MomentCommentRow>(`SELECT ${COMMENT_COLUMNS} FROM moment_comments WHERE moment_id = ? ORDER BY created_at, id`, [momentId]);
@@ -1029,12 +1032,14 @@ export class SQLiteMomentRepository implements IMomentRepository {
     const rows = options?.limit === undefined
       ? await database.getAllAsync<MomentSocialDeliveryRow>(
           `SELECT ${SOCIAL_DELIVERY_COLUMNS} FROM moment_social_inbox_deliveries
-           WHERE recipient_agent_id = ? AND read_at IS NULL ORDER BY delivery_seq ASC`,
+           WHERE recipient_agent_id = ? AND read_at IS NULL
+             AND EXISTS (SELECT 1 FROM moments m WHERE m.id = source_moment_id AND ${AUTHOR_VISIBLE_PREDICATE}) ORDER BY delivery_seq ASC`,
           [recipientAgentId]
         )
       : await database.getAllAsync<MomentSocialDeliveryRow>(
           `SELECT ${SOCIAL_DELIVERY_COLUMNS} FROM moment_social_inbox_deliveries
            WHERE recipient_agent_id = ? AND read_at IS NULL
+             AND EXISTS (SELECT 1 FROM moments m WHERE m.id = source_moment_id AND ${AUTHOR_VISIBLE_PREDICATE})
            ORDER BY delivery_seq ASC LIMIT ?`,
           [recipientAgentId, options.limit]
         );

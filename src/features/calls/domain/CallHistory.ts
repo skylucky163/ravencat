@@ -30,6 +30,16 @@ export interface CallHistoryImage {
   createdAt: string;
 }
 
+export type CallHistoryPageEntry =
+  | { kind: 'message'; id: string; createdAt: string; speaker: 'user' | 'ai'; text: string }
+  | { kind: 'image'; id: string; createdAt: string; mediaAssetId: string };
+
+export interface CallHistoryPage {
+  call: CallHistoryRecord;
+  entries: CallHistoryPageEntry[];
+  nextOffset: number | null;
+}
+
 /** 显式拼出本地日期，避免设备 locale 的窄空格、方向符等进入标题。 */
 export function formatCallHistoryTitle(timestamp: string): string {
   const date = new Date(timestamp);

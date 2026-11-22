@@ -100,7 +100,8 @@ export class PromptHistoryBuilder {
   /** 单次 Chat 查询同时取得已提交摘要和剩余原文，不在两次读取间制造空洞。 */
   async loadPrivateSummaryContext(params: AssemblePromptPackParams) {
     const protectedIds = params.runtimeContext?.batchedUserMessageIds ?? [];
-    const snapshot = await getChatSummaryContext(params.sessionId, protectedIds);
+    const recentLimit = params.runtimeContext?.recentWindowLimit ?? params.recentWindowLimit ?? DEFAULT_RECENT_WINDOW_LIMIT;
+    const snapshot = await getChatSummaryContext(params.sessionId, protectedIds, { importedHistoryLimit: recentLimit });
     let timeline = snapshot.timeline.filter((item) => item.eventId === undefined
       || item.eventId !== params.runtimeContext?.currentCallEventId);
     const upperBound = params.runtimeContext?.historyUpperBound;
@@ -116,13 +117,12 @@ export class PromptHistoryBuilder {
       timeline = timeline.slice(0, -1);
     }
     if (!snapshot.settings.generationEnabled && snapshot.settings.fixedMessageId === null) {
-      const limit = params.runtimeContext?.recentWindowLimit ?? params.recentWindowLimit ?? DEFAULT_RECENT_WINDOW_LIMIT;
       const identities = new Set<string>();
       let start = 0;
       for (let index = timeline.length - 1; index >= 0; index -= 1) {
         const identity = timeline[index].logicalIdentity;
         if (identity === null) continue;
-        if (!identities.has(identity) && identities.size === limit) { start = index + 1; break; }
+        if (!identities.has(identity) && identities.size === recentLimit) { start = index + 1; break; }
         identities.add(identity);
       }
       timeline = timeline.slice(start);
@@ -512,11 +512,7 @@ export class PromptHistoryBuilder {
           return;
         }
 
-        lines.push(`[文件：${attachment.fileName || '未命名文件'}]`);
-        const parsedText = attachment.parsedText?.trim();
-        if (parsedText) {
-          lines.push(`文件正文：\n${parsedText}`);
-        }
+        lines.push(`[文件：${attachment.fileName}；messageId=${message.id}；attachmentId=${attachment.id}]`);
       });
     }
 

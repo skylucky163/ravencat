@@ -21,7 +21,7 @@ import expo.modules.ravencatfloatinglayer.model.RavenCatOverlayTargetPreview
 
 internal class RavenCatConversationView(
   context: Context,
-  private val onMessagesDisplayed: (String, List<Long>) -> Unit,
+  private val onMessagesDisplayed: (String, List<Long>, List<String>) -> Unit,
 ) : LinearLayout(context) {
   private val targetDotView = View(context)
   private val targetTitleView = TextView(context)
@@ -33,6 +33,7 @@ internal class RavenCatConversationView(
   private var sessionId: String? = null
   private var displayedSessionId: String? = null
   private var displayedMessageIds: List<Long> = emptyList()
+  private var displayedClientMessageIds: List<String> = emptyList()
   private val visibleRect = Rect()
   private val preDrawListener = ViewTreeObserver.OnPreDrawListener {
     reportVisibleMessages()
@@ -63,22 +64,24 @@ internal class RavenCatConversationView(
     viewTreeObserver.removeOnPreDrawListener(preDrawListener)
     displayedSessionId = null
     displayedMessageIds = emptyList()
+    displayedClientMessageIds = emptyList()
     super.onDetachedFromWindow()
   }
 
   /** 布局、滚动及分页完成后，以被 viewport 裁剪后的真实可见行确认阅读。 */
   private fun reportVisibleMessages() {
     val currentSessionId = sessionId ?: return
-    val visibleIds = if (isShown) renderedMessages.mapIndexedNotNull { index, message ->
-      message.messageId?.takeIf {
-        message.role == RavenCatOverlayMessageRole.ASSISTANT &&
-          messageContainer.getChildAt(index).getGlobalVisibleRect(visibleRect)
-      }
+    val visibleMessages = if (isShown) renderedMessages.filterIndexed { index, message ->
+      message.role == RavenCatOverlayMessageRole.ASSISTANT &&
+        messageContainer.getChildAt(index).getGlobalVisibleRect(visibleRect)
     } else emptyList()
-    if (currentSessionId == displayedSessionId && visibleIds == displayedMessageIds) return
+    val visibleIds = visibleMessages.mapNotNull { it.messageId }
+    val visibleClients = visibleMessages.mapNotNull { it.correlationId }
+    if (currentSessionId == displayedSessionId && visibleIds == displayedMessageIds && visibleClients == displayedClientMessageIds) return
     displayedSessionId = currentSessionId
     displayedMessageIds = visibleIds
-    if (visibleIds.isNotEmpty()) onMessagesDisplayed(currentSessionId, visibleIds)
+    displayedClientMessageIds = visibleClients
+    if (visibleIds.isNotEmpty() || visibleClients.isNotEmpty()) onMessagesDisplayed(currentSessionId, visibleIds, visibleClients)
   }
 
   /** CHAT 下拉只在手势起点位于消息区且消息已到顶部时交给 page 切换。 */

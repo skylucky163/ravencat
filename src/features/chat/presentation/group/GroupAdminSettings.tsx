@@ -45,8 +45,6 @@ export default function GroupAdminSettings({
     topPInput,
     maxTokens,
     contextMessageCount,
-    systemPrompt,
-    setSystemPrompt,
     availableModels,
     isLoadingModels,
     showModelPicker,
@@ -164,11 +162,10 @@ export default function GroupAdminSettings({
           <View onLayout={feedback.fieldLayout(['maxTokens'])}><NumberInputPresetsSection
             onBlur={blur}
             error={errors.maxTokens}
-            onSelectPreset={(value) => handleMaxTokensChange(value, true)}
             label="Max Tokens"
+            description="留空使用服务商默认值。"
             value={maxTokens}
             onChangeText={handleMaxTokensChange}
-            presets={['2000', '4000', '8000', '无限制']}
           /></View>
 
           {/* 管理员上下文消息数量 */}
@@ -182,21 +179,6 @@ export default function GroupAdminSettings({
             presets={['0', '20', '50', '100']}
             maxLength={3}
           /></View>
-
-          {/* 系统提示词 */}
-          <View style={commonStyles.section}>
-            <InputField
-              label="系统提示词"
-              value={systemPrompt}
-              onChangeText={setSystemPrompt}
-              onBlur={blur}
-              placeholder="设置管理员的系统提示词，定义其调度行为..."
-              hint="系统提示词用于定义管理员的角色和调度策略，修改后自动保存。"
-              multiline
-              numberOfLines={6}
-              textAlignVertical="top"
-            />
-          </View>
         </ScrollView>
       </KeyboardAvoidingContainer>
 

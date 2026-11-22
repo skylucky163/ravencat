@@ -2,11 +2,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Keyboard, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Search, X } from 'lucide-react-native';
+import { Search, Star, X } from 'lucide-react-native';
 import { useTheme, useThemedStyles, type PresentationTheme } from '@shared/theme';
 import { AppTextInput, KeyboardAvoidingContainer, NavigationHeader } from '@shared/ui';
 import { searchConversationMessages } from '../../messages/application/SearchChatMessages';
-import type { ChatMessageRecord, ChatMessageSearchPage } from '../../messages/domain/ChatMessageSearch';
+import type { ChatSearchRecord, ChatMessageSearchPage } from '../../messages/domain/ChatMessageSearch';
+import { useSearchResultFavorites } from './components/useSearchResultFavorites';
 
 const createStyles = (theme: PresentationTheme) => StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background.screen },
@@ -17,8 +18,10 @@ const createStyles = (theme: PresentationTheme) => StyleSheet.create({
   action: { color: theme.colors.brand.primary, fontSize: 15 },
   status: { color: theme.colors.text.secondary, textAlign: 'center', padding: theme.spacing.md },
   card: { marginHorizontal: theme.spacing.md, marginBottom: theme.spacing.sm, padding: theme.spacing.md, borderRadius: theme.radius.lg, backgroundColor: theme.colors.surface.default },
-  meta: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginBottom: 8 },
-  author: { flex: 1, color: theme.colors.text.primary, fontWeight: '600' },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  // 名称只占自身内容宽度并在过长时省略，星号始终紧跟其后；日期固定靠右。
+  author: { flexShrink: 1, color: theme.colors.text.primary, fontWeight: '600' },
+  metaFill: { flex: 1 },
   date: { color: theme.colors.text.secondary, fontSize: 12 },
   text: { color: theme.colors.text.primary, fontSize: 15, lineHeight: 23 },
   highlight: { color: theme.colors.brand.primary, fontWeight: '700' },
@@ -32,10 +35,13 @@ function excerpt(text: string, keyword: string) {
   return `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
 }
 
-export default function ChatMessageSearchScreen({ conversationId, onBack, onOpenMessage }: {
+export default function ChatMessageSearchScreen({ conversationId, sourceName, assistantId, onBack, onOpenMessage, onOpenCall }: {
   conversationId: string;
+  sourceName: string;
+  assistantId?: string;
   onBack(): void;
   onOpenMessage(messageId: number): void;
+  onOpenCall?(callId: string): void;
 }) {
   const theme = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -44,6 +50,7 @@ export default function ChatMessageSearchScreen({ conversationId, onBack, onOpen
   const [page, setPage] = useState<ChatMessageSearchPage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { favorites, toggle } = useSearchResultFavorites(page?.entries ?? null, sourceName, assistantId);
   // 输入变化、重新搜索和卸载撤销旧读取的展示资格，慢查询不能覆盖新结果。
   const request = useRef({ revision: 0, pending: false }).current;
   useEffect(() => () => { request.revision++; }, [request]);
@@ -78,7 +85,7 @@ export default function ChatMessageSearchScreen({ conversationId, onBack, onOpen
     }
   }
 
-  function renderRecord({ item }: { item: ChatMessageRecord }) {
+  function renderRecord({ item }: { item: ChatSearchRecord }) {
     const text = excerpt(item.text, keyword);
     const parts: React.ReactNode[] = [];
     const lower = text.toLowerCase(), needle = keyword.toLowerCase();
@@ -90,12 +97,24 @@ export default function ChatMessageSearchScreen({ conversationId, onBack, onOpen
       match = lower.indexOf(needle, cursor);
     }
     parts.push(text.slice(cursor));
-    return <TouchableOpacity style={styles.card} onPress={() => onOpenMessage(item.messageId)} accessibilityRole="button" accessibilityLabel={`查看${item.author.name}的消息上下文`}>
+    const authorName = item.author.role === 'user' ? '我' : item.author.name;
+    const message = 'messageId' in item ? item : null;
+    const favorited = message !== null && favorites.has(message.messageId);
+    const openResult = 'messageId' in item ? () => onOpenMessage(item.messageId) : () => onOpenCall?.(item.callId);
+    return <TouchableOpacity style={styles.card} onPress={openResult} accessibilityRole="button" accessibilityLabel={message ? `查看${item.author.name}的消息上下文` : '查看通话记录'}>
       <View style={styles.meta}>
-        <Text style={styles.author} numberOfLines={1}>{item.author.role === 'user' ? '我' : item.author.name}</Text>
+        <Text style={styles.author} numberOfLines={1}>{authorName}{message ? message.callId && ' · 通话状态' : ' · 通话内容'}</Text>
+        {message?.canFavorite ? <TouchableOpacity hitSlop={10} accessibilityRole="button"
+          accessibilityLabel={favorited ? `取消收藏${authorName}的这条消息` : `收藏${authorName}的这条消息`}
+          accessibilityState={{ selected: favorited }} onPress={() => void toggle(message)}>
+          <Star size={18} color={favorited ? theme.colors.brand.primary : theme.colors.icon.secondary}
+            fill={favorited ? theme.colors.brand.primary : 'none'} />
+        </TouchableOpacity> : null}
+        <View style={styles.metaFill} />
         <Text style={styles.date}>{new Date(item.createdAt).toLocaleString()}</Text>
       </View>
       <Text style={styles.text} numberOfLines={4}>{parts}</Text>
+      {message?.attachments?.map(attachment => <Text key={attachment.attachmentId} style={styles.text}>{attachment.fileName}</Text>)}
     </TouchableOpacity>;
   }
 
@@ -108,7 +127,7 @@ export default function ChatMessageSearchScreen({ conversationId, onBack, onOpen
         {query.length > 0 && <TouchableOpacity style={styles.button} onPress={() => changeQuery('')} accessibilityLabel="清空关键词"><X size={18} color={theme.colors.text.secondary} /></TouchableOpacity>}
         <TouchableOpacity style={styles.button} onPress={() => void search()} disabled={!query.trim() || loading} accessibilityRole="button"><Text style={styles.action}>搜索</Text></TouchableOpacity>
       </View>
-      <FlatList data={page?.entries ?? []} keyExtractor={item => String(item.messageId)} renderItem={renderRecord} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
+      <FlatList data={page?.entries ?? []} keyExtractor={item => 'messageId' in item ? String(item.messageId) : `call:${item.entryId}`} renderItem={renderRecord} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
         ListHeaderComponent={page && page.entries.length > 0 ? <Text style={styles.status}>已找到 {page.entries.length} 条{page.nextOffset !== null ? '，可继续加载' : ''} · 点击查看上下文</Text> : null}
         ListEmptyComponent={!loading && !error ? <Text style={styles.status}>{page ? '没有找到相关聊天记录' : '搜索当前会话的全部可见聊天记录'}</Text> : null}
         ListFooterComponent={<View>
